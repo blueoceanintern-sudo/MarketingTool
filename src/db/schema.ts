@@ -9,6 +9,7 @@ export const personaEnum = pgEnum('persona', ['Technical', 'Executive', 'Ops']);
 export const draftStatusEnum = pgEnum('draft_status', ['pending_review', 'approved', 'rejected', 'sent']);
 export const sentimentEnum = pgEnum('sentiment', ['positive', 'neutral', 'negative']);
 export const flagTypeEnum = pgEnum('flag_type', ['duplicate', 'unverified_email', 'missing_fields', 'sensitive_keywords', 'hostile', 'regulated_entity']);
+export const scrapeJobStatusEnum = pgEnum('scrape_job_status', ['pending', 'in_progress', 'completed', 'failed']);
 
 // Tables
 export const companies = pgTable('companies', {
@@ -92,6 +93,20 @@ export const templatePerformance = pgTable('template_performance', {
   lastCalculatedAt: timestamp('last_calculated_at'),
 });
 
+export const scrapeJobs = pgTable('scrape_jobs', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  campaignId: uuid('campaign_id').notNull().references(() => campaigns.id),
+  status: scrapeJobStatusEnum('status').default('pending'),
+  leadsScraped: numeric('leads_scraped', { precision: 10, scale: 0 }).default(0),
+  errorMessage: text('error_message'),
+  retryCount: numeric('retry_count', { precision: 3, scale: 0 }).default(0),
+  maxRetries: numeric('max_retries', { precision: 3, scale: 0 }).default(3),
+  startedAt: timestamp('started_at'),
+  completedAt: timestamp('completed_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
 // Relations
 export const companiesRelations = relations(companies, ({ many }) => ({
   leads: many(leads),
@@ -110,6 +125,7 @@ export const leadsRelations = relations(leads, ({ one, many }) => ({
 export const campaignsRelations = relations(campaigns, ({ many }) => ({
   emailDrafts: many(emailDrafts),
   templatePerformance: many(templatePerformance),
+  scrapeJobs: many(scrapeJobs),
 }));
 
 export const emailDraftsRelations = relations(emailDrafts, ({ one, many }) => ({
@@ -153,6 +169,13 @@ export const riskFlagsRelations = relations(riskFlags, ({ one }) => ({
 export const templatePerformanceRelations = relations(templatePerformance, ({ one }) => ({
   campaign: one(campaigns, {
     fields: [templatePerformance.campaignId],
+    references: [campaigns.id],
+  }),
+}));
+
+export const scrapeJobsRelations = relations(scrapeJobs, ({ one }) => ({
+  campaign: one(campaigns, {
+    fields: [scrapeJobs.campaignId],
     references: [campaigns.id],
   }),
 }));

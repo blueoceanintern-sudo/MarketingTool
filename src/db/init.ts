@@ -25,6 +25,7 @@ async function initializeDatabase() {
       CREATE TYPE IF NOT EXISTS draft_status AS ENUM ('pending_review', 'approved', 'rejected', 'sent');
       CREATE TYPE IF NOT EXISTS sentiment AS ENUM ('positive', 'neutral', 'negative');
       CREATE TYPE IF NOT EXISTS flag_type AS ENUM ('duplicate', 'unverified_email', 'missing_fields', 'sensitive_keywords', 'hostile', 'regulated_entity');
+      CREATE TYPE IF NOT EXISTS scrape_job_status AS ENUM ('pending', 'in_progress', 'completed', 'failed');
     `;
 
     // Create tables
@@ -109,6 +110,20 @@ async function initializeDatabase() {
         reply_rate NUMERIC(5, 2),
         last_calculated_at TIMESTAMP
       );
+
+      CREATE TABLE IF NOT EXISTS scrape_jobs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        campaign_id UUID NOT NULL REFERENCES campaigns(id),
+        status scrape_job_status DEFAULT 'pending',
+        leads_scraped NUMERIC(10, 0) DEFAULT 0,
+        error_message TEXT,
+        retry_count NUMERIC(3, 0) DEFAULT 0,
+        max_retries NUMERIC(3, 0) DEFAULT 3,
+        started_at TIMESTAMP,
+        completed_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT NOW() NOT NULL,
+        updated_at TIMESTAMP DEFAULT NOW() NOT NULL
+      );
     `;
 
     // Create indexes for common queries
@@ -122,6 +137,8 @@ async function initializeDatabase() {
       CREATE INDEX IF NOT EXISTS idx_replies_email_event_id ON replies(email_event_id);
       CREATE INDEX IF NOT EXISTS idx_risk_flags_lead_id ON risk_flags(lead_id);
       CREATE INDEX IF NOT EXISTS idx_template_perf_campaign_id ON template_performance(campaign_id);
+      CREATE INDEX IF NOT EXISTS idx_scrape_jobs_campaign_id ON scrape_jobs(campaign_id);
+      CREATE INDEX IF NOT EXISTS idx_scrape_jobs_status ON scrape_jobs(status);
     `;
 
     console.log('✅ Database initialized successfully!');
