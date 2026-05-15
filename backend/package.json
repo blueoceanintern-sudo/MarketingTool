@@ -4,17 +4,28 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "bun run --hot src/index.ts"
+    "dev": "bun run --hot src/index.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio",
+    "workers": "bun run src/workers/index.ts"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "@types/node-cron": "^3.0.11",
+    "drizzle-kit": "^0.31.10"
   },
   "peerDependencies": {
     "typescript": "^5"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.96.0",
+    "@aws-sdk/client-ses": "^3.1047.0",
     "cheerio": "^1.2.0",
+    "drizzle-orm": "^0.45.2",
     "hono": "^4.12.18",
-    "node-fetch": "^3.3.2"
+    "node-cron": "^4.2.1",
+    "node-fetch": "^3.3.2",
+    "postgres": "^3.4.9"
   }
 }
