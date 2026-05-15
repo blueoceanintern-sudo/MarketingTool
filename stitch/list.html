@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Campaigns - BlueOcean</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "surface-container-high": "#e9e7ec",
+                        "grey-100": "#ECEEF2",
+                        "grey-900": "#1A1F2E",
+                        "tertiary-fixed": "#ffdcc1",
+                        "outline-variant": "#c5c6d0",
+                        "surface-bright": "#fbf8fd",
+                        "success": "#1A9E6B",
+                        "error-container": "#ffdad6",
+                        "background": "#fbf8fd",
+                        "danger": "#C7322A",
+                        "secondary": "#405ba1",
+                        "surface": "#fbf8fd",
+                        "on-tertiary": "#ffffff",
+                        "neutral": "#5A6478",
+                        "on-surface-variant": "#45464f",
+                        "on-secondary-fixed-variant": "#264388",
+                        "surface-dim": "#dbd9de",
+                        "inverse-on-surface": "#f2f0f5",
+                        "on-error-container": "#93000a",
+                        "primary-fixed-dim": "#b4c5fc",
+                        "ocean-wash": "#EDF1FA",
+                        "on-primary-container": "#8595ca",
+                        "surface-container": "#efedf2",
+                        "surface-container-lowest": "#ffffff",
+                        "grey-500": "#7D8799",
+                        "success-bg": "#E8F7F2",
+                        "outline": "#757680",
+                        "on-secondary-fixed": "#001849",
+                        "on-error": "#ffffff",
+                        "on-background": "#1b1b1f",
+                        "surface-variant": "#e4e2e6",
+                        "on-secondary-container": "#254286",
+                        "inverse-surface": "#303034",
+                        "secondary-container": "#97b1fd",
+                        "on-tertiary-container": "#c28b5b",
+                        "grey-300": "#C2C8D4",
+                        "secondary-fixed": "#dae1ff",
+                        "warning-bg": "#FEF4E0",
+                        "on-primary-fixed": "#031846",
+                        "inverse-primary": "#b4c5fc",
+                        "on-primary": "#ffffff",
+                        "primary-container": "#1b2d5b",
+                        "warning": "#D4860A",
+                        "on-surface": "#1b1b1f",
+                        "on-primary-fixed-variant": "#344574",
+                        "surface-container-low": "#f5f3f7",
+                        "ocean-light": "#4B6BB5",
+                        "grey-50": "#F7F8FA",
+                        "on-tertiary-fixed-variant": "#663d14",
+                        "tertiary-container": "#4a2600",
+                        "tertiary": "#2c1400",
+                        "neutral-bg": "#ECEEF2",
+                        "error": "#ba1a1a",
+                        "primary": "#021745",
+                        "on-tertiary-fixed": "#2e1500",
+                        "grey-700": "#3D4557",
+                        "tertiary-fixed-dim": "#f7ba86",
+                        "secondary-fixed-dim": "#b3c5ff",
+                        "surface-container-highest": "#e4e2e6",
+                        "on-secondary": "#ffffff",
+                        "danger-bg": "#FDECEA",
+                        "surface-tint": "#4c5d8e",
+                        "primary-fixed": "#dbe1ff"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "space-8": "32px",
+                        "space-3": "12px",
+                        "space-6": "24px",
+                        "space-4": "16px",
+                        "space-2": "8px",
+                        "sidebar-width": "220px",
+                        "space-1": "4px",
+                        "space-5": "20px",
+                        "space-10": "40px",
+                        "min-viewport": "1280px"
+                    },
+                    "fontFamily": {
+                        "text-mono": ["JetBrains Mono"],
+                        "text-xs": ["DM Sans"],
+                        "text-base-semibold": ["DM Sans"],
+                        "text-mono-sm": ["JetBrains Mono"],
+                        "text-base": ["DM Sans"],
+                        "text-sm": ["DM Sans"],
+                        "text-lg": ["DM Sans"],
+                        "text-xl": ["DM Sans"],
+                        "text-base-medium": ["DM Sans"],
+                        "text-sm-medium": ["DM Sans"],
+                        "text-2xl": ["DM Sans"]
+                    },
+                    "fontSize": {
+                        "text-mono": ["13px", {"lineHeight": "1.6", "fontWeight": "400"}],
+                        "text-xs": ["11px", {"lineHeight": "1.4", "fontWeight": "400"}],
+                        "text-base-semibold": ["14px", {"lineHeight": "1.6", "fontWeight": "600"}],
+                        "text-mono-sm": ["11px", {"lineHeight": "1.4", "fontWeight": "500"}],
+                        "text-base": ["14px", {"lineHeight": "1.6", "fontWeight": "400"}],
+                        "text-sm": ["13px", {"lineHeight": "1.5", "fontWeight": "400"}],
+                        "text-lg": ["16px", {"lineHeight": "1.4", "fontWeight": "600"}],
+                        "text-xl": ["20px", {"lineHeight": "1.3", "fontWeight": "700"}],
+                        "text-base-medium": ["14px", {"lineHeight": "1.6", "fontWeight": "500"}],
+                        "text-sm-medium": ["13px", {"lineHeight": "1.5", "fontWeight": "500"}],
+                        "text-2xl": ["24px", {"lineHeight": "1.2", "fontWeight": "700"}]
+                    }
+                },
+            },
+        }
+    </script>
+<style>
+        body { background-color: #F7F8FA; }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+    </style>
+</head>
+<body class="font-text-base text-on-surface antialiased">
+<!-- Fixed SideNavBar Shell -->
+<aside class="fixed left-0 top-0 h-full w-[220px] bg-surface-container-lowest border-r border-grey-100 shadow-[1px_0_3px_rgba(27,45,91,0.08)] flex flex-col py-space-6">
+<div class="px-space-6 mb-space-8">
+<div class="flex items-center gap-space-3">
+<div class="w-8 h-8 bg-primary rounded flex items-center justify-center text-white">
+<span class="material-symbols-outlined" data-icon="waves">waves</span>
+</div>
+<div>
+<h1 class="font-text-xl text-text-xl font-bold text-primary">BlueOcean</h1>
+<p class="text-[10px] text-grey-500 uppercase tracking-wider font-bold">Marketing Automation</p>
+</div>
+</div>
+</div>
+<nav class="flex-1 px-space-3 space-y-1">
+<!-- Active: Campaigns -->
+<a class="flex items-center gap-space-3 px-space-4 py-space-3 rounded-lg text-primary font-bold bg-ocean-wash transition-colors duration-150 scale-100 active:scale-[0.98]" href="#">
+<span class="material-symbols-outlined" data-icon="campaign">campaign</span>
+<span class="font-text-sm-medium text-text-sm-medium">Campaigns</span>
+</a>
+<a class="flex items-center gap-space-3 px-space-4 py-space-3 rounded-lg text-grey-500 font-text-sm text-text-sm hover:bg-ocean-wash transition-colors duration-150 scale-100 active:scale-[0.98]" href="#">
+<span class="material-symbols-outlined" data-icon="pending_actions">pending_actions</span>
+<span class="font-text-sm-medium text-text-sm-medium">Draft Queue</span>
+</a>
+<a class="flex items-center gap-space-3 px-space-4 py-space-3 rounded-lg text-grey-500 font-text-sm text-text-sm hover:bg-ocean-wash transition-colors duration-150 scale-100 active:scale-[0.98]" href="#">
+<span class="material-symbols-outlined" data-icon="reply">reply</span>
+<span class="font-text-sm-medium text-text-sm-medium">Replies</span>
+</a>
+<a class="flex items-center gap-space-3 px-space-4 py-space-3 rounded-lg text-grey-500 font-text-sm text-text-sm hover:bg-ocean-wash transition-colors duration-150 scale-100 active:scale-[0.98]" href="#">
+<span class="material-symbols-outlined" data-icon="analytics">analytics</span>
+<span class="font-text-sm-medium text-text-sm-medium">Analytics</span>
+</a>
+<a class="flex items-center gap-space-3 px-space-4 py-space-3 rounded-lg text-grey-500 font-text-sm text-text-sm hover:bg-ocean-wash transition-colors duration-150 scale-100 active:scale-[0.98]" href="#">
+<span class="material-symbols-outlined" data-icon="database">database</span>
+<span class="font-text-sm-medium text-text-sm-medium">Source Registry</span>
+</a>
+</nav>
+<div class="px-space-3 mt-auto">
+<a class="flex items-center gap-space-3 px-space-4 py-space-3 rounded-lg text-grey-500 font-text-sm text-text-sm hover:bg-ocean-wash transition-colors duration-150" href="#">
+<span class="material-symbols-outlined" data-icon="settings">settings</span>
+<span class="font-text-sm-medium text-text-sm-medium">Settings</span>
+</a>
+</div>
+</aside>
+<!-- TopAppBar Shell -->
+<header class="fixed top-0 right-0 left-[220px] h-16 bg-surface border-b border-grey-100 z-10 flex justify-between items-center px-space-10">
+<div class="flex items-center gap-space-6 flex-1">
+<div class="relative w-full max-w-md">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-grey-500 text-[20px]" data-icon="search">search</span>
+<input class="w-full pl-10 pr-4 py-2 bg-grey-50 border border-grey-100 rounded-lg font-text-sm text-text-sm focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary" placeholder="Search campaigns, leads or assets..." type="text"/>
+</div>
+</div>
+<div class="flex items-center gap-space-6">
+<div class="flex items-center gap-space-4 text-grey-500">
+<button class="material-symbols-outlined cursor-pointer active:opacity-80 hover:text-primary transition-colors" data-icon="notifications">notifications</button>
+<button class="material-symbols-outlined cursor-pointer active:opacity-80 hover:text-primary transition-colors" data-icon="help_outline">help_outline</button>
+</div>
+<div class="h-8 w-[1px] bg-grey-100"></div>
+<div class="flex items-center gap-space-3">
+<div class="text-right">
+<p class="font-text-base-semibold text-text-base-semibold text-primary">Alex Chen</p>
+<p class="text-[11px] text-grey-500">Global Admin</p>
+</div>
+<div class="w-9 h-9 rounded-full bg-primary-container flex items-center justify-center overflow-hidden">
+<img alt="User Profile" class="w-full h-full object-cover" data-alt="A professional headshot of a modern corporate professional with a clean, confident expression. The person is in a well-lit minimalist office environment with soft focus. The lighting is bright and airy, adhering to a high-end light-mode aesthetic with subtle hints of navy and grey tones. The visual style is premium and high-resolution, suitable for a professional marketing automation dashboard." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCy1P4YMMZBX4n_HJdr4JIZQpRDmi2aD33ryPGLvd11MujadIR-PuphiWn4hpvGTwly-3mCNDkDf9HjPyiBgLyqFHwV3F-Oo8K0rm7Lw7HLuHVp5Lkf8Egq68jQkK27sjgj-13pe18UGULX9Mt5064EbFpFtfMtn89AUP_KbUpbwV5WyPBlhG4qeLn8jbGd8e1DPWmYrnfdz4QhKPcwQ0JTh4KQBWTWjIY05oMNAi-_rjvkNj2OVjVLHKH4m4IedDQgNsV76lSqA2in"/>
+</div>
+</div>
+</div>
+</header>
+<!-- Main Content Canvas -->
+<main class="pl-[220px] pt-16 min-w-[1280px]">
+<div class="p-space-10">
+<!-- Page Header -->
+<div class="flex justify-between items-end mb-space-8">
+<div>
+<nav class="flex items-center gap-2 mb-2">
+<span class="text-grey-500 font-text-sm text-text-sm">Marketing</span>
+<span class="material-symbols-outlined text-[14px] text-grey-300" data-icon="chevron_right">chevron_right</span>
+<span class="text-primary font-text-sm-medium text-text-sm-medium">Campaigns</span>
+</nav>
+<h2 class="font-text-2xl text-text-2xl text-primary">Campaigns</h2>
+<p class="text-grey-500 font-text-sm text-text-sm mt-1">Manage and monitor your multi-channel outreach performance across 12 active segments.</p>
+</div>
+<div class="flex items-center gap-space-4">
+<button class="px-space-4 py-2 border border-grey-100 rounded-lg text-primary font-text-base-semibold text-text-base-semibold hover:bg-grey-50 transition-colors flex items-center gap-2">
+<span class="material-symbols-outlined text-[20px]" data-icon="file_download">file_download</span>
+                        Export
+                    </button>
+<button class="px-space-6 py-2 bg-primary text-white rounded-lg font-text-base-semibold text-text-base-semibold shadow-[0_1px_3px_rgba(27,45,91,0.08)] active:scale-[0.98] transition-transform flex items-center gap-2">
+<span class="material-symbols-outlined text-[20px]" data-icon="add">add</span>
+                        New Campaign
+                    </button>
+</div>
+</div>
+<!-- Dashboard Filters / Stats Bar -->
+<div class="grid grid-cols-4 gap-space-6 mb-space-8">
+<div class="bg-surface-container-lowest p-space-5 rounded-xl shadow-[0_1px_3px_rgba(27,45,91,0.08)] border border-grey-100">
+<p class="text-grey-500 font-text-sm-medium text-text-sm-medium">Active Leads</p>
+<div class="flex items-baseline justify-between mt-2">
+<h3 class="font-text-2xl text-text-2xl text-primary">12,482</h3>
+<span class="text-success font-text-sm-medium text-text-sm-medium flex items-center gap-1">+12% <span class="material-symbols-outlined text-[14px]" data-icon="trending_up">trending_up</span></span>
+</div>
+</div>
+<div class="bg-surface-container-lowest p-space-5 rounded-xl shadow-[0_1px_3px_rgba(27,45,91,0.08)] border border-grey-100">
+<p class="text-grey-500 font-text-sm-medium text-text-sm-medium">Avg. Open Rate</p>
+<div class="flex items-baseline justify-between mt-2">
+<h3 class="font-text-2xl text-text-2xl text-primary">42.8%</h3>
+<span class="text-success font-text-sm-medium text-text-sm-medium flex items-center gap-1">+2.4% <span class="material-symbols-outlined text-[14px]" data-icon="trending_up">trending_up</span></span>
+</div>
+</div>
+<div class="bg-surface-container-lowest p-space-5 rounded-xl shadow-[0_1px_3px_rgba(27,45,91,0.08)] border border-grey-100">
+<p class="text-grey-500 font-text-sm-medium text-text-sm-medium">Total Sent</p>
+<div class="flex items-baseline justify-between mt-2">
+<h3 class="font-text-2xl text-text-2xl text-primary">84.2k</h3>
+<span class="text-grey-500 font-text-sm-medium text-text-sm-medium">This month</span>
+</div>
+</div>
+<div class="bg-surface-container-lowest p-space-5 rounded-xl shadow-[0_1px_3px_rgba(27,45,91,0.08)] border border-grey-100">
+<p class="text-grey-500 font-text-sm-medium text-text-sm-medium">Pending Drafts</p>
+<div class="flex items-baseline justify-between mt-2">
+<h3 class="font-text-2xl text-text-2xl text-warning">142</h3>
+<span class="px-2 py-0.5 bg-warning-bg text-warning text-xs font-bold rounded-full">Requires Action</span>
+</div>
+</div>
+</div>
+<!-- Campaigns Table Card -->
+<div class="bg-surface-container-lowest rounded-xl shadow-[0_1px_3px_rgba(27,45,91,0.08)] border border-grey-100 overflow-hidden">
+<div class="p-space-5 border-b border-grey-100 flex justify-between items-center bg-grey-50">
+<div class="flex gap-space-4">
+<button class="px-space-3 py-1.5 bg-white border border-grey-100 rounded text-primary font-text-sm-medium text-text-sm-medium flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px] text-grey-500" data-icon="filter_alt">filter_alt</span>
+                            All Statuses
+                        </button>
+<button class="px-space-3 py-1.5 bg-white border border-grey-100 rounded text-primary font-text-sm-medium text-text-sm-medium flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px] text-grey-500" data-icon="public">public</span>
+                            Geography
+                        </button>
+</div>
+<p class="text-grey-500 font-text-sm text-text-sm">Showing 1-10 of 42 campaigns</p>
+</div>
+<table class="w-full border-collapse">
+<thead class="bg-grey-50">
+<tr class="text-left border-b border-grey-100">
+<th class="px-space-6 py-4 font-text-base-semibold text-text-base-semibold text-primary">Name</th>
+<th class="px-space-4 py-4 font-text-base-semibold text-text-base-semibold text-primary">Vertical</th>
+<th class="px-space-4 py-4 font-text-base-semibold text-text-base-semibold text-primary text-center">Geography</th>
+<th class="px-space-4 py-4 font-text-base-semibold text-text-base-semibold text-primary text-center">Status</th>
+<th class="px-space-4 py-4 font-text-base-semibold text-text-base-semibold text-primary text-right">Leads</th>
+<th class="px-space-4 py-4 font-text-base-semibold text-text-base-semibold text-primary text-center">Drafts Pending</th>
+<th class="px-space-4 py-4 font-text-base-semibold text-text-base-semibold text-primary text-right">Sent</th>
+<th class="px-space-4 py-4 font-text-base-semibold text-text-base-semibold text-primary text-right">Open Rate</th>
+<th class="px-space-4 py-4 font-text-base-semibold text-text-base-semibold text-primary">Created</th>
+<th class="px-space-6 py-4 w-10"></th>
+</tr>
+</thead>
+<tbody class="divide-y divide-grey-100">
+<!-- Campaign Row 1 -->
+<tr class="hover:bg-ocean-wash transition-colors">
+<td class="px-space-6 py-[11px]">
+<a class="font-bold text-primary hover:underline block" href="#">Q3 APAC SaaS Prospecting</a>
+<span class="text-xs text-grey-500">ID: CAM-9241</span>
+</td>
+<td class="px-space-4 py-[11px] text-grey-700 font-text-sm text-text-sm">Software / IT</td>
+<td class="px-space-4 py-[11px] text-center">
+<div class="flex justify-center gap-1">
+<span class="px-2 py-0.5 bg-secondary-fixed text-on-secondary-fixed-variant text-[10px] font-bold rounded">SG</span>
+<span class="px-2 py-0.5 bg-secondary-fixed text-on-secondary-fixed-variant text-[10px] font-bold rounded">AU</span>
+</div>
+</td>
+<td class="px-space-4 py-[11px] text-center">
+<span class="px-2.5 py-1 bg-success-bg text-success text-xs font-bold rounded-full">Active</span>
+</td>
+<td class="px-space-4 py-[11px] text-right font-text-sm text-text-sm text-grey-900">4,281</td>
+<td class="px-space-4 py-[11px] text-center">
+<span class="font-text-sm-medium text-text-sm-medium text-grey-300">0</span>
+</td>
+<td class="px-space-4 py-[11px] text-right font-text-sm text-text-sm text-grey-900">12,402</td>
+<td class="px-space-4 py-[11px] text-right font-text-sm text-text-sm text-primary font-bold">52.4%</td>
+<td class="px-space-4 py-[11px] text-grey-500 font-text-sm text-text-sm">Oct 12, 2023</td>
+<td class="px-space-6 py-[11px] text-right">
+<button class="material-symbols-outlined text-grey-500 hover:text-primary cursor-pointer active:scale-90 transition-all" data-icon="more_vert">more_vert</button>
+</td>
+</tr>
+<!-- Campaign Row 2 (Draft Pending) -->
+<tr class="hover:bg-ocean-wash transition-colors">
+<td class="px-space-6 py-[11px]">
+<a class="font-bold text-primary hover:underline block" href="#">US Enterprise FinTech Q4</a>
+<span class="text-xs text-grey-500">ID: CAM-9245</span>
+</td>
+<td class="px-space-4 py-[11px] text-grey-700 font-text-sm text-text-sm">Finance</td>
+<td class="px-space-4 py-[11px] text-center">
+<div class="flex justify-center gap-1">
+<span class="px-2 py-0.5 bg-secondary-fixed text-on-secondary-fixed-variant text-[10px] font-bold rounded">US</span>
+</div>
+</td>
+<td class="px-space-4 py-[11px] text-center">
+<span class="px-2.5 py-1 bg-neutral-bg text-neutral text-xs font-bold rounded-full">Paused</span>
+</td>
+<td class="px-space-4 py-[11px] text-right font-text-sm text-text-sm text-grey-900">8,920</td>
+<td class="px-space-4 py-[11px] text-center">
+<span class="px-3 py-1 bg-warning-bg text-warning font-bold text-xs rounded-full inline-flex items-center gap-1">
+                                    12 <span class="material-symbols-outlined text-[12px]" data-icon="priority_high">priority_high</span>
+</span>
+</td>
+<td class="px-space-4 py-[11px] text-right font-text-sm text-text-sm text-grey-900">34,118</td>
+<td class="px-space-4 py-[11px] text-right font-text-sm text-text-sm text-primary font-bold">38.1%</td>
+<td class="px-space-4 py-[11px] text-grey-500 font-text-sm text-text-sm">Oct 14, 2023</td>
+<td class="px-space-6 py-[11px] text-right">
+<button class="material-symbols-outlined text-grey-500 hover:text-primary cursor-pointer active:scale-90 transition-all" data-icon="more_vert">more_vert</button>
+</td>
+</tr>
+<!-- Campaign Row 3 -->
+<tr class="hover:bg-ocean-wash transition-colors">
+<td class="px-space-6 py-[11px]">
+<a class="font-bold text-primary hover:underline block" href="#">Healthcare Outreach - UK/EU</a>
+<span class="text-xs text-grey-500">ID: CAM-9248</span>
+</td>
+<td class="px-space-4 py-[11px] text-grey-700 font-text-sm text-text-sm">Healthcare</td>
+<td class="px-space-4 py-[11px] text-center">
+<div class="flex justify-center gap-1">
+<span class="px-2 py-0.5 bg-secondary-fixed text-on-secondary-fixed-variant text-[10px] font-bold rounded">UK</span>
+<span class="px-2 py-0.5 bg-secondary-fixed text-on-secondary-fixed-variant text-[10px] font-bold rounded">DE</span>
+</div>
+</td>
+<td class="px-space-4 py-[11px] text-center">
+<span class="px-2.5 py-1 bg-success-bg text-success text-xs font-bold rounded-full">Active</span>
+</td>
+<td class="px-space-4 py-[11px] text-right font-text-sm text-text-sm text-grey-900">2,150</td>
+<td class="px-space-4 py-[11px] text-center">
+<span class="font-text-sm-medium text-text-sm-medium text-grey-300">0</span>
+</td>
+<td class="px-space-4 py-[11px] text-right font-text-sm text-text-sm text-grey-900">5,820</td>
+<td class="px-space-4 py-[11px] text-right font-text-sm text-text-sm text-primary font-bold">45.2%</td>
+<td class="px-space-4 py-[11px] text-grey-500 font-text-sm text-text-sm">Oct 18, 2023</td>
+<td class="px-space-6 py-[11px] text-right">
+<button class="material-symbols-outlined text-grey-500 hover:text-primary cursor-pointer active:scale-90 transition-all" data-icon="more_vert">more_vert</button>
+</td>
+</tr>
+<!-- Campaign Row 4 -->
+<tr class="hover:bg-ocean-wash transition-colors">
+<td class="px-space-6 py-[11px]">
+<a class="font-bold text-primary hover:underline block" href="#">Retargeting Lead Gen - AU</a>
+<span class="text-xs text-grey-500">ID: CAM-9252</span>
+</td>
+<td class="px-space-4 py-[11px] text-grey-700 font-text-sm text-text-sm">E-commerce</td>
+<td class="px-space-4 py-[11px] text-center">
+<div class="flex justify-center gap-1">
+<span class="px-2 py-0.5 bg-secondary-fixed text-on-secondary-fixed-variant text-[10px] font-bold rounded">AU</span>
+</div>
+</td>
+<td class="px-space-4 py-[11px] text-center">
+<span class="px-2.5 py-1 bg-danger-bg text-danger text-xs font-bold rounded-full">Error</span>
+</td>
+<td class="px-space-4 py-[11px] text-right font-text-sm text-text-sm text-grey-900">1,200</td>
+<td class="px-space-4 py-[11px] text-center">
+<span class="px-3 py-1 bg-warning-bg text-warning font-bold text-xs rounded-full inline-flex items-center gap-1">
+                                    84 <span class="material-symbols-outlined text-[12px]" data-icon="priority_high">priority_high</span>
+</span>
+</td>
+<td class="px-space-4 py-[11px] text-right font-text-sm text-text-sm text-grey-900">2,400</td>
+<td class="px-space-4 py-[11px] text-right font-text-sm text-text-sm text-primary font-bold">12.1%</td>
+<td class="px-space-4 py-[11px] text-grey-500 font-text-sm text-text-sm">Oct 20, 2023</td>
+<td class="px-space-6 py-[11px] text-right">
+<button class="material-symbols-outlined text-grey-500 hover:text-primary cursor-pointer active:scale-90 transition-all" data-icon="more_vert">more_vert</button>
+</td>
+</tr>
+<!-- Campaign Row 5 -->
+<tr class="hover:bg-ocean-wash transition-colors">
+<td class="px-space-6 py-[11px]">
+<a class="font-bold text-primary hover:underline block" href="#">Direct Mail Sync - SG</a>
+<span class="text-xs text-grey-500">ID: CAM-9255</span>
+</td>
+<td class="px-space-4 py-[11px] text-grey-700 font-text-sm text-text-sm">Logistics</td>
+<td class="px-space-4 py-[11px] text-center">
+<div class="flex justify-center gap-1">
+<span class="px-2 py-0.5 bg-secondary-fixed text-on-secondary-fixed-variant text-[10px] font-bold rounded">SG</span>
+</div>
+</td>
+<td class="px-space-4 py-[11px] text-center">
+<span class="px-2.5 py-1 bg-success-bg text-success text-xs font-bold rounded-full">Active</span>
+</td>
+<td class="px-space-4 py-[11px] text-right font-text-sm text-text-sm text-grey-900">540</td>
+<td class="px-space-4 py-[11px] text-center">
+<span class="font-text-sm-medium text-text-sm-medium text-grey-300">0</span>
+</td>
+<td class="px-space-4 py-[11px] text-right font-text-sm text-text-sm text-grey-900">1,080</td>
+<td class="px-space-4 py-[11px] text-right font-text-sm text-text-sm text-primary font-bold">61.9%</td>
+<td class="px-space-4 py-[11px] text-grey-500 font-text-sm text-text-sm">Oct 22, 2023</td>
+<td class="px-space-6 py-[11px] text-right">
+<button class="material-symbols-outlined text-grey-500 hover:text-primary cursor-pointer active:scale-90 transition-all" data-icon="more_vert">more_vert</button>
+</td>
+</tr>
+</tbody>
+</table>
+<div class="p-space-5 bg-grey-50 border-t border-grey-100 flex justify-between items-center">
+<div class="flex items-center gap-2">
+<span class="text-grey-500 font-text-sm text-text-sm">Rows per page:</span>
+<select class="bg-white border border-grey-100 rounded px-2 py-1 font-text-sm text-text-sm outline-none">
+<option>10</option>
+<option>20</option>
+<option>50</option>
+</select>
+</div>
+<div class="flex items-center gap-4">
+<button class="material-symbols-outlined text-grey-300 cursor-not-allowed" data-icon="chevron_left">chevron_left</button>
+<div class="flex items-center gap-2">
+<button class="w-8 h-8 rounded bg-primary text-white font-text-sm-medium text-text-sm-medium">1</button>
+<button class="w-8 h-8 rounded hover:bg-grey-100 text-grey-700 font-text-sm-medium text-text-sm-medium">2</button>
+<button class="w-8 h-8 rounded hover:bg-grey-100 text-grey-700 font-text-sm-medium text-text-sm-medium">3</button>
+<span class="text-grey-300">...</span>
+<button class="w-8 h-8 rounded hover:bg-grey-100 text-grey-700 font-text-sm-medium text-text-sm-medium">5</button>
+</div>
+<button class="material-symbols-outlined text-grey-700 hover:text-primary transition-colors" data-icon="chevron_right">chevron_right</button>
+</div>
+</div>
+</div>
+<!-- Page Footer Context -->
+<div class="mt-space-10 flex gap-space-10 opacity-60">
+<div class="flex items-start gap-space-4 max-w-sm">
+<span class="material-symbols-outlined text-primary text-[24px] mt-1" data-icon="security">security</span>
+<div>
+<p class="font-text-base-semibold text-text-base-semibold text-primary">Data Integrity Protected</p>
+<p class="text-grey-500 font-text-sm text-text-sm">All leads are verified through our BlueOcean proprietary validator before being added to any active campaign.</p>
+</div>
+</div>
+<div class="flex items-start gap-space-4 max-w-sm">
+<span class="material-symbols-outlined text-primary text-[24px] mt-1" data-icon="sync_saved_locally">sync_saved_locally</span>
+<div>
+<p class="font-text-base-semibold text-text-base-semibold text-primary">Auto-Sync Enabled</p>
+<p class="text-grey-500 font-text-sm text-text-sm">Your CRM sync is active. Updates to statuses or lead info are propagated across platforms every 5 minutes.</p>
+</div>
+</div>
+</div>
+</div>
+</main>
+</body></html>

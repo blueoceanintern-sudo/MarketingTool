@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "surface-container-high": "#e9e7ec",
+                        "grey-100": "#ECEEF2",
+                        "grey-900": "#1A1F2E",
+                        "tertiary-fixed": "#ffdcc1",
+                        "outline-variant": "#c5c6d0",
+                        "surface-bright": "#fbf8fd",
+                        "success": "#1A9E6B",
+                        "error-container": "#ffdad6",
+                        "background": "#fbf8fd",
+                        "danger": "#C7322A",
+                        "secondary": "#405ba1",
+                        "surface": "#fbf8fd",
+                        "on-tertiary": "#ffffff",
+                        "neutral": "#5A6478",
+                        "on-surface-variant": "#45464f",
+                        "on-secondary-fixed-variant": "#264388",
+                        "surface-dim": "#dbd9de",
+                        "inverse-on-surface": "#f2f0f5",
+                        "on-error-container": "#93000a",
+                        "primary-fixed-dim": "#b4c5fc",
+                        "ocean-wash": "#EDF1FA",
+                        "on-primary-container": "#8595ca",
+                        "surface-container": "#efedf2",
+                        "surface-container-lowest": "#ffffff",
+                        "grey-500": "#7D8799",
+                        "success-bg": "#E8F7F2",
+                        "outline": "#757680",
+                        "on-secondary-fixed": "#001849",
+                        "on-error": "#ffffff",
+                        "on-background": "#1b1b1f",
+                        "surface-variant": "#e4e2e6",
+                        "on-secondary-container": "#254286",
+                        "inverse-surface": "#303034",
+                        "secondary-container": "#97b1fd",
+                        "on-tertiary-container": "#c28b5b",
+                        "grey-300": "#C2C8D4",
+                        "secondary-fixed": "#dae1ff",
+                        "warning-bg": "#FEF4E0",
+                        "on-primary-fixed": "#031846",
+                        "inverse-primary": "#b4c5fc",
+                        "on-primary": "#ffffff",
+                        "primary-container": "#1b2d5b",
+                        "warning": "#D4860A",
+                        "on-surface": "#1b1b1f",
+                        "on-primary-fixed-variant": "#344574",
+                        "surface-container-low": "#f5f3f7",
+                        "ocean-light": "#4B6BB5",
+                        "grey-50": "#F7F8FA",
+                        "on-tertiary-fixed-variant": "#663d14",
+                        "tertiary-container": "#4a2600",
+                        "tertiary": "#2c1400",
+                        "neutral-bg": "#ECEEF2",
+                        "error": "#ba1a1a",
+                        "primary": "#021745",
+                        "on-tertiary-fixed": "#2e1500",
+                        "grey-700": "#3D4557",
+                        "tertiary-fixed-dim": "#f7ba86",
+                        "secondary-fixed-dim": "#b3c5ff",
+                        "surface-container-highest": "#e4e2e6",
+                        "on-secondary": "#ffffff",
+                        "danger-bg": "#FDECEA",
+                        "surface-tint": "#4c5d8e",
+                        "primary-fixed": "#dbe1ff"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "space-8": "32px",
+                        "space-3": "12px",
+                        "space-6": "24px",
+                        "space-4": "16px",
+                        "space-2": "8px",
+                        "sidebar-width": "220px",
+                        "space-1": "4px",
+                        "space-5": "20px",
+                        "space-10": "40px",
+                        "min-viewport": "1280px"
+                    },
+                    "fontFamily": {
+                        "text-mono": ["JetBrains Mono"],
+                        "text-xs": ["DM Sans"],
+                        "text-base-semibold": ["DM Sans"],
+                        "text-mono-sm": ["JetBrains Mono"],
+                        "text-base": ["DM Sans"],
+                        "text-sm": ["DM Sans"],
+                        "text-lg": ["DM Sans"],
+                        "text-xl": ["DM Sans"],
+                        "text-base-medium": ["DM Sans"],
+                        "text-sm-medium": ["DM Sans"],
+                        "text-2xl": ["DM Sans"]
+                    },
+                    "fontSize": {
+                        "text-mono": ["13px", {"lineHeight": "1.6", "fontWeight": "400"}],
+                        "text-xs": ["11px", {"lineHeight": "1.4", "fontWeight": "400"}],
+                        "text-base-semibold": ["14px", {"lineHeight": "1.6", "fontWeight": "600"}],
+                        "text-mono-sm": ["11px", {"lineHeight": "1.4", "fontWeight": "500"}],
+                        "text-base": ["14px", {"lineHeight": "1.6", "fontWeight": "400"}],
+                        "text-sm": ["13px", {"lineHeight": "1.5", "fontWeight": "400"}],
+                        "text-lg": ["16px", {"lineHeight": "1.4", "fontWeight": "600"}],
+                        "text-xl": ["20px", {"lineHeight": "1.3", "fontWeight": "700"}],
+                        "text-base-medium": ["14px", {"lineHeight": "1.6", "fontWeight": "500"}],
+                        "text-sm-medium": ["13px", {"lineHeight": "1.5", "fontWeight": "500"}],
+                        "text-2xl": ["24px", {"lineHeight": "1.2", "fontWeight": "700"}]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        body {
+            background-color: #F7F8FA;
+            font-family: 'DM Sans', sans-serif;
+        }
+    </style>
+</head>
+<body class="min-w-[1280px]">
+<!-- SideNavBar -->
+<aside class="fixed left-0 top-0 h-full w-[220px] bg-surface-container-lowest border-r border-grey-100 shadow-[1px_0_3px_rgba(27,45,91,0.08)] flex flex-col h-full py-space-6 z-50">
+<div class="px-space-6 mb-space-8">
+<h1 class="font-text-xl text-text-xl font-bold text-primary">BlueOcean</h1>
+<p class="font-text-xs text-text-xs text-grey-500 uppercase tracking-wider">Marketing Automation</p>
+</div>
+<nav class="flex-1 flex flex-col gap-1 px-space-2">
+<a class="flex items-center gap-3 px-space-4 py-space-3 rounded text-primary font-bold bg-ocean-wash transition-colors duration-150 scale-100 active:scale-[0.98]" href="#">
+<span class="material-symbols-outlined" data-icon="campaign">campaign</span>
+<span class="font-text-sm-medium text-text-sm-medium">Campaigns</span>
+</a>
+<a class="flex items-center gap-3 px-space-4 py-space-3 rounded text-grey-500 font-text-sm hover:bg-ocean-wash transition-colors duration-150 active:scale-[0.98]" href="#">
+<span class="material-symbols-outlined" data-icon="pending_actions">pending_actions</span>
+<span class="font-text-sm-medium text-text-sm-medium">Draft Queue</span>
+</a>
+<a class="flex items-center gap-3 px-space-4 py-space-3 rounded text-grey-500 font-text-sm hover:bg-ocean-wash transition-colors duration-150 active:scale-[0.98]" href="#">
+<span class="material-symbols-outlined" data-icon="reply">reply</span>
+<span class="font-text-sm-medium text-text-sm-medium">Replies</span>
+</a>
+<a class="flex items-center gap-3 px-space-4 py-space-3 rounded text-grey-500 font-text-sm hover:bg-ocean-wash transition-colors duration-150 active:scale-[0.98]" href="#">
+<span class="material-symbols-outlined" data-icon="analytics">analytics</span>
+<span class="font-text-sm-medium text-text-sm-medium">Analytics</span>
+</a>
+<a class="flex items-center gap-3 px-space-4 py-space-3 rounded text-grey-500 font-text-sm hover:bg-ocean-wash transition-colors duration-150 active:scale-[0.98]" href="#">
+<span class="material-symbols-outlined" data-icon="database">database</span>
+<span class="font-text-sm-medium text-text-sm-medium">Source Registry</span>
+</a>
+</nav>
+<div class="px-space-2 mt-auto">
+<a class="flex items-center gap-3 px-space-4 py-space-3 rounded text-grey-500 font-text-sm hover:bg-ocean-wash transition-colors duration-150 active:scale-[0.98]" href="#">
+<span class="material-symbols-outlined" data-icon="settings">settings</span>
+<span class="font-text-sm-medium text-text-sm-medium">Settings</span>
+</a>
+</div>
+</aside>
+<!-- TopAppBar -->
+<header class="fixed top-0 right-0 left-[220px] h-16 bg-surface border-b border-grey-100 flex justify-between items-center px-space-10 w-full z-40">
+<div class="flex items-center gap-space-4">
+<div class="flex items-center bg-grey-50 border border-grey-100 rounded-lg px-space-3 py-1.5 w-80">
+<span class="material-symbols-outlined text-grey-500 text-[20px]" data-icon="search">search</span>
+<input class="bg-transparent border-none focus:ring-0 text-text-sm font-text-sm w-full" placeholder="Search leads or campaigns..." type="text"/>
+</div>
+</div>
+<div class="flex items-center gap-space-6">
+<button class="bg-primary text-on-primary font-text-base-semibold text-text-base-semibold px-space-5 py-2.5 rounded-lg active:opacity-80 transition-opacity">
+                New Campaign
+            </button>
+<div class="flex items-center gap-space-4 border-l border-grey-100 pl-space-6">
+<span class="material-symbols-outlined text-grey-500 cursor-pointer hover:text-primary transition-colors" data-icon="notifications">notifications</span>
+<span class="material-symbols-outlined text-grey-500 cursor-pointer hover:text-primary transition-colors" data-icon="help_outline">help_outline</span>
+<span class="material-symbols-outlined text-grey-500 cursor-pointer hover:text-primary transition-colors" data-icon="account_circle">account_circle</span>
+</div>
+</div>
+</header>
+<!-- Main Content Canvas -->
+<main class="ml-[220px] pt-16 min-h-screen">
+<div class="p-space-10 max-w-[1440px] mx-auto">
+<!-- Page Header Area -->
+<div class="flex justify-between items-end mb-space-8">
+<div>
+<nav class="flex items-center gap-2 text-grey-500 mb-2">
+<span class="font-text-sm">Campaigns</span>
+<span class="material-symbols-outlined text-[16px]" data-icon="chevron_right">chevron_right</span>
+<span class="font-text-sm-medium text-primary">Enterprise SaaS Outreach Q3</span>
+</nav>
+<h2 class="font-text-2xl text-text-2xl text-primary">Enterprise SaaS Outreach Q3</h2>
+</div>
+<div class="flex items-center gap-space-3">
+<button class="flex items-center gap-2 border border-grey-300 text-grey-700 px-space-4 py-2 rounded-lg font-text-base-semibold text-text-base-semibold hover:bg-grey-50 transition-colors">
+<span class="material-symbols-outlined text-[20px]" data-icon="file_download">file_download</span>
+                        Export CSV
+                    </button>
+<button class="flex items-center gap-2 border border-danger text-danger px-space-4 py-2 rounded-lg font-text-base-semibold text-text-base-semibold hover:bg-danger-bg transition-colors">
+<span class="material-symbols-outlined text-[20px]" data-icon="pause_circle">pause_circle</span>
+                        Pause Campaign
+                    </button>
+</div>
+</div>
+<!-- Bento Stats Grid -->
+<div class="grid grid-cols-4 gap-space-6 mb-space-8">
+<!-- Total Leads Card -->
+<div class="bg-surface-container-lowest p-space-6 rounded-xl shadow-[0_1px_3px_rgba(27,45,91,0.08)] border border-grey-100">
+<div class="flex justify-between items-start mb-4">
+<div class="p-2 bg-ocean-wash text-primary rounded-lg">
+<span class="material-symbols-outlined" data-icon="group">group</span>
+</div>
+<span class="text-success font-text-sm-medium">+12% vs last week</span>
+</div>
+<p class="text-grey-500 font-text-sm mb-1">Total Leads</p>
+<h3 class="text-[28px] font-bold text-primary">1,284</h3>
+</div>
+<!-- Drafts Pending Card -->
+<div class="bg-surface-container-lowest p-space-6 rounded-xl shadow-[0_1px_3px_rgba(27,45,91,0.08)] border border-grey-100">
+<div class="flex justify-between items-start mb-4">
+<div class="p-2 bg-warning-bg text-warning rounded-lg">
+<span class="material-symbols-outlined" data-icon="edit_note">edit_note</span>
+</div>
+<span class="text-grey-500 font-text-sm">24 requiring review</span>
+</div>
+<p class="text-grey-500 font-text-sm mb-1">Drafts Pending</p>
+<h3 class="text-[28px] font-bold text-primary">86</h3>
+</div>
+<!-- Emails Sent Card -->
+<div class="bg-surface-container-lowest p-space-6 rounded-xl shadow-[0_1px_3px_rgba(27,45,91,0.08)] border border-grey-100">
+<div class="flex justify-between items-start mb-4">
+<div class="p-2 bg-ocean-wash text-secondary rounded-lg">
+<span class="material-symbols-outlined" data-icon="send">send</span>
+</div>
+<span class="text-grey-500 font-text-sm">98% delivery rate</span>
+</div>
+<p class="text-grey-500 font-text-sm mb-1">Emails Sent</p>
+<h3 class="text-[28px] font-bold text-primary">4,521</h3>
+</div>
+<!-- Reply Rate Card -->
+<div class="bg-surface-container-lowest p-space-6 rounded-xl shadow-[0_1px_3px_rgba(27,45,91,0.08)] border border-grey-100">
+<div class="flex justify-between items-start mb-4">
+<div class="p-2 bg-success-bg text-success rounded-lg">
+<span class="material-symbols-outlined" data-icon="forum">forum</span>
+</div>
+<div class="flex gap-1">
+<div class="w-2 h-2 rounded-full bg-success"></div>
+<span class="text-success font-text-sm-medium">Above average</span>
+</div>
+</div>
+<p class="text-grey-500 font-text-sm mb-1">Reply Rate</p>
+<h3 class="text-[28px] font-bold text-primary">18.4%</h3>
+</div>
+</div>
+<!-- Tabs Navigation -->
+<div class="border-b border-grey-100 mb-space-6 flex items-center justify-between">
+<div class="flex gap-space-8">
+<button class="pb-space-3 border-b-2 border-primary text-primary font-text-base-semibold text-text-base-semibold px-1">Leads</button>
+<button class="pb-space-3 border-b-2 border-transparent text-grey-500 font-text-base-medium text-text-base-medium hover:text-primary transition-colors px-1">Drafts</button>
+<button class="pb-space-3 border-b-2 border-transparent text-grey-500 font-text-base-medium text-text-base-medium hover:text-primary transition-colors px-1">Scrape Jobs</button>
+<button class="pb-space-3 border-b-2 border-transparent text-grey-500 font-text-base-medium text-text-base-medium hover:text-primary transition-colors px-1">Performance</button>
+</div>
+<div class="flex gap-2 mb-2">
+<button class="p-1.5 text-grey-500 hover:bg-grey-100 rounded">
+<span class="material-symbols-outlined text-[20px]" data-icon="filter_list">filter_list</span>
+</button>
+<button class="p-1.5 text-grey-500 hover:bg-grey-100 rounded">
+<span class="material-symbols-outlined text-[20px]" data-icon="sort">sort</span>
+</button>
+</div>
+</div>
+<!-- Leads Table Content -->
+<div class="bg-surface-container-lowest rounded-xl shadow-[0_1px_3px_rgba(27,45,91,0.08)] border border-grey-100 overflow-hidden">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="bg-grey-50 border-b border-grey-100">
+<th class="px-space-6 py-3 font-text-base-semibold text-text-base-semibold text-grey-700">Name</th>
+<th class="px-space-6 py-3 font-text-base-semibold text-text-base-semibold text-grey-700">Company</th>
+<th class="px-space-6 py-3 font-text-base-semibold text-text-base-semibold text-grey-700">Role</th>
+<th class="px-space-6 py-3 font-text-base-semibold text-text-base-semibold text-grey-700">Email</th>
+<th class="px-space-4 py-3 font-text-base-semibold text-text-base-semibold text-grey-700 text-center">Verified</th>
+<th class="px-space-6 py-3 font-text-base-semibold text-text-base-semibold text-grey-700">Draft Status</th>
+<th class="px-space-6 py-3 font-text-base-semibold text-text-base-semibold text-grey-700 text-right">Last Activity</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-grey-100">
+<!-- Row 1 -->
+<tr class="hover:bg-ocean-wash transition-colors duration-150 cursor-pointer">
+<td class="px-space-6 py-4">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-primary-fixed flex items-center justify-center text-on-primary-fixed font-bold text-xs">SK</div>
+<span class="font-text-base-medium text-primary">Sarah Kinsley</span>
+</div>
+</td>
+<td class="px-space-6 py-4 font-text-sm text-grey-700">CloudScale AI</td>
+<td class="px-space-6 py-4 font-text-sm text-grey-500">VP Marketing</td>
+<td class="px-space-6 py-4 font-text-sm font-text-mono text-secondary">s.kinsley@cloudscale.ai</td>
+<td class="px-space-4 py-4 text-center">
+<span class="material-symbols-outlined text-success text-[18px]" data-icon="verified" data-weight="fill" style="font-variation-settings: 'FILL' 1;">verified</span>
+</td>
+<td class="px-space-6 py-4">
+<span class="px-2.5 py-0.5 rounded-full bg-success-bg text-success text-text-sm-medium font-text-sm-medium">Sent</span>
+</td>
+<td class="px-space-6 py-4 text-right font-text-sm text-grey-500">2h ago</td>
+</tr>
+<!-- Row 2 -->
+<tr class="hover:bg-ocean-wash transition-colors duration-150 cursor-pointer">
+<td class="px-space-6 py-4">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-secondary-fixed flex items-center justify-center text-on-secondary-fixed font-bold text-xs">MR</div>
+<span class="font-text-base-medium text-primary">Marcus Rivera</span>
+</div>
+</td>
+<td class="px-space-6 py-4 font-text-sm text-grey-700">DataVibe Systems</td>
+<td class="px-space-6 py-4 font-text-sm text-grey-500">CTO</td>
+<td class="px-space-6 py-4 font-text-sm font-text-mono text-secondary">m.rivera@datavibe.com</td>
+<td class="px-space-4 py-4 text-center">
+<span class="material-symbols-outlined text-success text-[18px]" data-icon="verified" data-weight="fill" style="font-variation-settings: 'FILL' 1;">verified</span>
+</td>
+<td class="px-space-6 py-4">
+<span class="px-2.5 py-0.5 rounded-full bg-warning-bg text-warning text-text-sm-medium font-text-sm-medium">Reviewing</span>
+</td>
+<td class="px-space-6 py-4 text-right font-text-sm text-grey-500">5h ago</td>
+</tr>
+<!-- Row 3 -->
+<tr class="hover:bg-ocean-wash transition-colors duration-150 cursor-pointer">
+<td class="px-space-6 py-4">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-tertiary-fixed flex items-center justify-center text-on-tertiary-fixed font-bold text-xs">JL</div>
+<span class="font-text-base-medium text-primary">Jenna Lane</span>
+</div>
+</td>
+<td class="px-space-6 py-4 font-text-sm text-grey-700">Orbit Logistics</td>
+<td class="px-space-6 py-4 font-text-sm text-grey-500">Sales Director</td>
+<td class="px-space-6 py-4 font-text-sm font-text-mono text-secondary">j.lane@orbit.io</td>
+<td class="px-space-4 py-4 text-center">
+<span class="material-symbols-outlined text-grey-300 text-[18px]" data-icon="verified">verified</span>
+</td>
+<td class="px-space-6 py-4">
+<span class="px-2.5 py-0.5 rounded-full bg-neutral-bg text-neutral text-text-sm-medium font-text-sm-medium">Pending</span>
+</td>
+<td class="px-space-6 py-4 text-right font-text-sm text-grey-500">Yesterday</td>
+</tr>
+<!-- Row 4 -->
+<tr class="hover:bg-ocean-wash transition-colors duration-150 cursor-pointer">
+<td class="px-space-6 py-4">
+<div class="flex items-center gap-3">
+<img class="w-8 h-8 rounded-full object-cover" data-alt="A professional headshot of a middle-aged woman with a friendly, confident expression, set against a blurred modern corporate office background. She has soft natural lighting on her face, reflecting a high-end corporate aesthetic. The color palette is composed of professional greys and soft blues, aligning with a premium B2B marketing interface style." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAAJb-MSBsQCZSPen7_cqw0VR8L0fQipuBbV12x1VERksUYUFWNRJhcKufv51Ke18IrsoCdaDQ_V3I5kfsn6t7ZvDt1ePWukiwTqz76m2K7dTF9rom4WWbMTVuZsXfLkhvrbckvYPhH9mtPRD7zxqUIz0v5gTvyih1uPWyGjIMB1oEQt1uK4wbJkHsnuRxUjAWyOLHEeksTIN-q9ouMIjAO3b4UfyqCeIF1nbkBAlBY2ANzO1aDk7luHFHDlOw4aJpm-I3YMWgETKF-"/>
+<span class="font-text-base-medium text-primary">Elena Rodriguez</span>
+</div>
+</td>
+<td class="px-space-6 py-4 font-text-sm text-grey-700">Inbound Flow</td>
+<td class="px-space-6 py-4 font-text-sm text-grey-500">Head of Growth</td>
+<td class="px-space-6 py-4 font-text-sm font-text-mono text-secondary">elena@inboundflow.co</td>
+<td class="px-space-4 py-4 text-center">
+<span class="material-symbols-outlined text-success text-[18px]" data-icon="verified" data-weight="fill" style="font-variation-settings: 'FILL' 1;">verified</span>
+</td>
+<td class="px-space-6 py-4">
+<span class="px-2.5 py-0.5 rounded-full bg-danger-bg text-danger text-text-sm-medium font-text-sm-medium">Rejected</span>
+</td>
+<td class="px-space-6 py-4 text-right font-text-sm text-grey-500">2d ago</td>
+</tr>
+<!-- Row 5 -->
+<tr class="hover:bg-ocean-wash transition-colors duration-150 cursor-pointer">
+<td class="px-space-6 py-4">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-primary-container flex items-center justify-center text-on-primary-container font-bold text-xs">TH</div>
+<span class="font-text-base-medium text-primary">Thomas Hales</span>
+</div>
+</td>
+<td class="px-space-6 py-4 font-text-sm text-grey-700">Nexus Core</td>
+<td class="px-space-6 py-4 font-text-sm text-grey-500">Product Manager</td>
+<td class="px-space-6 py-4 font-text-sm font-text-mono text-secondary">t.hales@nexuscore.net</td>
+<td class="px-space-4 py-4 text-center">
+<span class="material-symbols-outlined text-success text-[18px]" data-icon="verified" data-weight="fill" style="font-variation-settings: 'FILL' 1;">verified</span>
+</td>
+<td class="px-space-6 py-4">
+<span class="px-2.5 py-0.5 rounded-full bg-ocean-wash text-primary text-text-sm-medium font-text-sm-medium">Personalizing</span>
+</td>
+<td class="px-space-6 py-4 text-right font-text-sm text-grey-500">3d ago</td>
+</tr>
+</tbody>
+</table>
+<!-- Table Pagination -->
+<div class="px-space-6 py-4 bg-grey-50 flex items-center justify-between border-t border-grey-100">
+<span class="text-grey-500 font-text-sm">Showing 1-10 of 1,284 leads</span>
+<div class="flex items-center gap-2">
+<button class="p-1 border border-grey-100 rounded bg-white text-grey-500 disabled:opacity-50">
+<span class="material-symbols-outlined text-[18px]" data-icon="chevron_left">chevron_left</span>
+</button>
+<button class="px-3 py-1 border border-primary bg-ocean-wash text-primary font-text-sm-medium rounded">1</button>
+<button class="px-3 py-1 border border-grey-100 bg-white text-grey-700 font-text-sm-medium rounded">2</button>
+<button class="px-3 py-1 border border-grey-100 bg-white text-grey-700 font-text-sm-medium rounded">3</button>
+<button class="p-1 border border-grey-100 rounded bg-white text-grey-500">
+<span class="material-symbols-outlined text-[18px]" data-icon="chevron_right">chevron_right</span>
+</button>
+</div>
+</div>
+</div>
+<!-- Footer Details -->
+<div class="mt-space-10 grid grid-cols-3 gap-space-10">
+<div class="col-span-2">
+<h4 class="font-text-lg text-text-lg text-primary mb-4">Campaign Activity Log</h4>
+<div class="space-y-4">
+<div class="flex gap-4">
+<div class="flex flex-col items-center">
+<div class="w-2.5 h-2.5 rounded-full bg-success"></div>
+<div class="w-px h-full bg-grey-100 my-1"></div>
+</div>
+<div>
+<p class="font-text-sm text-primary">Automated batch of 50 emails sent for <span class="font-bold">CloudScale AI</span></p>
+<p class="font-text-xs text-grey-500">Oct 24, 10:30 AM</p>
+</div>
+</div>
+<div class="flex gap-4">
+<div class="flex flex-col items-center">
+<div class="w-2.5 h-2.5 rounded-full bg-warning"></div>
+<div class="w-px h-full bg-grey-100 my-1"></div>
+</div>
+<div>
+<p class="font-text-sm text-primary">Campaign paused due to low verification rate on <span class="font-bold">Lead Source B</span></p>
+<p class="font-text-xs text-grey-500">Oct 23, 04:15 PM</p>
+</div>
+</div>
+</div>
+</div>
+<!-- Confidence Score Widget -->
+<div class="bg-surface-container-lowest p-space-6 rounded-xl border border-grey-100 shadow-[0_1px_3px_rgba(27,45,91,0.08)]">
+<h4 class="font-text-base-semibold text-text-base-semibold text-primary mb-4">Targeting Confidence</h4>
+<div class="mb-4">
+<div class="flex justify-between items-end mb-2">
+<span class="px-3 py-1 bg-success text-white rounded font-bold text-sm">High</span>
+<span class="text-grey-500 font-text-xs uppercase">Heuristic Signal</span>
+</div>
+<div class="w-full bg-grey-100 h-[6px] rounded-full overflow-hidden">
+<div class="bg-success h-full" style="width: 88%;"></div>
+</div>
+</div>
+<div class="space-y-3">
+<div class="flex justify-between items-center">
+<span class="text-grey-700 font-text-sm">✓ Domain Authority</span>
+<span class="text-success font-text-sm-medium">Excellent</span>
+</div>
+<div class="flex justify-between items-center">
+<span class="text-grey-700 font-text-sm">✓ Persona Match</span>
+<span class="text-success font-text-sm-medium">Strong</span>
+</div>
+<div class="flex justify-between items-center">
+<span class="text-grey-700 font-text-sm">⚠ Verified Email Rate</span>
+<span class="text-warning font-text-sm-medium">Moderate</span>
+</div>
+</div>
+<button class="w-full mt-6 py-2 border border-grey-100 rounded-lg text-grey-500 font-text-sm-medium hover:bg-grey-50 transition-colors">
+                        View Detailed Heuristics
+                    </button>
+</div>
+</div>
+</div>
+</main>
+</body></html>

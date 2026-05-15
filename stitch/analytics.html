@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>BlueOcean Analytics Dashboard</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "surface-container-high": "#e9e7ec",
+                        "grey-100": "#ECEEF2",
+                        "grey-900": "#1A1F2E",
+                        "tertiary-fixed": "#ffdcc1",
+                        "outline-variant": "#c5c6d0",
+                        "surface-bright": "#fbf8fd",
+                        "success": "#1A9E6B",
+                        "error-container": "#ffdad6",
+                        "background": "#fbf8fd",
+                        "danger": "#C7322A",
+                        "secondary": "#405ba1",
+                        "surface": "#fbf8fd",
+                        "on-tertiary": "#ffffff",
+                        "neutral": "#5A6478",
+                        "on-surface-variant": "#45464f",
+                        "on-secondary-fixed-variant": "#264388",
+                        "surface-dim": "#dbd9de",
+                        "inverse-on-surface": "#f2f0f5",
+                        "on-error-container": "#93000a",
+                        "primary-fixed-dim": "#b4c5fc",
+                        "ocean-wash": "#EDF1FA",
+                        "on-primary-container": "#8595ca",
+                        "surface-container": "#efedf2",
+                        "surface-container-lowest": "#ffffff",
+                        "grey-500": "#7D8799",
+                        "success-bg": "#E8F7F2",
+                        "outline": "#757680",
+                        "on-secondary-fixed": "#001849",
+                        "on-error": "#ffffff",
+                        "on-background": "#1b1b1f",
+                        "surface-variant": "#e4e2e6",
+                        "on-secondary-container": "#254286",
+                        "inverse-surface": "#303034",
+                        "secondary-container": "#97b1fd",
+                        "on-tertiary-container": "#c28b5b",
+                        "grey-300": "#C2C8D4",
+                        "secondary-fixed": "#dae1ff",
+                        "warning-bg": "#FEF4E0",
+                        "on-primary-fixed": "#031846",
+                        "inverse-primary": "#b4c5fc",
+                        "on-primary": "#ffffff",
+                        "primary-container": "#1b2d5b",
+                        "warning": "#D4860A",
+                        "on-surface": "#1b1b1f",
+                        "on-primary-fixed-variant": "#344574",
+                        "surface-container-low": "#f5f3f7",
+                        "ocean-light": "#4B6BB5",
+                        "grey-50": "#F7F8FA",
+                        "on-tertiary-fixed-variant": "#663d14",
+                        "tertiary-container": "#4a2600",
+                        "tertiary": "#2c1400",
+                        "neutral-bg": "#ECEEF2",
+                        "error": "#ba1a1a",
+                        "primary": "#021745",
+                        "on-tertiary-fixed": "#2e1500",
+                        "grey-700": "#3D4557",
+                        "tertiary-fixed-dim": "#f7ba86",
+                        "secondary-fixed-dim": "#b3c5ff",
+                        "surface-container-highest": "#e4e2e6",
+                        "on-secondary": "#ffffff",
+                        "danger-bg": "#FDECEA",
+                        "surface-tint": "#4c5d8e",
+                        "primary-fixed": "#dbe1ff"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "space-8": "32px",
+                        "space-3": "12px",
+                        "space-6": "24px",
+                        "space-4": "16px",
+                        "space-2": "8px",
+                        "sidebar-width": "220px",
+                        "space-1": "4px",
+                        "space-5": "20px",
+                        "space-10": "40px",
+                        "min-viewport": "1280px"
+                    },
+                    "fontFamily": {
+                        "text-mono": ["JetBrains Mono"],
+                        "text-xs": ["DM Sans"],
+                        "text-base-semibold": ["DM Sans"],
+                        "text-mono-sm": ["JetBrains Mono"],
+                        "text-base": ["DM Sans"],
+                        "text-sm": ["DM Sans"],
+                        "text-lg": ["DM Sans"],
+                        "text-xl": ["DM Sans"],
+                        "text-base-medium": ["DM Sans"],
+                        "text-sm-medium": ["DM Sans"],
+                        "text-2xl": ["DM Sans"]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        body { font-family: 'DM Sans', sans-serif; }
+    </style>
+</head>
+<body class="bg-grey-50 text-on-background min-w-[1280px]">
+<!-- Sidebar Navigation -->
+<aside class="fixed left-0 top-0 h-full w-[220px] bg-surface-container-lowest border-r border-grey-100 shadow-[1px_0_3px_rgba(27,45,91,0.08)] flex flex-col py-space-6">
+<div class="px-space-6 mb-space-8">
+<span class="font-text-xl text-text-xl font-bold text-primary">BlueOcean</span>
+<p class="font-text-sm text-text-sm text-grey-500">Marketing Automation</p>
+</div>
+<nav class="flex-1 space-y-1">
+<a class="flex items-center px-space-6 py-space-3 text-grey-500 font-text-sm text-text-sm hover:bg-ocean-wash transition-colors duration-150 scale-100 active:scale-[0.98]" href="#">
+<span class="material-symbols-outlined mr-3">campaign</span>
+                Campaigns
+            </a>
+<a class="flex items-center px-space-6 py-space-3 text-grey-500 font-text-sm text-text-sm hover:bg-ocean-wash transition-colors duration-150 scale-100 active:scale-[0.98]" href="#">
+<span class="material-symbols-outlined mr-3">pending_actions</span>
+                Draft Queue
+            </a>
+<a class="flex items-center px-space-6 py-space-3 text-grey-500 font-text-sm text-text-sm hover:bg-ocean-wash transition-colors duration-150 scale-100 active:scale-[0.98]" href="#">
+<span class="material-symbols-outlined mr-3">reply</span>
+                Replies
+            </a>
+<!-- Active Tab: Analytics -->
+<a class="flex items-center px-space-6 py-space-3 text-primary font-bold bg-ocean-wash transition-colors duration-150 scale-100 active:scale-[0.98]" href="#">
+<span class="material-symbols-outlined mr-3">analytics</span>
+                Analytics
+            </a>
+<a class="flex items-center px-space-6 py-space-3 text-grey-500 font-text-sm text-text-sm hover:bg-ocean-wash transition-colors duration-150 scale-100 active:scale-[0.98]" href="#">
+<span class="material-symbols-outlined mr-3">database</span>
+                Source Registry
+            </a>
+<a class="flex items-center px-space-6 py-space-3 text-grey-500 font-text-sm text-text-sm hover:bg-ocean-wash transition-colors duration-150 scale-100 active:scale-[0.98]" href="#">
+<span class="material-symbols-outlined mr-3">settings</span>
+                Settings
+            </a>
+</nav>
+<div class="px-space-6 pt-space-6 mt-auto border-t border-grey-100">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-grey-100 overflow-hidden">
+<img alt="User" data-alt="A professional headshot of a senior marketing manager in a clean, modern office environment. The lighting is soft and corporate, utilizing a bright color palette of blues and whites. The individual is smiling confidently, reflecting a high-performance B2B leadership aesthetic. The background is a minimalist, slightly blurred office space with sleek furniture." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBmt0MZ0Nnie1Vu0OMggpm8KD0hEy6MvCUh_kZtOFbOIWAURFofvWBQYnd1rWgw54wnN6T_b81zaVOFAfOHSs_vCIUDib6boDO-8wWGWuWr7jjJeNQ6O_q96ywZ2tLk8hYBLzW3GoGj90jMFRK5-uEmo56MSUrv654UHPPkv-5rvGBW0fw0sd-8Xn_FZQx9HfO_YIQsocTxp5cNbYMb-IZ1eg6Id5Pm3sJ3yNUCHry3fCsO2we4kzrjPQQ8kfBqPELIbQCq8da72T3l"/>
+</div>
+<div class="overflow-hidden">
+<p class="font-text-sm-medium text-text-sm-medium text-primary truncate">Alex Rivera</p>
+<p class="font-text-xs text-text-xs text-grey-500">Global Admin</p>
+</div>
+</div>
+</div>
+</aside>
+<!-- Top AppBar -->
+<header class="fixed top-0 right-0 left-[220px] h-16 bg-surface border-b border-grey-100 flex justify-between items-center px-space-10 w-full z-10">
+<div class="flex items-center bg-grey-50 border border-grey-100 px-3 py-1.5 rounded-lg w-96">
+<span class="material-symbols-outlined text-grey-500 text-[20px]">search</span>
+<input class="bg-transparent border-none focus:ring-0 font-text-sm text-text-sm w-full py-0" placeholder="Search analytics or campaigns..." type="text"/>
+</div>
+<div class="flex items-center gap-space-6">
+<div class="flex gap-4">
+<span class="material-symbols-outlined text-grey-500 cursor-pointer hover:text-primary active:opacity-80">notifications</span>
+<span class="material-symbols-outlined text-grey-500 cursor-pointer hover:text-primary active:opacity-80">help_outline</span>
+</div>
+<button class="bg-primary text-white font-text-base-semibold text-text-base-semibold px-space-4 py-space-2 rounded-lg flex items-center gap-2 hover:opacity-90 active:scale-[0.98] transition-transform">
+<span class="material-symbols-outlined text-[18px]">add_circle</span>
+                New Campaign
+            </button>
+</div>
+</header>
+<!-- Main Content Canvas -->
+<main class="ml-[220px] pt-16 min-h-screen">
+<div class="p-space-10 max-w-[1600px] mx-auto">
+<!-- Page Header Actions -->
+<div class="flex justify-between items-end mb-space-8">
+<div>
+<h1 class="font-text-2xl text-text-2xl text-primary mb-1">Analytics Dashboard</h1>
+<p class="font-text-base text-text-base text-grey-500">Real-time performance across all automated outreach channels.</p>
+</div>
+<button class="border border-primary text-primary font-text-base-semibold text-text-base-semibold px-space-4 py-space-2 rounded-lg flex items-center gap-2 hover:bg-ocean-wash active:opacity-80 transition-all">
+<span class="material-symbols-outlined text-[18px]">download</span>
+                    Export CSV
+                </button>
+</div>
+<!-- KPI Row (5 Tiles) -->
+<div class="grid grid-cols-5 gap-space-4 mb-space-8">
+<!-- KPI 1 -->
+<div class="bg-surface-container-lowest p-space-5 rounded-lg shadow-[0_1px_3px_rgba(27,45,91,0.08)]">
+<div class="flex justify-between items-start mb-2">
+<p class="font-text-sm-medium text-text-sm-medium text-grey-500">Total Leads Contacted</p>
+<span class="material-symbols-outlined text-grey-300 text-[20px]">person_add</span>
+</div>
+<p class="font-text-2xl text-text-2xl text-primary">12,482</p>
+<div class="flex items-center gap-1 mt-2 text-success">
+<span class="material-symbols-outlined text-[14px]">trending_up</span>
+<span class="font-text-xs text-text-xs">12.4% vs last month</span>
+</div>
+</div>
+<!-- KPI 2 -->
+<div class="bg-surface-container-lowest p-space-5 rounded-lg shadow-[0_1px_3px_rgba(27,45,91,0.08)]">
+<div class="flex justify-between items-start mb-2">
+<p class="font-text-sm-medium text-text-sm-medium text-grey-500">Open Rate</p>
+<span class="material-symbols-outlined text-grey-300 text-[20px]">drafts</span>
+</div>
+<p class="font-text-2xl text-text-2xl text-primary">54.2%</p>
+<div class="flex items-center gap-1 mt-2 text-success">
+<span class="material-symbols-outlined text-[14px]">trending_up</span>
+<span class="font-text-xs text-text-xs">3.1% vs last month</span>
+</div>
+</div>
+<!-- KPI 3 -->
+<div class="bg-surface-container-lowest p-space-5 rounded-lg shadow-[0_1px_3px_rgba(27,45,91,0.08)]">
+<div class="flex justify-between items-start mb-2">
+<p class="font-text-sm-medium text-text-sm-medium text-grey-500">Reply Rate</p>
+<span class="material-symbols-outlined text-grey-300 text-[20px]">reply_all</span>
+</div>
+<p class="font-text-2xl text-text-2xl text-primary">8.7%</p>
+<div class="flex items-center gap-1 mt-2 text-warning">
+<span class="material-symbols-outlined text-[14px]">trending_flat</span>
+<span class="font-text-xs text-text-xs">0.2% vs last month</span>
+</div>
+</div>
+<!-- KPI 4 -->
+<div class="bg-surface-container-lowest p-space-5 rounded-lg shadow-[0_1px_3px_rgba(27,45,91,0.08)]">
+<div class="flex justify-between items-start mb-2">
+<p class="font-text-sm-medium text-text-sm-medium text-grey-500">Demos Booked</p>
+<span class="material-symbols-outlined text-grey-300 text-[20px]">event_available</span>
+</div>
+<p class="font-text-2xl text-text-2xl text-primary">142</p>
+<div class="flex items-center gap-1 mt-2 text-success">
+<span class="material-symbols-outlined text-[14px]">trending_up</span>
+<span class="font-text-xs text-text-xs">18 new this week</span>
+</div>
+</div>
+<!-- KPI 5 (Danger) -->
+<div class="bg-surface-container-lowest p-space-5 rounded-lg shadow-[0_1px_3px_rgba(27,45,91,0.08)] border-l-4 border-danger">
+<div class="flex justify-between items-start mb-2">
+<p class="font-text-sm-medium text-text-sm-medium text-grey-500">Spam Complaint Rate</p>
+<span class="material-symbols-outlined text-danger text-[20px]">warning</span>
+</div>
+<p class="font-text-2xl text-text-2xl text-danger">0.82%</p>
+<div class="flex items-center gap-1 mt-2 text-danger">
+<span class="material-symbols-outlined text-[14px]">trending_up</span>
+<span class="font-text-xs text-text-xs">+0.14% above threshold</span>
+</div>
+</div>
+</div>
+<!-- Charts Section -->
+<div class="grid grid-cols-12 gap-space-8 mb-space-8">
+<!-- Line Chart: Emails Sent over time -->
+<div class="col-span-8 bg-surface-container-lowest p-space-6 rounded-lg shadow-[0_1px_3px_rgba(27,45,91,0.08)]">
+<div class="flex justify-between items-center mb-6">
+<h3 class="font-text-lg text-text-lg text-primary">Emails Sent Over Time</h3>
+<div class="flex gap-2">
+<span class="flex items-center gap-1 px-2 py-1 bg-grey-50 text-grey-700 font-text-xs text-text-xs rounded border border-grey-100">7 Days</span>
+<span class="flex items-center gap-1 px-2 py-1 bg-primary text-white font-text-xs text-text-xs rounded">30 Days</span>
+</div>
+</div>
+<div class="h-[280px] w-full flex items-end justify-between px-2 gap-1 relative">
+<!-- Simulated Chart Grid -->
+<div class="absolute inset-0 flex flex-col justify-between py-2 pointer-events-none">
+<div class="border-t border-grey-50 w-full"></div>
+<div class="border-t border-grey-50 w-full"></div>
+<div class="border-t border-grey-50 w-full"></div>
+<div class="border-t border-grey-50 w-full"></div>
+</div>
+<!-- Bars for Visualization -->
+<div class="w-full bg-secondary-container h-[40%] rounded-t-sm"></div>
+<div class="w-full bg-secondary-container h-[55%] rounded-t-sm"></div>
+<div class="w-full bg-secondary-container h-[48%] rounded-t-sm"></div>
+<div class="w-full bg-secondary-container h-[65%] rounded-t-sm"></div>
+<div class="w-full bg-primary h-[85%] rounded-t-sm relative">
+<div class="absolute -top-8 left-1/2 -translate-x-1/2 bg-primary text-white text-[10px] px-1.5 py-0.5 rounded">2.4k</div>
+</div>
+<div class="w-full bg-secondary-container h-[70%] rounded-t-sm"></div>
+<div class="w-full bg-secondary-container h-[60%] rounded-t-sm"></div>
+<div class="w-full bg-secondary-container h-[52%] rounded-t-sm"></div>
+<div class="w-full bg-secondary-container h-[45%] rounded-t-sm"></div>
+<div class="w-full bg-secondary-container h-[35%] rounded-t-sm"></div>
+<div class="w-full bg-secondary-container h-[58%] rounded-t-sm"></div>
+<div class="w-full bg-secondary-container h-[68%] rounded-t-sm"></div>
+</div>
+<div class="flex justify-between mt-4 px-2 font-text-xs text-text-xs text-grey-500">
+<span>Oct 01</span><span>Oct 07</span><span>Oct 14</span><span>Oct 21</span><span>Oct 30</span>
+</div>
+</div>
+<!-- Donut Chart: Reply Sentiment -->
+<div class="col-span-4 bg-surface-container-lowest p-space-6 rounded-lg shadow-[0_1px_3px_rgba(27,45,91,0.08)] flex flex-col">
+<h3 class="font-text-lg text-text-lg text-primary mb-6">Reply Sentiment</h3>
+<div class="flex-1 flex flex-col items-center justify-center relative">
+<!-- Custom Donut Visualization -->
+<div class="w-48 h-48 rounded-full border-[18px] border-success border-r-warning border-b-danger border-l-grey-100 flex items-center justify-center transform -rotate-45">
+<div class="rotate-45 flex flex-col items-center">
+<span class="font-text-2xl text-text-2xl text-primary">86%</span>
+<span class="font-text-xs text-text-xs text-grey-500">Positive</span>
+</div>
+</div>
+<div class="mt-8 w-full space-y-3">
+<div class="flex justify-between items-center">
+<div class="flex items-center gap-2">
+<div class="w-2.5 h-2.5 rounded-full bg-success"></div>
+<span class="font-text-sm text-text-sm text-grey-700">Interested / Positive</span>
+</div>
+<span class="font-text-sm-medium text-text-sm-medium text-primary">86%</span>
+</div>
+<div class="flex justify-between items-center">
+<div class="flex items-center gap-2">
+<div class="w-2.5 h-2.5 rounded-full bg-warning"></div>
+<span class="font-text-sm text-text-sm text-grey-700">Follow-up Later</span>
+</div>
+<span class="font-text-sm-medium text-text-sm-medium text-primary">9%</span>
+</div>
+<div class="flex justify-between items-center">
+<div class="flex items-center gap-2">
+<div class="w-2.5 h-2.5 rounded-full bg-danger"></div>
+<span class="font-text-sm text-text-sm text-grey-700">Not Interested</span>
+</div>
+<span class="font-text-sm-medium text-text-sm-medium text-primary">5%</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Template Performance Table -->
+<div class="bg-surface-container-lowest rounded-lg shadow-[0_1px_3px_rgba(27,45,91,0.08)] overflow-hidden">
+<div class="p-space-6 border-b border-grey-100 flex justify-between items-center">
+<h3 class="font-text-lg text-text-lg text-primary">Template Performance</h3>
+<button class="text-secondary font-text-sm-medium text-text-sm-medium hover:underline">View All Templates</button>
+</div>
+<table class="w-full text-left">
+<thead class="bg-grey-50 text-grey-700 font-text-base-semibold text-text-base-semibold">
+<tr>
+<th class="px-space-6 py-4">Template Name</th>
+<th class="px-space-4 py-4 text-center">Status</th>
+<th class="px-space-4 py-4 text-right">Sent</th>
+<th class="px-space-4 py-4 text-right">Opens</th>
+<th class="px-space-4 py-4 text-right">Replies</th>
+<th class="px-space-6 py-4 text-center">Actions</th>
+</tr>
+</thead>
+<tbody class="font-text-sm text-text-sm text-grey-700 divide-y divide-grey-100">
+<tr class="hover:bg-ocean-wash transition-colors">
+<td class="px-space-6 py-[14px]">
+<div class="flex flex-col">
+<span class="font-text-sm-medium text-text-sm-medium text-primary">Product Intro V2 - SaaS Founders</span>
+<span class="font-text-xs text-text-xs text-grey-500">Modified 2 days ago</span>
+</div>
+</td>
+<td class="px-space-4 py-[14px] text-center">
+<span class="inline-flex items-center px-2 py-0.5 rounded-full bg-success-bg text-success font-text-sm-medium text-text-sm-medium">Active</span>
+</td>
+<td class="px-space-4 py-[14px] text-right font-text-mono text-text-mono-sm">4,281</td>
+<td class="px-space-4 py-[14px] text-right font-text-mono text-text-mono-sm">62.4%</td>
+<td class="px-space-4 py-[14px] text-right font-text-mono text-text-mono-sm">12.1%</td>
+<td class="px-space-6 py-[14px] text-center">
+<div class="flex justify-center gap-2">
+<button class="p-1 hover:text-primary transition-colors"><span class="material-symbols-outlined text-[18px]">edit</span></button>
+<button class="p-1 hover:text-primary transition-colors"><span class="material-symbols-outlined text-[18px]">more_vert</span></button>
+</div>
+</td>
+</tr>
+<tr class="hover:bg-ocean-wash transition-colors">
+<td class="px-space-6 py-[14px]">
+<div class="flex flex-col">
+<span class="font-text-sm-medium text-text-sm-medium text-primary">Feature Update - Q3 Roadmap</span>
+<span class="font-text-xs text-text-xs text-grey-500">Modified 5 days ago</span>
+</div>
+</td>
+<td class="px-space-4 py-[14px] text-center">
+<span class="inline-flex items-center px-2 py-0.5 rounded-full bg-success-bg text-success font-text-sm-medium text-text-sm-medium">Active</span>
+</td>
+<td class="px-space-4 py-[14px] text-right font-text-mono text-text-mono-sm">2,105</td>
+<td class="px-space-4 py-[14px] text-right font-text-mono text-text-mono-sm">48.2%</td>
+<td class="px-space-4 py-[14px] text-right font-text-mono text-text-mono-sm">7.4%</td>
+<td class="px-space-6 py-[14px] text-center">
+<div class="flex justify-center gap-2">
+<button class="p-1 hover:text-primary transition-colors"><span class="material-symbols-outlined text-[18px]">edit</span></button>
+<button class="p-1 hover:text-primary transition-colors"><span class="material-symbols-outlined text-[18px]">more_vert</span></button>
+</div>
+</td>
+</tr>
+<tr class="hover:bg-ocean-wash transition-colors">
+<td class="px-space-6 py-[14px]">
+<div class="flex flex-col">
+<span class="font-text-sm-medium text-text-sm-medium text-primary">Webinar Invitation - Oct 15</span>
+<span class="font-text-xs text-text-xs text-grey-500">Modified 1 day ago</span>
+</div>
+</td>
+<td class="px-space-4 py-[14px] text-center">
+<span class="inline-flex items-center px-2 py-0.5 rounded-full bg-warning-bg text-warning font-text-sm-medium text-text-sm-medium">Paused</span>
+</td>
+<td class="px-space-4 py-[14px] text-right font-text-mono text-text-mono-sm">1,540</td>
+<td class="px-space-4 py-[14px] text-right font-text-mono text-text-mono-sm">31.8%</td>
+<td class="px-space-4 py-[14px] text-right font-text-mono text-text-mono-sm">2.1%</td>
+<td class="px-space-6 py-[14px] text-center">
+<div class="flex justify-center gap-2">
+<button class="p-1 hover:text-primary transition-colors"><span class="material-symbols-outlined text-[18px]">edit</span></button>
+<button class="p-1 hover:text-primary transition-colors"><span class="material-symbols-outlined text-[18px]">more_vert</span></button>
+</div>
+</td>
+</tr>
+<tr class="hover:bg-ocean-wash transition-colors">
+<td class="px-space-6 py-[14px]">
+<div class="flex flex-col">
+<span class="font-text-sm-medium text-text-sm-medium text-primary">Re-engagement Campaign - Cold Leads</span>
+<span class="font-text-xs text-text-xs text-grey-500">Modified 1 week ago</span>
+</div>
+</td>
+<td class="px-space-4 py-[14px] text-center">
+<span class="inline-flex items-center px-2 py-0.5 rounded-full bg-neutral-bg text-neutral font-text-sm-medium text-text-sm-medium">Draft</span>
+</td>
+<td class="px-space-4 py-[14px] text-right font-text-mono text-text-mono-sm">0</td>
+<td class="px-space-4 py-[14px] text-right font-text-mono text-text-mono-sm">0.0%</td>
+<td class="px-space-4 py-[14px] text-right font-text-mono text-text-mono-sm">0.0%</td>
+<td class="px-space-6 py-[14px] text-center">
+<div class="flex justify-center gap-2">
+<button class="p-1 hover:text-primary transition-colors"><span class="material-symbols-outlined text-[18px]">edit</span></button>
+<button class="p-1 hover:text-primary transition-colors"><span class="material-symbols-outlined text-[18px]">more_vert</span></button>
+</div>
+</td>
+</tr>
+</tbody>
+</table>
+<div class="px-space-6 py-4 bg-grey-50 border-t border-grey-100 flex items-center justify-between">
+<span class="font-text-xs text-text-xs text-grey-500">Showing 4 of 24 templates</span>
+<div class="flex gap-2">
+<button class="p-1 border border-grey-100 rounded bg-white text-grey-500 hover:text-primary disabled:opacity-50" disabled="">
+<span class="material-symbols-outlined text-[18px]">chevron_left</span>
+</button>
+<button class="p-1 border border-grey-100 rounded bg-white text-grey-500 hover:text-primary">
+<span class="material-symbols-outlined text-[18px]">chevron_right</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+</main>
+</body></html>

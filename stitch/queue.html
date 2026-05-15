@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500;1,600;1,700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          "colors": {
+            "surface-container-high": "#e9e7ec",
+            "grey-100": "#ECEEF2",
+            "grey-900": "#1A1F2E",
+            "tertiary-fixed": "#ffdcc1",
+            "outline-variant": "#c5c6d0",
+            "surface-bright": "#fbf8fd",
+            "success": "#1A9E6B",
+            "error-container": "#ffdad6",
+            "background": "#fbf8fd",
+            "danger": "#C7322A",
+            "secondary": "#405ba1",
+            "surface": "#fbf8fd",
+            "on-tertiary": "#ffffff",
+            "neutral": "#5A6478",
+            "on-surface-variant": "#45464f",
+            "on-secondary-fixed-variant": "#264388",
+            "surface-dim": "#dbd9de",
+            "inverse-on-surface": "#f2f0f5",
+            "on-error-container": "#93000a",
+            "primary-fixed-dim": "#b4c5fc",
+            "ocean-wash": "#EDF1FA",
+            "on-primary-container": "#8595ca",
+            "surface-container": "#efedf2",
+            "surface-container-lowest": "#ffffff",
+            "grey-500": "#7D8799",
+            "success-bg": "#E8F7F2",
+            "outline": "#757680",
+            "on-secondary-fixed": "#001849",
+            "on-error": "#ffffff",
+            "on-background": "#1b1b1f",
+            "surface-variant": "#e4e2e6",
+            "on-secondary-container": "#254286",
+            "inverse-surface": "#303034",
+            "secondary-container": "#97b1fd",
+            "on-tertiary-container": "#c28b5b",
+            "grey-300": "#C2C8D4",
+            "secondary-fixed": "#dae1ff",
+            "warning-bg": "#FEF4E0",
+            "on-primary-fixed": "#031846",
+            "inverse-primary": "#b4c5fc",
+            "on-primary": "#ffffff",
+            "primary-container": "#1b2d5b",
+            "warning": "#D4860A",
+            "on-surface": "#1b1b1f",
+            "on-primary-fixed-variant": "#344574",
+            "surface-container-low": "#f5f3f7",
+            "ocean-light": "#4B6BB5",
+            "grey-50": "#F7F8FA",
+            "on-tertiary-fixed-variant": "#663d14",
+            "tertiary-container": "#4a2600",
+            "tertiary": "#2c1400",
+            "neutral-bg": "#ECEEF2",
+            "error": "#ba1a1a",
+            "primary": "#021745",
+            "on-tertiary-fixed": "#2e1500",
+            "grey-700": "#3D4557",
+            "tertiary-fixed-dim": "#f7ba86",
+            "secondary-fixed-dim": "#b3c5ff",
+            "surface-container-highest": "#e4e2e6",
+            "on-secondary": "#ffffff",
+            "danger-bg": "#FDECEA",
+            "surface-tint": "#4c5d8e",
+            "primary-fixed": "#dbe1ff"
+          },
+          "borderRadius": {
+            "DEFAULT": "0.125rem",
+            "lg": "0.25rem",
+            "xl": "0.5rem",
+            "full": "0.75rem"
+          },
+          "spacing": {
+            "space-8": "32px",
+            "space-3": "12px",
+            "space-6": "24px",
+            "space-4": "16px",
+            "space-2": "8px",
+            "sidebar-width": "220px",
+            "space-1": "4px",
+            "space-5": "20px",
+            "space-10": "40px",
+            "min-viewport": "1280px"
+          },
+          "fontFamily": {
+            "text-mono": ["JetBrains Mono"],
+            "text-xs": ["DM Sans"],
+            "text-base-semibold": ["DM Sans"],
+            "text-mono-sm": ["JetBrains Mono"],
+            "text-base": ["DM Sans"],
+            "text-sm": ["DM Sans"],
+            "text-lg": ["DM Sans"],
+            "text-xl": ["DM Sans"],
+            "text-base-medium": ["DM Sans"],
+            "text-sm-medium": ["DM Sans"],
+            "text-2xl": ["DM Sans"]
+          },
+          "fontSize": {
+            "text-mono": ["13px", {"lineHeight": "1.6", "fontWeight": "400"}],
+            "text-xs": ["11px", {"lineHeight": "1.4", "fontWeight": "400"}],
+            "text-base-semibold": ["14px", {"lineHeight": "1.6", "fontWeight": "600"}],
+            "text-mono-sm": ["11px", {"lineHeight": "1.4", "fontWeight": "500"}],
+            "text-base": ["14px", {"lineHeight": "1.6", "fontWeight": "400"}],
+            "text-sm": ["13px", {"lineHeight": "1.5", "fontWeight": "400"}],
+            "text-lg": ["16px", {"lineHeight": "1.4", "fontWeight": "600"}],
+            "text-xl": ["20px", {"lineHeight": "1.3", "fontWeight": "700"}],
+            "text-base-medium": ["14px", {"lineHeight": "1.6", "fontWeight": "500"}],
+            "text-sm-medium": ["13px", {"lineHeight": "1.5", "fontWeight": "500"}],
+            "text-2xl": ["24px", {"lineHeight": "1.2", "fontWeight": "700"}]
+          }
+        },
+      },
+    }
+  </script>
+</head>
+<body class="bg-grey-50 font-text-base text-on-surface overflow-hidden">
+<!-- SideNavBar Anchor -->
+<aside class="fixed left-0 top-0 h-full w-[220px] bg-surface-container-lowest dark:bg-grey-900 border-r border-grey-100 dark:border-grey-700 shadow-[1px_0_3px_rgba(27,45,91,0.08)] flex flex-col h-full py-space-6 z-50">
+<div class="px-space-6 mb-space-8">
+<h1 class="font-text-xl text-text-xl font-bold text-primary dark:text-primary-fixed">BlueOcean</h1>
+<p class="font-text-sm text-text-sm text-grey-500">Marketing Automation</p>
+</div>
+<nav class="flex-1 space-y-1">
+<a class="flex items-center px-space-6 py-space-3 text-grey-500 dark:text-grey-300 font-text-sm text-text-sm hover:bg-ocean-wash dark:hover:bg-primary-container transition-colors duration-150 scale-100 active:scale-[0.98] transition-transform" href="#">
+<span class="material-symbols-outlined mr-3" data-icon="campaign">campaign</span>
+        Campaigns
+      </a>
+<a class="flex items-center px-space-6 py-space-3 text-primary dark:text-primary-fixed font-bold bg-ocean-wash dark:bg-primary-container scale-100 active:scale-[0.98] transition-transform" href="#">
+<span class="material-symbols-outlined mr-3" data-icon="pending_actions">pending_actions</span>
+        Draft Queue
+      </a>
+<a class="flex items-center px-space-6 py-space-3 text-grey-500 dark:text-grey-300 font-text-sm text-text-sm hover:bg-ocean-wash dark:hover:bg-primary-container transition-colors duration-150" href="#">
+<span class="material-symbols-outlined mr-3" data-icon="reply">reply</span>
+        Replies
+      </a>
+<a class="flex items-center px-space-6 py-space-3 text-grey-500 dark:text-grey-300 font-text-sm text-text-sm hover:bg-ocean-wash dark:hover:bg-primary-container transition-colors duration-150" href="#">
+<span class="material-symbols-outlined mr-3" data-icon="analytics">analytics</span>
+        Analytics
+      </a>
+<a class="flex items-center px-space-6 py-space-3 text-grey-500 dark:text-grey-300 font-text-sm text-text-sm hover:bg-ocean-wash dark:hover:bg-primary-container transition-colors duration-150" href="#">
+<span class="material-symbols-outlined mr-3" data-icon="database">database</span>
+        Source Registry
+      </a>
+</nav>
+<div class="px-space-6 pt-space-6 border-t border-grey-100">
+<a class="flex items-center py-space-3 text-grey-500 dark:text-grey-300 font-text-sm text-text-sm hover:bg-ocean-wash dark:hover:bg-primary-container transition-colors duration-150" href="#">
+<span class="material-symbols-outlined mr-3" data-icon="settings">settings</span>
+        Settings
+      </a>
+</div>
+</aside>
+<!-- TopAppBar Anchor -->
+<header class="fixed top-0 right-0 left-[220px] h-16 bg-surface dark:bg-grey-900 border-b border-grey-100 dark:border-grey-700 flex justify-between items-center px-space-10 w-full z-40">
+<div class="flex items-center flex-1 max-w-xl">
+<div class="relative w-full">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-grey-300" data-icon="search">search</span>
+<input class="w-full bg-grey-50 border border-grey-100 radius-sm pl-10 pr-4 py-2 font-text-sm text-text-sm focus:outline-none focus:ring-1 focus:ring-primary" placeholder="Search leads or campaigns..." type="text"/>
+</div>
+</div>
+<div class="flex items-center space-x-6">
+<div class="flex space-x-4 text-grey-500">
+<span class="material-symbols-outlined cursor-pointer hover:text-primary transition-colors" data-icon="notifications">notifications</span>
+<span class="material-symbols-outlined cursor-pointer hover:text-primary transition-colors" data-icon="help_outline">help_outline</span>
+<span class="material-symbols-outlined cursor-pointer hover:text-primary transition-colors" data-icon="account_circle">account_circle</span>
+</div>
+<button class="bg-primary text-on-primary font-text-base-semibold text-text-base-semibold px-space-4 py-2 radius-sm active:opacity-80 transition-opacity">
+        New Campaign
+      </button>
+</div>
+</header>
+<!-- Main Canvas -->
+<main class="ml-[220px] pt-16 h-screen flex flex-col">
+<div class="flex-1 flex overflow-hidden">
+<!-- Left Panel: Lead Queue -->
+<section class="w-[320px] bg-white border-r border-grey-100 flex flex-col h-full overflow-y-auto">
+<div class="p-space-5 border-b border-grey-100 sticky top-0 bg-white z-10">
+<h2 class="font-text-lg text-text-lg text-primary">Queue (42)</h2>
+</div>
+<!-- Lead Item Active -->
+<div class="p-space-4 border-b border-grey-100 bg-ocean-wash cursor-pointer border-l-4 border-primary">
+<div class="flex justify-between items-start mb-1">
+<h3 class="font-text-base-semibold text-text-base-semibold text-primary">Sarah Chen</h3>
+<span class="bg-success-bg text-success px-2 py-0.5 radius-sm font-text-xs text-text-xs">High</span>
+</div>
+<p class="font-text-sm text-text-sm text-grey-500 mb-space-2">Director of Ops, CloudScale</p>
+<div class="flex items-center justify-between">
+<span class="bg-warning-bg text-warning px-2 py-0.5 radius-sm font-text-xs text-text-xs">Needs Review</span>
+<span class="font-text-xs text-text-xs text-grey-300">2m ago</span>
+</div>
+</div>
+<!-- Lead Item -->
+<div class="p-space-4 border-b border-grey-100 hover:bg-grey-50 cursor-pointer transition-colors">
+<div class="flex justify-between items-start mb-1">
+<h3 class="font-text-base-semibold text-text-base-semibold text-primary">Marcus Holloway</h3>
+<span class="bg-warning-bg text-warning px-2 py-0.5 radius-sm font-text-xs text-text-xs">Moderate</span>
+</div>
+<p class="font-text-sm text-text-sm text-grey-500 mb-space-2">CTO, Nexus Systems</p>
+<div class="flex items-center justify-between">
+<span class="bg-grey-100 text-grey-500 px-2 py-0.5 radius-sm font-text-xs text-text-xs">Drafting</span>
+<span class="font-text-xs text-text-xs text-grey-300">15m ago</span>
+</div>
+</div>
+<!-- Lead Item -->
+<div class="p-space-4 border-b border-grey-100 hover:bg-grey-50 cursor-pointer transition-colors">
+<div class="flex justify-between items-start mb-1">
+<h3 class="font-text-base-semibold text-text-base-semibold text-primary">Elena Rodriguez</h3>
+<span class="bg-success-bg text-success px-2 py-0.5 radius-sm font-text-xs text-text-xs">High</span>
+</div>
+<p class="font-text-sm text-text-sm text-grey-500 mb-space-2">VP Engineering, DataFlow</p>
+<div class="flex items-center justify-between">
+<span class="bg-warning-bg text-warning px-2 py-0.5 radius-sm font-text-xs text-text-xs">Needs Review</span>
+<span class="font-text-xs text-text-xs text-grey-300">1h ago</span>
+</div>
+</div>
+<!-- Lead Item -->
+<div class="p-space-4 border-b border-grey-100 hover:bg-grey-50 cursor-pointer transition-colors">
+<div class="flex justify-between items-start mb-1">
+<h3 class="font-text-base-semibold text-text-base-semibold text-primary">Julian Sorel</h3>
+<span class="bg-danger-bg text-danger px-2 py-0.5 radius-sm font-text-xs text-text-xs">Low</span>
+</div>
+<p class="font-text-sm text-text-sm text-grey-500 mb-space-2">Product Head, Stellar Labs</p>
+<div class="flex items-center justify-between">
+<span class="bg-warning-bg text-warning px-2 py-0.5 radius-sm font-text-xs text-text-xs">Needs Review</span>
+<span class="font-text-xs text-text-xs text-grey-300">2h ago</span>
+</div>
+</div>
+</section>
+<!-- Right Panel: Main Review Workspace -->
+<section class="flex-1 bg-grey-50 overflow-y-auto">
+<div class="p-space-10 flex flex-col space-y-space-6">
+<!-- Contact Info Strip -->
+<div class="bg-white p-space-6 radius-lg shadow-[0_1px_3px_rgba(27,45,91,0.08)] flex justify-between items-center">
+<div class="flex items-center space-x-space-4">
+<div class="w-12 h-12 radius-full overflow-hidden bg-primary-fixed flex items-center justify-center">
+<img alt="Sarah Chen" class="w-full h-full object-cover" data-alt="A professional headshot of a female tech executive with a confident expression. She is wearing a modern dark blazer against a soft, out-of-focus office background with warm lighting. The image has a clean, high-resolution aesthetic suitable for a corporate B2B application profile." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBWDWQDt4zfPV9bh7-XITQcE9tacuYim1k_068X-WjdRvzGb9o86h4M7NrKf3sp976F215EXMCNpkSpZstZe9ziB86ExPC0-8GGldj1jPW4PIUAzjcqtyH6OGoWth9EwjOeAtwil1APtRp-nTval4HX7ejOp4ism-SuUnN4wad2bxwO4RVLd9pwpCrt88PXbMv-8-kTOkFFiEuukv7pF1dmI7wa9iE87NU_ubHPONCwu9UlUlKDX8ed_oWono3wqmpZh530DMN279tY"/>
+</div>
+<div>
+<h2 class="font-text-xl text-text-xl text-primary">Sarah Chen</h2>
+<div class="flex space-x-4 mt-1">
+<span class="flex items-center text-grey-500 font-text-sm text-text-sm">
+<span class="material-symbols-outlined text-[16px] mr-1" data-icon="location_on">location_on</span> San Francisco, CA
+                  </span>
+<span class="flex items-center text-grey-500 font-text-sm text-text-sm">
+<span class="material-symbols-outlined text-[16px] mr-1" data-icon="link">link</span> LinkedIn Profile
+                  </span>
+</div>
+</div>
+</div>
+<div class="flex space-x-3">
+<span class="bg-ocean-wash text-primary px-3 py-1 radius-sm font-text-sm-medium text-text-sm-medium">SaaS</span>
+<span class="bg-ocean-wash text-primary px-3 py-1 radius-sm font-text-sm-medium text-text-sm-medium">Enterprise AI</span>
+</div>
+</div>
+<!-- Content Grid -->
+<div class="grid grid-cols-12 gap-space-6">
+<!-- Left Workspace (Monospace Preview) -->
+<div class="col-span-8 flex flex-col space-y-space-4">
+<!-- Persona Tabs -->
+<div class="flex space-x-1 border-b border-grey-100">
+<button class="px-space-5 py-space-2 font-text-sm-medium text-text-sm-medium border-b-2 border-primary text-primary">Technical</button>
+<button class="px-space-5 py-space-2 font-text-sm-medium text-text-sm-medium text-grey-500 hover:text-primary transition-colors">Executive</button>
+<button class="px-space-5 py-space-2 font-text-sm-medium text-text-sm-medium text-grey-500 hover:text-primary transition-colors">Ops</button>
+</div>
+<!-- Monospace Editor -->
+<div class="bg-white radius-lg border border-grey-100 flex flex-col h-[400px]">
+<div class="p-space-3 bg-grey-50 border-b border-grey-100 flex justify-between items-center">
+<span class="font-text-xs text-text-xs text-grey-500 uppercase tracking-wider">Draft: Technical Outreach #1</span>
+<div class="flex space-x-2">
+<span class="material-symbols-outlined text-grey-500 text-[18px] cursor-pointer" data-icon="copy_all">copy_all</span>
+<span class="material-symbols-outlined text-grey-500 text-[18px] cursor-pointer" data-icon="refresh">refresh</span>
+</div>
+</div>
+<textarea class="flex-1 p-space-6 font-text-mono text-text-mono bg-transparent border-none focus:ring-0 resize-none text-primary" spellcheck="false">Subject: Optimizing CloudScale's latency for edge nodes
+
+Hi Sarah,
+
+I noticed CloudScale's recent move into edge computing regions. Given your role overseeing Ops, you're likely balancing performance spikes with infrastructure costs.
+
+Our team at BlueOcean has developed a specific orchestration layer that reduces cold-start latency by 24% for nodes in high-density areas. It integrates directly with your existing Kubernetes stack without requiring a complete rewrite.
+
+Would you be open to a 10-minute brief on how we're handling similar throughput for Tier-1 providers?
+
+Best,
+The BlueOcean Team</textarea>
+<div class="px-space-4 py-2 border-t border-grey-100 flex justify-between items-center">
+<div class="flex space-x-4">
+<span class="font-text-xs text-text-xs text-grey-500">Words: <span class="text-primary">94</span>/125</span>
+<span class="font-text-xs text-text-xs text-grey-500">Reading Time: <span class="text-primary">45s</span></span>
+</div>
+<span class="font-text-xs text-text-xs text-success">✓ Optimal length</span>
+</div>
+</div>
+</div>
+<!-- Right Sidebar (Confidence Widget) -->
+<div class="col-span-4 flex flex-col space-y-space-6">
+<!-- Confidence Score Widget -->
+<div class="bg-white radius-lg shadow-[0_1px_3px_rgba(27,45,91,0.08)] overflow-hidden">
+<div class="bg-success px-space-6 py-space-3 flex justify-between items-center text-on-primary">
+<span class="font-text-sm-medium text-text-sm-medium">Confidence Score</span>
+<span class="font-text-lg text-text-lg">High</span>
+</div>
+<div class="h-[6px] w-full bg-success opacity-50"></div>
+<div class="p-space-6 space-y-space-4">
+<div class="flex justify-between items-center">
+<span class="font-text-sm text-text-sm text-grey-500">Lead data</span>
+<span class="font-text-sm-medium text-text-sm-medium text-success flex items-center">
+<span class="material-symbols-outlined text-[16px] mr-1" data-icon="check_circle">check_circle</span> Good
+                    </span>
+</div>
+<div class="flex justify-between items-center">
+<span class="font-text-sm text-text-sm text-grey-500">Persona alignment</span>
+<span class="font-text-sm-medium text-text-sm-medium text-success flex items-center">
+<span class="material-symbols-outlined text-[16px] mr-1" data-icon="check_circle">check_circle</span> Good
+                    </span>
+</div>
+<div class="flex justify-between items-center">
+<span class="font-text-sm text-text-sm text-grey-500">Personalisation</span>
+<span class="font-text-sm-medium text-text-sm-medium text-warning flex items-center">
+<span class="material-symbols-outlined text-[16px] mr-1" data-icon="warning">warning</span> Weak
+                    </span>
+</div>
+<div class="flex justify-between items-center">
+<span class="font-text-sm text-text-sm text-grey-500">Length</span>
+<span class="font-text-sm-medium text-text-sm-medium text-success flex items-center">
+<span class="material-symbols-outlined text-[16px] mr-1" data-icon="check_circle">check_circle</span> Good
+                    </span>
+</div>
+</div>
+</div>
+<!-- Persona Detail Card -->
+<div class="bg-white p-space-6 radius-lg shadow-[0_1px_3px_rgba(27,45,91,0.08)]">
+<h3 class="font-text-base-semibold text-text-base-semibold text-primary mb-space-3">Targeting Strategy</h3>
+<p class="font-text-sm text-text-sm text-grey-700 leading-relaxed">
+                  Focusing on technical pain points regarding "cold starts" and "latency" based on CloudScale's recent infrastructure announcement.
+                </p>
+<div class="mt-space-4 pt-space-4 border-t border-grey-100">
+<span class="font-text-xs text-text-xs text-grey-500 uppercase">Context Signal</span>
+<div class="mt-2 flex items-center space-x-2 bg-ocean-wash p-2 radius-sm">
+<span class="material-symbols-outlined text-primary text-[18px]" data-icon="rss_feed">rss_feed</span>
+<span class="font-text-xs text-text-xs text-primary font-medium">Recent blog: "Edge expansion is here..."</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+</div>
+<!-- Sticky Footer Actions -->
+<footer class="bg-white border-t border-grey-100 p-space-4 flex justify-between items-center px-space-10 z-40">
+<div class="flex items-center space-x-4">
+<span class="font-text-sm text-text-sm text-grey-500">Showing 1 of 42 leads in queue</span>
+<div class="flex space-x-2">
+<button class="w-8 h-8 flex items-center justify-center radius-sm border border-grey-100 hover:bg-grey-50">
+<span class="material-symbols-outlined text-[20px]" data-icon="chevron_left">chevron_left</span>
+</button>
+<button class="w-8 h-8 flex items-center justify-center radius-sm border border-grey-100 hover:bg-grey-50">
+<span class="material-symbols-outlined text-[20px]" data-icon="chevron_right">chevron_right</span>
+</button>
+</div>
+</div>
+<div class="flex space-x-4">
+<button class="px-space-6 py-2 radius-sm border border-danger text-danger font-text-base-semibold text-text-base-semibold hover:bg-danger-bg transition-colors">
+          Reject
+        </button>
+<button class="px-space-6 py-2 radius-sm border border-primary text-primary font-text-base-semibold text-text-base-semibold hover:bg-ocean-wash transition-colors">
+          Edit Draft
+        </button>
+<button class="px-space-8 py-2 radius-sm bg-success text-white font-text-base-semibold text-text-base-semibold shadow-sm active:scale-[0.98] transition-transform">
+          Approve &amp; Send
+        </button>
+</div>
+</footer>
+</main>
+</body></html>
