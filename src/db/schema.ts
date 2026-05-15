@@ -10,6 +10,7 @@ export const draftStatusEnum = pgEnum('draft_status', ['pending_review', 'approv
 export const sentimentEnum = pgEnum('sentiment', ['positive', 'neutral', 'negative']);
 export const flagTypeEnum = pgEnum('flag_type', ['duplicate', 'unverified_email', 'missing_fields', 'sensitive_keywords', 'hostile', 'regulated_entity']);
 export const scrapeJobStatusEnum = pgEnum('scrape_job_status', ['pending', 'in_progress', 'completed', 'failed']);
+export const scraperTypeEnum = pgEnum('scraper_type', ['crawl4ai', 'cheerio']);
 
 // Tables
 export const companies = pgTable('companies', {
@@ -91,6 +92,20 @@ export const templatePerformance = pgTable('template_performance', {
   openRate: numeric('open_rate', { precision: 5, scale: 2 }),
   replyRate: numeric('reply_rate', { precision: 5, scale: 2 }),
   lastCalculatedAt: timestamp('last_calculated_at'),
+});
+
+export const sourceRegistry = pgTable('source_registry', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: varchar('name', { length: 255 }).notNull(),
+  vertical: varchar('vertical', { length: 100 }).notNull(),
+  geo: varchar('geo', { length: 100 }).notNull(),
+  url: varchar('url', { length: 500 }).notNull().unique(),
+  scraperType: scraperTypeEnum('scraper_type').notNull(),
+  legalFlag: boolean('legal_flag').default(true).notNull(),
+  selectors: text('selectors').notNull(), // JSON string with CSS selectors
+  active: boolean('active').default(true),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
 export const scrapeJobs = pgTable('scrape_jobs', {
@@ -179,3 +194,5 @@ export const scrapeJobsRelations = relations(scrapeJobs, ({ one }) => ({
     references: [campaigns.id],
   }),
 }));
+
+export const sourceRegistryRelations = relations(sourceRegistry, ({}) => ({}));

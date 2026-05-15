@@ -26,6 +26,7 @@ async function initializeDatabase() {
       CREATE TYPE IF NOT EXISTS sentiment AS ENUM ('positive', 'neutral', 'negative');
       CREATE TYPE IF NOT EXISTS flag_type AS ENUM ('duplicate', 'unverified_email', 'missing_fields', 'sensitive_keywords', 'hostile', 'regulated_entity');
       CREATE TYPE IF NOT EXISTS scrape_job_status AS ENUM ('pending', 'in_progress', 'completed', 'failed');
+      CREATE TYPE IF NOT EXISTS scraper_type AS ENUM ('crawl4ai', 'cheerio');
     `;
 
     // Create tables
@@ -111,6 +112,20 @@ async function initializeDatabase() {
         last_calculated_at TIMESTAMP
       );
 
+      CREATE TABLE IF NOT EXISTS source_registry (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name VARCHAR(255) NOT NULL,
+        vertical VARCHAR(100) NOT NULL,
+        geo VARCHAR(100) NOT NULL,
+        url VARCHAR(500) NOT NULL UNIQUE,
+        scraper_type scraper_type NOT NULL,
+        legal_flag BOOLEAN DEFAULT TRUE NOT NULL,
+        selectors TEXT NOT NULL,
+        active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT NOW() NOT NULL,
+        updated_at TIMESTAMP DEFAULT NOW() NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS scrape_jobs (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         campaign_id UUID NOT NULL REFERENCES campaigns(id),
@@ -139,9 +154,69 @@ async function initializeDatabase() {
       CREATE INDEX IF NOT EXISTS idx_template_perf_campaign_id ON template_performance(campaign_id);
       CREATE INDEX IF NOT EXISTS idx_scrape_jobs_campaign_id ON scrape_jobs(campaign_id);
       CREATE INDEX IF NOT EXISTS idx_scrape_jobs_status ON scrape_jobs(status);
+      CREATE INDEX IF NOT EXISTS idx_source_registry_vertical_geo ON source_registry(vertical, geo);
+      CREATE INDEX IF NOT EXISTS idx_source_registry_scraper_type ON source_registry(scraper_type);
     `;
 
     console.log('✅ Database initialized successfully!');
+
+    // Seed 3 pre-configured sources
+    console.log('🌱 Seeding pre-configured sources...');
+
+    const sources = [
+      {
+        name: 'ACRA Singapore',
+        vertical: 'Business Registry',
+        geo: 'SG',
+        url: 'https://acra.gov.sg',
+        scraperType: 'crawl4ai',
+        legalFlag: true,
+        selectors: JSON.stringify({
+          company: '.company-name',
+          director: '.director-info',
+          address: '.registered-address',
+          status: '.company-status',
+        }),
+      },
+      {
+        name: 'ASIC Australia',
+        vertical: 'Business Registry',
+        geo: 'AU',
+        url: 'https://asic.gov.au',
+        scraperType: 'crawl4ai',
+        legalFlag: true,
+        selectors: JSON.stringify({
+          company: 'h1.entity-name',
+          abn: '.abn-number',
+          address: 'address.principal-address',
+          status: '.acn-status',
+        }),
+      },
+      {
+        name: 'SEC EDGAR USA',
+        vertical: 'Financial Filings',
+        geo: 'US',
+        url: 'https://www.sec.gov/cgi-bin/browse-edgar',
+        scraperType: 'cheerio',
+        legalFlag: true,
+        selectors: JSON.stringify({
+          company: 'td:contains("Company Name")',
+          cik: 'a.cik',
+          filing: 'td.left a',
+          date: 'td.small',
+        }),
+      },
+    ];
+
+    for (const source of sources) {
+      await client`
+        INSERT INTO source_registry (name, vertical, geo, url, scraper_type, legal_flag, selectors, active)
+        VALUES (${source.name}, ${source.vertical}, ${source.geo}, ${source.url}, ${source.scraperType}, ${source.legalFlag}, ${source.selectors}, true)
+        ON CONFLICT (url) DO NOTHING;
+      `;
+    }
+
+    console.log('✅ Pre-configured sources seeded!');
     await client.end();
   } catch (error) {
     console.error('❌ Database initialization failed:', error);

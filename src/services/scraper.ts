@@ -3,6 +3,7 @@ import postgres from 'postgres';
 import { eq, and } from 'drizzle-orm';
 import * as schema from '../db/schema';
 import crawl4aiConfig from '../config/crawl4ai.config';
+import ScrapeRouter from './scrape-router';
 import axios, { AxiosError } from 'axios';
 
 type ScrapeJobStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
@@ -22,22 +23,39 @@ interface ScrapeResponse {
 export class ScraperService {
   private db: ReturnType<typeof drizzle>;
   private client: ReturnType<typeof postgres>;
+  private router: ScrapeRouter;
   private requestQueue: Promise<void> = Promise.resolve();
 
   constructor(databaseUrl: string) {
     this.client = postgres(databaseUrl);
     this.db = drizzle(this.client, { schema });
+    this.router = new ScrapeRouter(databaseUrl);
   }
 
   /**
    * Trigger scraping for a campaign
    * Called when campaign is created
+   * Routes to appropriate scrapers based on registry config
    */
   async triggerScrapeJob(
     campaignId: string,
-    urls: string[]
+    vertical: string,
+    geo: string
   ): Promise<string> {
     try {
+      console.log(
+        `[ScrapeJob] Triggering for campaign ${campaignId} (vertical: ${vertical}, geo: ${geo})`
+      );
+
+      // Query registry to get configured sources for this vertical/geo
+      const routing = await this.router.routeScrapingSources(vertical, geo);
+
+      if (routing.sources.length === 0) {
+        throw new Error(
+          `No configured sources found for vertical=${vertical}, geo=${geo}`
+        );
+      }
+
       // Create scrape job record
       const [job] = await this.db
         .insert(schema.scrapeJobs)
@@ -48,10 +66,15 @@ export class ScraperService {
         })
         .returning();
 
-      console.log(`[ScrapeJob ${job.id}] Created for campaign ${campaignId}`);
+      console.log(
+        `[ScrapeJob ${job.id}] Created for campaign ${campaignId}. Found ${routing.sources.length} sources`
+      );
+
+      // Extract URLs from routing results
+      const urls = routing.sources.map((source) => source.url);
 
       // Queue the scrape job (non-blocking)
-      this.queueScrapeJob(job.id, campaignId, urls);
+      this.queueScrapeJob(job.id, campaignId, urls, routing);
 
       return job.id;
     } catch (error) {
@@ -63,24 +86,38 @@ export class ScraperService {
   /**
    * Queue job with rate limiting
    */
-  private queueScrapeJob(jobId: string, campaignId: string, urls: string[]) {
+  private queueScrapeJob(
+    jobId: string,
+    campaignId: string,
+    urls: string[],
+    routing?: any
+  ) {
     this.requestQueue = this.requestQueue.then(() =>
-      this.executeScrapeJob(jobId, campaignId, urls)
+      this.executeScrapeJob(jobId, campaignId, urls, routing)
     );
   }
 
   /**
    * Execute scrape with retry logic
+   * Routes to appropriate scrapers (Crawl4AI for JS sites, Cheerio for static)
    */
   private async executeScrapeJob(
     jobId: string,
     campaignId: string,
-    urls: string[]
+    urls: string[],
+    routing?: any
   ) {
     let retryCount = 0;
 
     while (retryCount <= crawl4aiConfig.maxRetries) {
       try {
+        // Log routing strategy
+        if (routing) {
+          console.log(
+            `[ScrapeJob ${jobId}] Scraper routing: Crawl4AI=${routing.scraperGroups.crawl4ai.length}, Cheerio=${routing.scraperGroups.cheerio.length}`
+          );
+        }
+
         // Update job status to in_progress
         await this.db
           .update(schema.scrapeJobs)
