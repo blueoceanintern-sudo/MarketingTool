@@ -41,6 +41,30 @@ analyticsRouter.get("/overview", async (c) => {
   });
 });
 
+analyticsRouter.get("/daily-sends", async (c) => {
+  const daysParam = c.req.query("days");
+  const days = Math.min(Math.max(parseInt(daysParam ?? "30", 10) || 30, 1), 90);
+
+  const since = new Date();
+  since.setDate(since.getDate() - days + 1);
+  since.setHours(0, 0, 0, 0);
+
+  // TODO: replace with real DB query once email_events has data
+  // Placeholder: realistic send volumes for a 30-day ramp-up period
+  const placeholderData = Array.from({ length: days }, (_, i) => {
+    const d = new Date(since);
+    d.setDate(since.getDate() + i);
+    const seed = Math.sin(i * 2.3 + 1) * 0.5 + 0.5;
+    const count = Math.round(seed * 45 + 5 + (i / days) * 30);
+    return {
+      date: d.toISOString().slice(0, 10),
+      count,
+    };
+  });
+
+  return c.json({ data: placeholderData });
+});
+
 analyticsRouter.get("/templates", async (c) => {
   const rows = await db.select().from(templatePerformance).orderBy(templatePerformance.replyRate);
   return c.json(rows.map((r) => ({

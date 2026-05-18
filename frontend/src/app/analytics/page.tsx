@@ -1,9 +1,10 @@
-import { getAnalyticsOverview } from "@/lib/api";
-
-const barHeights = [40, 55, 48, 65, 85, 70, 60, 52, 45, 35, 58, 68];
+import { getAnalyticsOverview, getDailySends } from "@/lib/api";
 
 export default async function AnalyticsPage() {
-  const overview = await getAnalyticsOverview();
+  const [overview, dailySends] = await Promise.all([
+    getAnalyticsOverview(),
+    getDailySends(30),
+  ]);
 
   const kpiTiles = [
     {
@@ -108,33 +109,49 @@ export default async function AnalyticsPage() {
               <span className="px-2 py-1 bg-primary text-white text-[11px] rounded">30 Days</span>
             </div>
           </div>
-          <div className="h-[280px] w-full flex items-end justify-between px-2 gap-1 relative">
-            <div className="absolute inset-0 flex flex-col justify-between py-2 pointer-events-none">
-              {[0, 1, 2, 3].map((i) => (
-                <div key={i} className="border-t border-grey-50 w-full" />
-              ))}
+          {dailySends.length === 0 ? (
+            <div className="h-[280px] flex flex-col items-center justify-center gap-2 text-grey-300">
+              <span className="material-symbols-outlined text-[40px]">bar_chart</span>
+              <p className="text-[13px]">No data yet</p>
             </div>
-            {barHeights.map((h, i) => {
-              const isActive = i === 4;
-              return (
-                <div key={i} className="w-full relative flex-1" style={{ height: `${h}%` }}>
-                  {isActive && (
-                    <div className="absolute -top-7 left-1/2 -translate-x-1/2 bg-primary text-white text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap">
-                      {overview ? Math.round(overview.total_sent / 12) : "—"}
-                    </div>
-                  )}
-                  <div className={`w-full h-full rounded-t-sm ${isActive ? "bg-primary" : "bg-secondary-container"}`} />
+          ) : (() => {
+            const maxCount = Math.max(...dailySends.map((d) => d.count), 1);
+            const peakIndex = dailySends.reduce((best, d, i) => (d.count > dailySends[best].count ? i : best), 0);
+            const xLabels = [0, 7, 14, 21, 29].map((i) => {
+              const entry = dailySends[Math.min(i, dailySends.length - 1)];
+              return entry ? entry.date.slice(5) : "";
+            });
+            return (
+              <>
+                <div className="h-[280px] w-full flex items-end justify-between px-2 gap-1 relative">
+                  <div className="absolute inset-0 flex flex-col justify-between py-2 pointer-events-none">
+                    {[0, 1, 2, 3].map((i) => (
+                      <div key={i} className="border-t border-grey-50 w-full" />
+                    ))}
+                  </div>
+                  {dailySends.map((d, i) => {
+                    const h = Math.round((d.count / maxCount) * 85);
+                    const isActive = i === peakIndex;
+                    return (
+                      <div key={d.date} className="w-full relative flex-1" style={{ height: `${h}%` }}>
+                        {isActive && (
+                          <div className="absolute -top-7 left-1/2 -translate-x-1/2 bg-primary text-white text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap">
+                            {d.count} sent
+                          </div>
+                        )}
+                        <div className={`w-full h-full rounded-t-sm ${isActive ? "bg-primary" : "bg-secondary-container"}`} />
+                      </div>
+                    );
+                  })}
                 </div>
-              );
-            })}
-          </div>
-          <div className="flex justify-between mt-4 px-2 text-[11px] text-grey-500">
-            <span>Day 1</span>
-            <span>Day 8</span>
-            <span>Day 15</span>
-            <span>Day 22</span>
-            <span>Day 30</span>
-          </div>
+                <div className="flex justify-between mt-4 px-2 text-[11px] text-grey-500">
+                  {xLabels.map((label) => (
+                    <span key={label}>{label}</span>
+                  ))}
+                </div>
+              </>
+            );
+          })()}
         </div>
 
         {/* Reply sentiment */}
