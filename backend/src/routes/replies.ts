@@ -1,25 +1,91 @@
 import { Hono } from "hono";
+import { db } from "../db";
+import { replies, emailEvents, leads, companies, emailDrafts, campaigns, suppressionList, riskFlags } from "../db/schema";
+import { eq, and, isNull, inArray } from "drizzle-orm";
 
-type Sentiment = "positive" | "negative" | "neutral";
-type ReplyCategory = "positive" | "unsubscribe" | "negative" | "question" | "hostile" | "neutral";
-
-interface Reply {
+function formatReply(row: {
   id: string;
-  emailEventId: string;
-  leadId: string;
   body: string;
-  sentiment: Sentiment;
-  category: ReplyCategory;
-  resolved: boolean;
-  receivedAt: string;
+  sentiment: string;
+  category: string;
+  receivedAt: Date;
+  resolvedAt: Date | null;
+  leadId: string;
+  leadFirstName: string | null;
+  leadLastName: string | null;
+  leadEmail: string;
+  companyName: string;
+  campaignId: string;
+  campaignName: string;
+}) {
+  const isQuestion = row.category === "question";
+  const isHostile = row.category === "hostile";
+  return {
+    id: row.id,
+    lead_id: row.leadId,
+    lead_name: [row.leadFirstName, row.leadLastName].filter(Boolean).join(" "),
+    lead_email: row.leadEmail,
+    lead_company: row.companyName,
+    campaign_id: row.campaignId,
+    campaign_name: row.campaignName,
+    body: row.body,
+    sentiment: row.sentiment,
+    category: row.category,
+    received_at: row.receivedAt.toISOString(),
+    resolved_at: row.resolvedAt?.toISOString() ?? null,
+    is_flagged: (isQuestion || isHostile) && row.resolvedAt === null,
+  };
 }
 
-const replies = new Map<string, Reply>();
-
-// suppression list shared with sender (keyed by email address)
-export const suppressionList = new Set<string>();
+const repliesJoinQuery = () =>
+  db
+    .select({
+      id: replies.id,
+      body: replies.body,
+      sentiment: replies.sentiment,
+      category: replies.category,
+      receivedAt: replies.receivedAt,
+      resolvedAt: replies.resolvedAt,
+      leadId: leads.id,
+      leadFirstName: leads.firstName,
+      leadLastName: leads.lastName,
+      leadEmail: leads.email,
+      companyName: companies.name,
+      campaignId: campaigns.id,
+      campaignName: campaigns.name,
+    })
+    .from(replies)
+    .innerJoin(emailEvents, eq(replies.emailEventId, emailEvents.id))
+    .innerJoin(leads, eq(emailEvents.leadId, leads.id))
+    .innerJoin(companies, eq(leads.companyId, companies.id))
+    .innerJoin(emailDrafts, eq(emailEvents.draftId, emailDrafts.id))
+    .innerJoin(campaigns, eq(emailDrafts.campaignId, campaigns.id));
 
 export const repliesRouter = new Hono();
+
+repliesRouter.get("/replies", async (c) => {
+  const rows = await repliesJoinQuery().orderBy(replies.receivedAt);
+  return c.json(rows.map(formatReply));
+});
+
+repliesRouter.get("/replies/flagged", async (c) => {
+  const rows = await repliesJoinQuery()
+    .where(and(isNull(replies.resolvedAt), inArray(replies.category, ["question", "hostile"])))
+    .orderBy(replies.receivedAt);
+  return c.json(rows.map(formatReply));
+});
+
+repliesRouter.patch("/replies/:id/resolve", async (c) => {
+  const [reply] = await db
+    .select()
+    .from(replies)
+    .where(eq(replies.id, c.req.param("id")))
+    .limit(1);
+  if (!reply) return c.json({ error: "Reply not found" }, 404);
+
+  await db.update(replies).set({ resolvedAt: new Date() }).where(eq(replies.id, reply.id));
+  return c.json({ id: reply.id, resolved: true });
+});
 
 repliesRouter.post("/webhooks/ses/reply", async (c) => {
   const body = await c.req.json<{
@@ -33,46 +99,50 @@ repliesRouter.post("/webhooks/ses/reply", async (c) => {
     return c.json({ error: "emailEventId, leadId, leadEmail, body are required" }, 400);
   }
 
+  const [emailEvent] = await db
+    .select()
+    .from(emailEvents)
+    .where(eq(emailEvents.id, body.emailEventId))
+    .limit(1);
+  if (!emailEvent) return c.json({ error: "Email event not found" }, 404);
+
   const category = classifyReply(body.body);
   const sentiment = categoryToSentiment(category);
 
-  const reply: Reply = {
-    id: crypto.randomUUID(),
-    emailEventId: body.emailEventId,
-    leadId: body.leadId,
-    body: body.body,
-    sentiment,
-    category,
-    resolved: false,
-    receivedAt: new Date().toISOString(),
-  };
+  const [reply] = await db
+    .insert(replies)
+    .values({
+      emailEventId: body.emailEventId,
+      body: body.body,
+      sentiment,
+      category,
+    })
+    .returning();
 
-  replies.set(reply.id, reply);
+  await db.update(emailEvents).set({ repliedAt: new Date() }).where(eq(emailEvents.id, body.emailEventId));
 
   if (category === "unsubscribe" || category === "negative" || category === "hostile") {
-    suppressionList.add(body.leadEmail);
+    // Add to suppression list (upsert)
+    await db
+      .insert(suppressionList)
+      .values({
+        email: body.leadEmail,
+        reason: category === "hostile" ? "hostile" : "unsubscribed",
+      })
+      .onConflictDoNothing();
+  }
+
+  if (category === "hostile") {
+    await db.insert(riskFlags).values({
+      leadId: body.leadId,
+      flagType: "hostile_interaction",
+    });
   }
 
   return c.json({ reply, action: resolveAction(category) }, 201);
 });
 
-repliesRouter.get("/replies/flagged", (c) => {
-  const flagged = Array.from(replies.values()).filter(
-    (r) => !r.resolved && (r.category === "question" || r.category === "hostile")
-  );
-  return c.json(flagged);
-});
-
-repliesRouter.patch("/replies/:id/resolve", (c) => {
-  const reply = replies.get(c.req.param("id"));
-  if (!reply) return c.json({ error: "Reply not found" }, 404);
-
-  reply.resolved = true;
-  replies.set(reply.id, reply);
-  return c.json(reply);
-});
-
-function classifyReply(body: string): ReplyCategory {
+function classifyReply(body: string): string {
   const lower = body.toLowerCase();
   if (/unsubscribe|opt.?out|remove me|stop emailing/i.test(lower)) return "unsubscribe";
   if (/legal|lawsuit|report|spam|attorney|solicitor/i.test(lower)) return "hostile";
@@ -81,13 +151,13 @@ function classifyReply(body: string): ReplyCategory {
   return "neutral";
 }
 
-function categoryToSentiment(category: ReplyCategory): Sentiment {
+function categoryToSentiment(category: string): "positive" | "negative" | "neutral" {
   if (category === "positive") return "positive";
-  if (category === "unsubscribe" || category === "hostile" || category === "negative") return "negative";
+  if (["unsubscribe", "hostile", "negative"].includes(category)) return "negative";
   return "neutral";
 }
 
-function resolveAction(category: ReplyCategory): string {
+function resolveAction(category: string): string {
   switch (category) {
     case "positive": return "demo_booking";
     case "unsubscribe":

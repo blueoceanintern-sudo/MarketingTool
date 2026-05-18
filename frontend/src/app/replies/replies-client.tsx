@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { Reply, Sentiment } from "@/lib/api";
+import { resolveReply } from "@/lib/api";
 import BookDemoModal from "@/components/book-demo-modal";
 
 const MOCK_REPLIES: Reply[] = [
@@ -244,7 +245,10 @@ export default function RepliesClient({ initialReplies }: Props) {
                   )}
                   {!resolved.has(selected.id) && (
                     <button
-                      onClick={() => setResolved((prev) => new Set(prev).add(selected.id))}
+                      onClick={async () => {
+                        await resolveReply(selected.id);
+                        setResolved((prev) => new Set(prev).add(selected.id));
+                      }}
                       className="flex items-center gap-2 px-5 py-2.5 border border-grey-200 text-grey-700 text-[14px] font-semibold rounded-lg hover:bg-grey-50 transition-colors"
                     >
                       <span className="material-symbols-outlined text-[18px]">check_circle</span>

@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem)",
+      "PowerShell(& \"$env:USERPROFILE\\\\.bun\\\\bin\\\\bun.exe\" --version 2>$null; cmd /c \"where bun\" 2>$null)",
+      "Bash(git pull *)",
+      "Bash(bun run *)",
+      "Bash(npx tsc *)",
+      "Bash(npm install *)",
+      "Bash(bun install *)"
+    ]
+  }
+}
