@@ -6,10 +6,11 @@ import { cn } from "@/lib/utils";
 
 const navItems = [
   { href: "/campaigns", label: "Campaigns", icon: "campaign" },
-  { href: "/drafts", label: "Draft Queue", icon: "pending_actions" },
-  { href: "/replies", label: "Replies", icon: "reply" },
-  { href: "/analytics", label: "Analytics", icon: "analytics" },
-  { href: "/registry", label: "Source Registry", icon: "database" },
+  { href: "/leads",     label: "Leads",      icon: "group" },
+  { href: "/drafts",    label: "Draft Queue", icon: "pending_actions" },
+  { href: "/replies",   label: "Replies",    icon: "reply" },
+  { href: "/analytics", label: "Analytics",  icon: "analytics" },
+  { href: "/registry",  label: "Source Registry", icon: "database" },
 ];
 
 export default function AppSidebar() {
