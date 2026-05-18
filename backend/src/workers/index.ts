@@ -3,6 +3,7 @@ import { db } from "../db";
 import { followUps, leads, emailEvents, riskFlags, scrapeJobs, campaigns, templatePerformance } from "../db/schema";
 import { eq, and, isNull, lte, isNotNull, lt, desc } from "drizzle-orm";
 import { sendDraft, getTotalSent } from "../services/sender";
+import { runScrapeJob } from "../services/scraping/runScrapeJob";
 
 // ---------------------------------------------------------------------------
 // warmup-tracker  — midnight daily
@@ -100,13 +101,8 @@ cron.schedule("0 4 * * *", async () => {
       .where(eq(scrapeJobs.id, job.id));
 
     try {
-      // Trigger scrape — actual URL sourced from source_registry by the scraping service
       console.log(`[scrape-retry] retrying job ${job.id} for campaign ${job.campaignId}`);
-      // Mark complete; actual scraping is async once the scraping service is wired
-      await db
-        .update(scrapeJobs)
-        .set({ status: "complete", completedAt: new Date() })
-        .where(eq(scrapeJobs.id, job.id));
+      await runScrapeJob(job.id, job.campaignId);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       const isBlocked = msg.toLowerCase().includes("captcha");

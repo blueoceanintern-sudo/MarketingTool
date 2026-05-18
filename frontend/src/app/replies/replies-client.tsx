@@ -5,79 +5,6 @@ import type { Reply, Sentiment } from "@/lib/api";
 import { resolveReply } from "@/lib/api";
 import BookDemoModal from "@/components/book-demo-modal";
 
-const MOCK_REPLIES: Reply[] = [
-  {
-    id: "REP-001",
-    lead_id: "L-001",
-    lead_name: "Sarah Kinsley",
-    lead_email: "s.kinsley@cloudscale.ai",
-    lead_company: "CloudScale AI",
-    campaign_id: "CAM-9241",
-    campaign_name: "Q3 APAC SaaS Prospecting",
-    body: "Hi, thanks for reaching out — this looks really relevant to what we're working on. Would love to set up a call next week. Are you free Thursday?",
-    sentiment: "positive",
-    category: "Interested",
-    received_at: "2026-05-18T09:14:00Z",
-    is_flagged: false,
-  },
-  {
-    id: "REP-002",
-    lead_id: "L-002",
-    lead_name: "Marcus Rivera",
-    lead_email: "m.rivera@datavibe.com",
-    lead_company: "DataVibe Systems",
-    campaign_id: "CAM-9241",
-    campaign_name: "Q3 APAC SaaS Prospecting",
-    body: "Thanks, but we already have a solution in place. Not looking to change vendors right now.",
-    sentiment: "negative",
-    category: "Not Interested",
-    received_at: "2026-05-17T16:40:00Z",
-    is_flagged: false,
-  },
-  {
-    id: "REP-003",
-    lead_id: "L-003",
-    lead_name: "Jenna Lane",
-    lead_email: "j.lane@orbit.io",
-    lead_company: "Orbit Logistics",
-    campaign_id: "CAM-9245",
-    campaign_name: "US Enterprise FinTech Q4",
-    body: "Can you send over some more details about pricing? We're evaluating a few options at the moment.",
-    sentiment: "neutral",
-    category: "Question",
-    received_at: "2026-05-17T11:22:00Z",
-    is_flagged: true,
-  },
-  {
-    id: "REP-004",
-    lead_id: "L-004",
-    lead_name: "Elena Rodriguez",
-    lead_email: "elena@inboundflow.co",
-    lead_company: "Inbound Flow",
-    campaign_id: "CAM-9241",
-    campaign_name: "Q3 APAC SaaS Prospecting",
-    body: "Yes, absolutely interested. We've been looking for exactly this kind of orchestration layer. Let's talk.",
-    sentiment: "positive",
-    category: "Interested",
-    received_at: "2026-05-16T08:05:00Z",
-    is_flagged: false,
-  },
-  {
-    id: "REP-005",
-    lead_id: "L-005",
-    lead_name: "Thomas Hales",
-    lead_email: "t.hales@nexuscore.net",
-    lead_company: "Nexus Core",
-    campaign_id: "CAM-9248",
-    campaign_name: "Healthcare Outreach - UK/EU",
-    body: "Please remove me from this list immediately. Do not contact me again.",
-    sentiment: "negative",
-    category: "Unsubscribe",
-    received_at: "2026-05-15T14:30:00Z",
-    is_flagged: true,
-  },
-];
-
 const sentimentConfig: Record<Sentiment, { label: string; className: string; icon: string }> = {
   positive: { label: "Positive",  className: "bg-success-bg text-success",   icon: "thumb_up" },
   negative: { label: "Negative",  className: "bg-danger-bg text-danger",     icon: "thumb_down" },
@@ -95,13 +22,22 @@ interface Props {
 }
 
 export default function RepliesClient({ initialReplies }: Props) {
-  const replies = initialReplies.length ? initialReplies : MOCK_REPLIES;
-  const [selected, setSelected] = useState<Reply>(replies[0]);
+  const replies = initialReplies;
+  const [selected, setSelected] = useState<Reply | null>(replies[0] ?? null);
   const [filter, setFilter] = useState<"all" | Sentiment>("all");
   const [resolved, setResolved] = useState<Set<string>>(new Set());
   const [demoModal, setDemoModal] = useState<Reply | null>(null);
 
   const visible = filter === "all" ? replies : replies.filter((r) => r.sentiment === filter);
+
+  if (replies.length === 0) {
+    return (
+      <div className="p-10 text-center text-grey-400">
+        <p className="text-[16px] font-medium">No replies yet</p>
+        <p className="text-[13px] mt-2">Replies appear when leads respond to outreach.</p>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -150,7 +86,7 @@ export default function RepliesClient({ initialReplies }: Props) {
                     onClick={() => setSelected(r)}
                     className={[
                       "w-full text-left p-4 border-b border-grey-100 transition-colors",
-                      selected.id === r.id
+                      selected?.id === r.id
                         ? "bg-ocean-wash border-l-4 border-l-primary"
                         : "hover:bg-grey-50 border-l-4 border-l-transparent",
                       isResolved ? "opacity-50" : "",

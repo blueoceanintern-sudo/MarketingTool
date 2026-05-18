@@ -2,6 +2,7 @@ import "./globals.css";
 import { DM_Sans, JetBrains_Mono } from "next/font/google";
 import { ReactNode } from "react";
 import AppSidebar from "@/components/sidebar";
+import ProfileHeader from "@/components/profile-header";
 
 const dmSans = DM_Sans({
   subsets: ["latin"],
@@ -53,17 +54,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
               </button>
             </div>
             <div className="h-8 w-px bg-grey-100" />
-            <div className="flex items-center gap-3">
-              <div className="text-right">
-                <p className="text-[14px] font-semibold text-primary leading-tight">
-                  Admin
-                </p>
-                <p className="text-[11px] text-grey-500">Global Admin</p>
-              </div>
-              <div className="w-9 h-9 rounded-full bg-primary-container flex items-center justify-center text-white text-xs font-bold">
-                A
-              </div>
-            </div>
+            <ProfileHeader />
           </div>
         </header>
         <main className="ml-[220px] pt-16 min-h-screen">

@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { db } from "../db";
 import { campaigns, leads, emailDrafts, emailEvents, scrapeJobs } from "../db/schema";
 import { eq, and, isNotNull, count } from "drizzle-orm";
+import { runScrapeJob } from "../services/scraping/runScrapeJob";
 
 type CampaignStatus = "draft" | "active" | "paused" | "complete";
 
@@ -139,7 +140,12 @@ campaignsRouter.post("/:id/scrape", async (c) => {
     .values({ campaignId: campaign.id, status: "queued" })
     .returning();
 
-  return c.json({ scrape_job_id: job!.id, status: "queued" }, 201);
+  const jobId = job!.id;
+  void runScrapeJob(jobId, campaign.id).catch((err) => {
+    console.error(`[scrape] job ${jobId} failed:`, err);
+  });
+
+  return c.json({ scrape_job_id: jobId, status: "queued" }, 201);
 });
 
 campaignsRouter.post("/:id/drafts/generate", async (c) => {
