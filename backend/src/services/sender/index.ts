@@ -1,12 +1,12 @@
 import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
-import { suppressionList } from "../../routes/replies";
-import { drafts } from "../../routes/drafts";
+import { db } from "../../db";
+import { suppressionList, emailDrafts, emailEvents } from "../../db/schema";
+import { eq, and, isNotNull, count, gte } from "drizzle-orm";
 
 interface SendPayload {
   draftId: string;
   toEmail: string;
   leadId: string;
-  /** ISO string of the last sent_at for this lead, if any */
   lastSentAt?: string;
   isVerified: boolean;
   hasRiskFlags: boolean;
@@ -19,54 +19,45 @@ interface SendResult {
   messageId?: string;
 }
 
-// In-memory send count per UTC day — swaps to DB query on emailEvents once Drizzle is wired
-const dailySendLog: { date: string; count: number } = { date: "", count: 0 };
-
-// Total cumulative sends — determines phase (< 500 → all to review, ≥ 500 → auto-schedule)
-let totalSentAllTime = 0;
-
-function todayUtc(): string {
-  return new Date().toISOString().slice(0, 10);
+async function getTotalSentFromDB(): Promise<number> {
+  const [row] = await db.select({ total: count() }).from(emailEvents).where(isNotNull(emailEvents.sentAt));
+  return Number(row?.total ?? 0);
 }
 
-function getDailyCap(): number {
-  // Warm-up ramp based on total sent so far
-  if (totalSentAllTime < 50) return 50;       // week 1 equivalent
-  if (totalSentAllTime < 250) return 200;     // week 2
-  if (totalSentAllTime < 750) return 500;     // week 3
-  return 1000;                                 // week 4+
+async function getTodayCountFromDB(): Promise<number> {
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  const [row] = await db
+    .select({ total: count() })
+    .from(emailEvents)
+    .where(and(isNotNull(emailEvents.sentAt), gte(emailEvents.sentAt, today)));
+  return Number(row?.total ?? 0);
 }
 
-function getTodayCount(): number {
-  const today = todayUtc();
-  if (dailySendLog.date !== today) {
-    dailySendLog.date = today;
-    dailySendLog.count = 0;
-  }
-  return dailySendLog.count;
+function getDailyCap(totalSent: number): number {
+  if (totalSent < 50) return 50;
+  if (totalSent < 250) return 200;
+  if (totalSent < 750) return 500;
+  return 1000;
 }
 
-function incrementTodayCount(): void {
-  getTodayCount(); // ensure date is reset if needed
-  dailySendLog.count++;
-  totalSentAllTime++;
-}
-
-/** Returns whether a draft should go to review queue instead of auto-scheduling */
-export function shouldQueueForReview(confidenceScore: number): boolean {
-  if (totalSentAllTime < 500) return true;
+export async function shouldQueueForReview(confidenceScore: number): Promise<boolean> {
+  const totalSent = await getTotalSentFromDB();
+  if (totalSent < 500) return true;
   return confidenceScore < 70;
 }
 
-/** Chooses A/B variant — 80% control, 20% experimental */
 export function pickVariant(): "control" | "experimental" {
   return Math.random() < 0.2 ? "experimental" : "control";
 }
 
+export async function getTotalSent(): Promise<number> {
+  return getTotalSentFromDB();
+}
+
 function withinNinetyDays(lastSentAt: string): boolean {
   const diffMs = Date.now() - new Date(lastSentAt).getTime();
-  const diffDays = diffMs / (1000 * 60 * 60 * 24);
-  return diffDays < 90;
+  return diffMs / (1000 * 60 * 60 * 24) < 90;
 }
 
 function buildUnsubscribeLink(leadId: string): string {
@@ -96,36 +87,32 @@ function getSesClient(): SESClient {
 export async function sendDraft(payload: SendPayload): Promise<SendResult> {
   const { draftId, toEmail, leadId, lastSentAt, isVerified, hasRiskFlags } = payload;
 
-  // --- Hard gate: suppression list ---
-  if (suppressionList.has(toEmail)) {
-    return { draftId, status: "blocked", reason: "suppression_list" };
-  }
+  const [suppressed] = await db
+    .select({ id: suppressionList.id })
+    .from(suppressionList)
+    .where(eq(suppressionList.email, toEmail))
+    .limit(1);
+  if (suppressed) return { draftId, status: "blocked", reason: "suppression_list" };
 
-  // --- Hard gate: 90-day rule ---
   if (lastSentAt && withinNinetyDays(lastSentAt)) {
     return { draftId, status: "blocked", reason: "90_day_rule" };
   }
 
-  // --- Hard gate: risk flags ---
-  if (hasRiskFlags) {
-    return { draftId, status: "blocked", reason: "risk_flags" };
-  }
+  if (hasRiskFlags) return { draftId, status: "blocked", reason: "risk_flags" };
 
-  // --- Hard gate: unverified email ---
-  if (!isVerified) {
-    return { draftId, status: "blocked", reason: "unverified_email" };
-  }
+  if (!isVerified) return { draftId, status: "blocked", reason: "unverified_email" };
 
-  // --- Hard gate: warm-up daily cap ---
-  if (getTodayCount() >= getDailyCap()) {
+  const [totalSent, todayCount] = await Promise.all([getTotalSentFromDB(), getTodayCountFromDB()]);
+  if (todayCount >= getDailyCap(totalSent)) {
     return { draftId, status: "queued", reason: "daily_cap_reached" };
   }
 
-  const draft = drafts.get(draftId);
-  if (!draft) {
-    return { draftId, status: "blocked", reason: "draft_not_found" };
-  }
-
+  const [draft] = await db
+    .select()
+    .from(emailDrafts)
+    .where(eq(emailDrafts.id, draftId))
+    .limit(1);
+  if (!draft) return { draftId, status: "blocked", reason: "draft_not_found" };
   if (draft.status !== "scheduled") {
     return { draftId, status: "blocked", reason: `draft_status_${draft.status}` };
   }
@@ -147,20 +134,8 @@ export async function sendDraft(payload: SendPayload): Promise<SendResult> {
   const response = await getSesClient().send(command);
   const messageId = response.MessageId;
 
-  incrementTodayCount();
-
-  draft.status = "sent";
-  draft.updatedAt = new Date().toISOString();
-  drafts.set(draft.id, draft);
+  await db.insert(emailEvents).values({ draftId, leadId, sentAt: new Date() });
+  await db.update(emailDrafts).set({ status: "sent" }).where(eq(emailDrafts.id, draftId));
 
   return { draftId, status: "sent", messageId };
-}
-
-export function getTotalSent(): number {
-  return totalSentAllTime;
-}
-
-/** For warmup-tracker worker to sync count from DB once Drizzle is wired */
-export function setTotalSent(count: number): void {
-  totalSentAllTime = count;
 }

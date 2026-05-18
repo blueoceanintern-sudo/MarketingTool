@@ -28,8 +28,7 @@ export default function BookDemoModal({ reply, onClose, onBooked }: Props) {
       assigned_to: assignee,
     });
     setSubmitting(false);
-    if (result || true) {
-      // Accept even if backend isn't live yet
+    if (result) {
       onBooked();
     } else {
       setError("Failed to book demo. Please try again.");

@@ -1,23 +1,90 @@
 import { Hono } from "hono";
+import { db } from "../db";
+import { leads, companies, campaigns, riskFlags } from "../db/schema";
+import { eq, and } from "drizzle-orm";
 
-interface Lead {
+function formatLead(row: {
   id: string;
-  campaignId: string;
-  contactName: string;
-  role: string;
+  firstName: string | null;
+  lastName: string | null;
   email: string;
+  role: string | null;
+  isVerified: boolean;
+  status: string;
+  campaignId: string | null;
+  createdAt: Date;
   companyName: string;
-  industry: string;
-  market: string;
-  flagged: boolean;
-  flagReason?: string;
-  createdAt: string;
+  campaignName: string | null;
+}) {
+  return {
+    id: row.id,
+    first_name: row.firstName ?? "",
+    last_name: row.lastName ?? "",
+    email: row.email,
+    role: row.role ?? "",
+    is_verified: row.isVerified,
+    status: row.status,
+    company_name: row.companyName,
+    campaign_id: row.campaignId ?? undefined,
+    campaign_name: row.campaignName ?? undefined,
+    created_at: row.createdAt.toISOString(),
+  };
 }
 
-// campaignId -> Lead[]
-const leadsByCampaign = new Map<string, Lead[]>();
+// Mounted at /api/v1/leads — all leads, no campaign filter
+export const allLeadsRouter = new Hono();
 
+allLeadsRouter.get("/", async (c) => {
+  const rows = await db
+    .select({
+      id: leads.id,
+      firstName: leads.firstName,
+      lastName: leads.lastName,
+      email: leads.email,
+      role: leads.role,
+      isVerified: leads.isVerified,
+      status: leads.status,
+      campaignId: leads.campaignId,
+      createdAt: leads.createdAt,
+      companyName: companies.name,
+      campaignName: campaigns.name,
+    })
+    .from(leads)
+    .innerJoin(companies, eq(leads.companyId, companies.id))
+    .leftJoin(campaigns, eq(leads.campaignId, campaigns.id))
+    .orderBy(leads.createdAt);
+
+  return c.json(rows.map(formatLead));
+});
+
+// Mounted at /api/v1/campaigns — campaign-scoped lead endpoints
 export const leadsRouter = new Hono();
+
+leadsRouter.get("/:id/leads", async (c) => {
+  const campaignId = c.req.param("id");
+
+  const rows = await db
+    .select({
+      id: leads.id,
+      firstName: leads.firstName,
+      lastName: leads.lastName,
+      email: leads.email,
+      role: leads.role,
+      isVerified: leads.isVerified,
+      status: leads.status,
+      campaignId: leads.campaignId,
+      createdAt: leads.createdAt,
+      companyName: companies.name,
+      campaignName: campaigns.name,
+    })
+    .from(leads)
+    .innerJoin(companies, eq(leads.companyId, companies.id))
+    .leftJoin(campaigns, eq(leads.campaignId, campaigns.id))
+    .where(eq(leads.campaignId, campaignId))
+    .orderBy(leads.createdAt);
+
+  return c.json(rows.map(formatLead));
+});
 
 leadsRouter.post("/:id/leads/import", async (c) => {
   const campaignId = c.req.param("id");
@@ -35,44 +102,71 @@ leadsRouter.post("/:id/leads/import", async (c) => {
     return c.json({ error: `Missing required columns: ${missing.join(", ")}` }, 400);
   }
 
-  const imported: Lead[] = [];
-  const flagged: Lead[] = [];
+  const imported: string[] = [];
+  const flagged: string[] = [];
+  const skipped: string[] = [];
 
   for (let i = 1; i < rows.length; i++) {
     const values = (rows[i] ?? "").split(",").map((v) => v.trim());
     const row: Record<string, string> = {};
     headers.forEach((h, idx) => { row[h] = values[idx] ?? ""; });
 
-    const missingFields = required.filter((f) => !row[f]);
-    const lead: Lead = {
-      id: crypto.randomUUID(),
-      campaignId,
-      contactName: row["contact_name"] ?? "",
-      role: row["role"] ?? "",
-      email: row["email"] ?? "",
-      companyName: row["company_name"] ?? "",
-      industry: row["industry"] ?? "",
-      market: row["market"] ?? "",
-      flagged: missingFields.length > 0,
-      flagReason: missingFields.length > 0 ? `Missing: ${missingFields.join(", ")}` : undefined,
-      createdAt: new Date().toISOString(),
-    };
+    const email = row["email"] ?? "";
+    if (!email) { flagged.push(`row ${i + 1}: missing email`); continue; }
 
-    if (lead.flagged) {
-      flagged.push(lead);
-    } else {
-      imported.push(lead);
+    // Check for duplicate email
+    const [existing] = await db.select({ id: leads.id }).from(leads).where(eq(leads.email, email)).limit(1);
+    if (existing) { skipped.push(email); continue; }
+
+    const missingFields = required.filter((f) => !row[f]);
+
+    // Upsert company
+    const companyName = row["company_name"] ?? "";
+    let [company] = await db.select().from(companies).where(eq(companies.name, companyName)).limit(1);
+    if (!company) {
+      const size = (() => {
+        const m = row["market"]?.toLowerCase() ?? "";
+        if (m.includes("enterprise")) return "enterprise";
+        if (m.includes("large")) return "large";
+        if (m.includes("medium")) return "medium";
+        return "small";
+      })() as "small" | "medium" | "large" | "enterprise";
+
+      const [inserted] = await db.insert(companies).values({
+        name: companyName,
+        industry: row["industry"] ?? "Unknown",
+        companySize: size,
+        location: row["market"] ?? "",
+      }).returning();
+      company = inserted!;
     }
 
-    const existing = leadsByCampaign.get(campaignId) ?? [];
-    leadsByCampaign.set(campaignId, [...existing, lead]);
+    const nameParts = (row["contact_name"] ?? "").trim().split(/\s+/);
+    const firstName = nameParts[0] ?? "";
+    const lastName = nameParts.slice(1).join(" ") || "";
+
+    const [lead] = await db.insert(leads).values({
+      companyId: company.id,
+      campaignId,
+      firstName,
+      lastName,
+      email,
+      role: row["role"] ?? "",
+      isVerified: false,
+      status: "new",
+    }).returning();
+
+    // Flag missing-field leads
+    if (missingFields.length > 0 && lead) {
+      await db.insert(riskFlags).values({
+        leadId: lead.id,
+        flagType: "missing_field",
+      });
+      flagged.push(email);
+    } else {
+      imported.push(email);
+    }
   }
 
-  return c.json({ imported: imported.length, flagged: flagged.length, leads: [...imported, ...flagged] }, 201);
-});
-
-leadsRouter.get("/:id/leads", (c) => {
-  const campaignId = c.req.param("id");
-  const leads = leadsByCampaign.get(campaignId) ?? [];
-  return c.json(leads);
+  return c.json({ imported: imported.length, flagged: flagged.length, skipped: skipped.length }, 201);
 });

@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, boolean, integer, real, timestamp, json, vector, index } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, boolean, integer, real, timestamp, json, vector, index, unique } from "drizzle-orm/pg-core";
 import {
   companySizeEnum,
   leadStatusEnum,
@@ -22,19 +22,7 @@ export const companies = pgTable("companies", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
-export const leads = pgTable("leads", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  companyId: uuid("company_id").references(() => companies.id).notNull(),
-  firstName: text("first_name"),
-  lastName: text("last_name"),
-  email: text("email").unique().notNull(),
-  role: text("role"),
-  isVerified: boolean("is_verified").default(false).notNull(),
-  status: leadStatusEnum("status").default("new").notNull(),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
-
+// campaigns defined before leads so leads can FK to it
 export const campaigns = pgTable("campaigns", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
@@ -42,6 +30,20 @@ export const campaigns = pgTable("campaigns", {
   geography: text("geography").notNull(),
   companySizeTarget: companySizeEnum("company_size_target").notNull(),
   status: campaignStatusEnum("status").default("draft").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const leads = pgTable("leads", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  companyId: uuid("company_id").references(() => companies.id).notNull(),
+  campaignId: uuid("campaign_id").references(() => campaigns.id),
+  firstName: text("first_name"),
+  lastName: text("last_name"),
+  email: text("email").unique().notNull(),
+  role: text("role"),
+  isVerified: boolean("is_verified").default(false).notNull(),
+  status: leadStatusEnum("status").default("new").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -78,6 +80,7 @@ export const replies = pgTable("replies", {
   sentiment: sentimentEnum("sentiment").notNull(),
   category: text("category").notNull(),
   receivedAt: timestamp("received_at").defaultNow().notNull(),
+  resolvedAt: timestamp("resolved_at"),
 });
 
 export const sourceRegistry = pgTable("source_registry", {
@@ -122,7 +125,9 @@ export const templatePerformance = pgTable("template_performance", {
   openRate: real("open_rate").default(0).notNull(),
   replyRate: real("reply_rate").default(0).notNull(),
   lastCalculatedAt: timestamp("last_calculated_at").defaultNow().notNull(),
-});
+}, (t) => [
+  unique("tp_campaign_persona_unique").on(t.campaignId, t.persona),
+]);
 
 export const suppressionList = pgTable("suppression_list", {
   id: uuid("id").primaryKey().defaultRandom(),

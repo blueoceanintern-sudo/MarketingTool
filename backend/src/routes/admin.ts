@@ -1,102 +1,87 @@
 import { Hono } from "hono";
-import { suppressionList } from "./replies";
-import { sourceRegistry } from "../config/sourceRegistry";
-
-type ScraperType = "crawl4ai" | "cheerio" | "api";
-
-interface RegistrySource {
-  id: string;
-  name: string;
-  vertical: string;
-  geo: string;
-  url: string;
-  scraperType: ScraperType;
-  legalFlag: boolean;
-  selectors: Record<string, string>;
-  active: boolean;
-  createdAt: string;
-}
-
-type SuppressionReason = "unsubscribed" | "spam_complaint" | "hostile" | "manual";
-
-interface SuppressionEntry {
-  email: string;
-  reason: SuppressionReason;
-  addedAt: string;
-}
-
-const registrySources = new Map<string, RegistrySource>(
-  Object.entries(sourceRegistry).map(([name, selectors]) => {
-    const id = crypto.randomUUID();
-    return [
-      id,
-      {
-        id,
-        name,
-        vertical: "generic",
-        geo: "global",
-        url: "",
-        scraperType: "cheerio",
-        legalFlag: false,
-        selectors,
-        active: true,
-        createdAt: new Date().toISOString(),
-      },
-    ];
-  })
-);
-
-const suppressionEntries = new Map<string, SuppressionEntry>();
+import { db } from "../db";
+import { sourceRegistry, suppressionList } from "../db/schema";
+import { eq } from "drizzle-orm";
 
 export const adminRouter = new Hono();
 
-adminRouter.get("/registry/sources", (c) => {
-  return c.json(Array.from(registrySources.values()));
+adminRouter.get("/registry/sources", async (c) => {
+  const rows = await db.select().from(sourceRegistry).orderBy(sourceRegistry.createdAt);
+  return c.json(rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    vertical: r.vertical,
+    geo: r.geo,
+    url: r.url,
+    scraper_type: r.scraperType,
+    legal_flag: r.legalFlag,
+    selectors: r.selectors,
+    active: r.active,
+    created_at: r.createdAt.toISOString(),
+    updated_at: r.updatedAt.toISOString(),
+  })));
 });
 
 adminRouter.post("/registry/sources", async (c) => {
-  const body = await c.req.json<Omit<RegistrySource, "id" | "createdAt">>();
+  const body = await c.req.json<{
+    name?: string;
+    vertical?: string;
+    geo?: string;
+    url?: string;
+    scraper_type?: string;
+    legal_flag?: boolean;
+    selectors?: Record<string, string>;
+    active?: boolean;
+  }>();
 
-  if (!body.name || !body.vertical || !body.geo || !body.url || !body.scraperType) {
-    return c.json({ error: "name, vertical, geo, url, scraperType are required" }, 400);
+  if (!body.name || !body.vertical || !body.geo || !body.url || !body.scraper_type) {
+    return c.json({ error: "name, vertical, geo, url, scraper_type are required" }, 400);
   }
 
-  const source: RegistrySource = {
-    ...body,
-    id: crypto.randomUUID(),
-    createdAt: new Date().toISOString(),
-  };
+  const scraperType = body.scraper_type as "crawl4ai" | "cheerio" | "api";
 
-  registrySources.set(source.id, source);
-  return c.json(source, 201);
+  const [row] = await db
+    .insert(sourceRegistry)
+    .values({
+      name: body.name,
+      vertical: body.vertical,
+      geo: body.geo,
+      url: body.url,
+      scraperType,
+      legalFlag: body.legal_flag ?? false,
+      selectors: body.selectors ?? {},
+      active: body.active ?? true,
+    })
+    .returning();
+
+  return c.json(row, 201);
 });
 
-adminRouter.get("/suppression", (c) => {
-  const entries = Array.from(suppressionEntries.values());
-  const fromReplies = Array.from(suppressionList).map((email) => ({
-    email,
-    reason: "unsubscribed" as SuppressionReason,
-    addedAt: new Date().toISOString(),
-  }));
-
-  const all = [...entries, ...fromReplies.filter((r) => !suppressionEntries.has(r.email))];
-  return c.json(all);
+adminRouter.get("/suppression", async (c) => {
+  const rows = await db.select().from(suppressionList).orderBy(suppressionList.addedAt);
+  return c.json(rows.map((r) => ({
+    id: r.id,
+    email: r.email,
+    reason: r.reason,
+    added_at: r.addedAt.toISOString(),
+  })));
 });
 
 adminRouter.post("/suppression", async (c) => {
-  const body = await c.req.json<{ email: string; reason: SuppressionReason }>();
+  const body = await c.req.json<{ email?: string; reason?: string }>();
 
   if (!body.email || !body.reason) {
     return c.json({ error: "email and reason are required" }, 400);
   }
 
-  const entry: SuppressionEntry = {
-    email: body.email,
-    reason: body.reason,
-    addedAt: new Date().toISOString(),
-  };
+  const reason = body.reason as "unsubscribed" | "spam_complaint" | "hostile" | "manual";
 
-  suppressionList.add(body.email);
-  suppressionEntries.set(body.email, entry);
-  return c.json(entry, 201);
+  const [row] = await db
+    .insert(suppressionList)
+    .values({ email: body.email, reason })
+    .onConflictDoNothing()
+    .returning();
+
+  if (!row) return c.json({ message: "Email already suppressed" }, 200);
+  return c.json({ id: row.id, email: row.email, reason: row.reason, added_at: row.addedAt.toISOString() }, 201);
 });

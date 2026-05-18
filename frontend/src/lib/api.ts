@@ -86,6 +86,18 @@ export interface Demo {
   created_at: string;
 }
 
+export interface AnalyticsOverview {
+  total_leads_contacted: number;
+  total_sent: number;
+  total_opened: number;
+  total_replied: number;
+  total_demos: number;
+  pending_review: number;
+  total_suppressions: number;
+  open_rate: number;
+  reply_rate: number;
+}
+
 // ── API functions ─────────────────────────────────────────────────────────────
 
 export async function getCampaigns(): Promise<Campaign[]> {
@@ -114,6 +126,10 @@ export async function getDemos(): Promise<Demo[]> {
   return (await apiFetch<Demo[]>("/demos")) ?? [];
 }
 
+export async function getAnalyticsOverview(): Promise<AnalyticsOverview | null> {
+  return apiFetch<AnalyticsOverview>("/analytics/overview");
+}
+
 export async function approveDraft(id: string): Promise<boolean> {
   try {
     const res = await fetch(`${BASE}/api/v1/drafts/${id}/approve`, { method: "PATCH" });
@@ -133,6 +149,20 @@ export async function rejectDraft(id: string, reason: string): Promise<boolean> 
     return res.ok;
   } catch {
     return false;
+  }
+}
+
+export async function editDraft(id: string, updates: { subject?: string; body?: string }): Promise<Draft | null> {
+  try {
+    const res = await fetch(`${BASE}/api/v1/drafts/${id}/edit`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates),
+    });
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
   }
 }
 
