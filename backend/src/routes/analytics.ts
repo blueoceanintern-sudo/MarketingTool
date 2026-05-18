@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { db } from "../db";
 import { emailDrafts, emailEvents, leads, demos, suppressionList, templatePerformance } from "../db/schema";
-import { isNotNull, count, ne, eq } from "drizzle-orm";
+import { isNotNull, count, ne, eq, and, gte, sql } from "drizzle-orm";
 
 export const analyticsRouter = new Hono();
 
@@ -49,20 +49,25 @@ analyticsRouter.get("/daily-sends", async (c) => {
   since.setDate(since.getDate() - days + 1);
   since.setHours(0, 0, 0, 0);
 
-  // TODO: replace with real DB query once email_events has data
-  // Placeholder: realistic send volumes for a 30-day ramp-up period
-  const placeholderData = Array.from({ length: days }, (_, i) => {
+  const rows = await db
+    .select({
+      date: sql<string>`to_char(date_trunc('day', ${emailEvents.sentAt}), 'YYYY-MM-DD')`,
+      total: count(),
+    })
+    .from(emailEvents)
+    .where(and(isNotNull(emailEvents.sentAt), gte(emailEvents.sentAt, since)))
+    .groupBy(sql`date_trunc('day', ${emailEvents.sentAt})`)
+    .orderBy(sql`date_trunc('day', ${emailEvents.sentAt})`);
+
+  const countByDate = new Map(rows.map((r) => [r.date, Number(r.total)]));
+  const data = Array.from({ length: days }, (_, i) => {
     const d = new Date(since);
     d.setDate(since.getDate() + i);
-    const seed = Math.sin(i * 2.3 + 1) * 0.5 + 0.5;
-    const count = Math.round(seed * 45 + 5 + (i / days) * 30);
-    return {
-      date: d.toISOString().slice(0, 10),
-      count,
-    };
+    const dateStr = d.toISOString().slice(0, 10);
+    return { date: dateStr, count: countByDate.get(dateStr) ?? 0 };
   });
 
-  return c.json({ data: placeholderData });
+  return c.json({ data });
 });
 
 analyticsRouter.get("/templates", async (c) => {
