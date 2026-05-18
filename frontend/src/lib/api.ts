@@ -187,6 +187,16 @@ export async function getAnalyticsOverview(): Promise<AnalyticsOverview | null> 
   return apiFetch<AnalyticsOverview>("/analytics/overview");
 }
 
+export interface DailySend {
+  date: string;
+  count: number;
+}
+
+export async function getDailySends(days: number): Promise<DailySend[]> {
+  const result = await apiFetch<{ data: DailySend[] }>(`/analytics/daily-sends?days=${days}`);
+  return result?.data ?? [];
+}
+
 export async function approveDraft(id: string): Promise<boolean> {
   try {
     const res = await fetch(`${BASE}/api/v1/drafts/${id}/approve`, { method: "PATCH" });
