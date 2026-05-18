@@ -9,11 +9,21 @@ import { adminRouter } from "./routes/admin";
 import "./workers";
 
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { db } from "./db";
 import { leads, suppressionList } from "./db/schema";
 import { eq } from "drizzle-orm";
 
 const app = new Hono();
+
+app.use(
+  "*",
+  cors({
+    origin: ["http://localhost:3000", "http://127.0.0.1:3000"],
+    allowMethods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+    allowHeaders: ["Content-Type"],
+  })
+);
 
 app.route("/api/v1/campaigns", campaignsRouter);
 app.route("/api/v1/campaigns", leadsRouter);

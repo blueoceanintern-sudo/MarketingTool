@@ -104,6 +104,63 @@ export async function getCampaigns(): Promise<Campaign[]> {
   return (await apiFetch<Campaign[]>("/campaigns")) ?? [];
 }
 
+export async function createCampaign(payload: {
+  name: string;
+  vertical: string;
+  geography: string[];
+  company_size_target: string;
+  status?: CampaignStatus;
+}): Promise<{ campaign: Campaign | null; error?: string }> {
+  try {
+    const res = await fetch(`${BASE}/api/v1/campaigns`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return { campaign: null, error: body.error ?? `Request failed (${res.status})` };
+    }
+    const campaign = (await res.json()) as Campaign;
+    return { campaign };
+  } catch {
+    return { campaign: null, error: "Could not reach the API. Is the backend running?" };
+  }
+}
+
+export async function triggerCampaignScrape(campaignId: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch(`${BASE}/api/v1/campaigns/${campaignId}/scrape`, { method: "POST" });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return { ok: false, error: body.error ?? `Scrape failed (${res.status})` };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "Could not reach the API." };
+  }
+}
+
+export async function updateCampaignStatus(
+  campaignId: string,
+  status: CampaignStatus
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch(`${BASE}/api/v1/campaigns/${campaignId}/status`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return { ok: false, error: body.error ?? `Update failed (${res.status})` };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "Could not reach the API." };
+  }
+}
+
 export async function getCampaign(id: string): Promise<Campaign | null> {
   return apiFetch<Campaign>(`/campaigns/${id}`);
 }
@@ -152,17 +209,24 @@ export async function rejectDraft(id: string, reason: string): Promise<boolean> 
   }
 }
 
-export async function editDraft(id: string, updates: { subject?: string; body?: string }): Promise<Draft | null> {
+export async function editDraft(
+  id: string,
+  updates: { subject?: string; body?: string }
+): Promise<{ draft: Draft | null; error?: string }> {
   try {
     const res = await fetch(`${BASE}/api/v1/drafts/${id}/edit`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(updates),
     });
-    if (!res.ok) return null;
-    return res.json();
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return { draft: null, error: body.error ?? `Save failed (${res.status})` };
+    }
+    const draft = (await res.json()) as Draft;
+    return { draft };
   } catch {
-    return null;
+    return { draft: null, error: "Could not reach the API." };
   }
 }
 

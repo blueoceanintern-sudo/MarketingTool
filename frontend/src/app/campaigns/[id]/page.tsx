@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getCampaign, getLeads } from "@/lib/api";
 import type { Lead } from "@/lib/api";
+import CampaignActions from "./campaign-actions";
 
 const AVATAR_COLORS = [
   "bg-primary-fixed text-on-primary-fixed",
@@ -43,18 +44,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
           <h2 className="text-[20px] font-bold text-primary">{name}</h2>
           <p className="text-[11px] text-grey-500 mt-1">ID: {id}</p>
         </div>
-        <div className="flex items-center gap-3">
-          <button className="flex items-center gap-2 px-4 py-2 border border-grey-300 rounded-lg text-[14px] font-semibold text-grey-700 hover:bg-grey-50 transition-colors duration-150">
-            <span className="material-symbols-outlined text-[20px]">file_download</span>
-            Export CSV
-          </button>
-          {campaign?.status === "active" && (
-            <button className="flex items-center gap-2 px-4 py-2 border border-danger rounded-lg text-[14px] font-semibold text-danger hover:bg-danger-bg transition-colors duration-150">
-              <span className="material-symbols-outlined text-[20px]">pause_circle</span>
-              Pause Campaign
-            </button>
-          )}
-        </div>
+        {campaign && <CampaignActions campaignId={id} status={campaign.status} />}
       </div>
 
       {/* KPI grid */}
