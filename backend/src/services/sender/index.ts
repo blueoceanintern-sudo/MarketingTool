@@ -2,6 +2,7 @@ import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
 import { db } from "../../db";
 import { suppressionList, emailDrafts, emailEvents } from "../../db/schema";
 import { eq, and, isNotNull, count, gte } from "drizzle-orm";
+import { buildEmailHtml } from "../../templates/outreachEmail";
 
 interface SendPayload {
   draftId: string;
@@ -60,13 +61,8 @@ function withinNinetyDays(lastSentAt: string): boolean {
   return diffMs / (1000 * 60 * 60 * 24) < 90;
 }
 
-function buildUnsubscribeLink(leadId: string): string {
-  const base = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
-  return `${base}/unsubscribe?id=${leadId}`;
-}
-
-function appendUnsubscribe(body: string, leadId: string): string {
-  return `${body}\n\nTo unsubscribe: ${buildUnsubscribeLink(leadId)}`;
+function getApiBase(): string {
+  return process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 }
 
 let sesClient: SESClient | null = null;
@@ -120,14 +116,20 @@ export async function sendDraft(payload: SendPayload): Promise<SendResult> {
   const fromAddress = process.env.AWS_SES_FROM_ADDRESS;
   if (!fromAddress) throw new Error("AWS_SES_FROM_ADDRESS is required");
 
-  const bodyWithUnsubscribe = appendUnsubscribe(draft.body, leadId);
+  const apiBase = getApiBase();
+  const unsubscribeUrl = `${apiBase}/unsubscribe?id=${leadId}`;
+  const textBody = `${draft.body}\n\nTo unsubscribe: ${unsubscribeUrl}`;
+  const htmlBody = buildEmailHtml(draft.body, leadId, apiBase);
 
   const command = new SendEmailCommand({
     Source: fromAddress,
     Destination: { ToAddresses: [toEmail] },
     Message: {
       Subject: { Data: draft.subject, Charset: "UTF-8" },
-      Body: { Text: { Data: bodyWithUnsubscribe, Charset: "UTF-8" } },
+      Body: {
+        Text: { Data: textBody, Charset: "UTF-8" },
+        Html: { Data: htmlBody, Charset: "UTF-8" },
+      },
     },
   });
 

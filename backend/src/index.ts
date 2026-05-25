@@ -52,7 +52,7 @@ app.get("/scrape", async (c) => {
   }
 });
 
-// One-click unsubscribe — SES links here; adds email to suppression list
+// One-click unsubscribe — SES links here; adds email to suppression list then redirects to confirmation page
 app.get("/unsubscribe", async (c) => {
   const leadId = c.req.query("id");
   if (!leadId) return c.text("Invalid unsubscribe link.", 400);
@@ -70,12 +70,8 @@ app.get("/unsubscribe", async (c) => {
     .set({ status: "suppressed" })
     .where(eq(leads.id, leadId));
 
-  return c.html(
-    `<!DOCTYPE html><html><body style="font-family:sans-serif;max-width:480px;margin:4rem auto;text-align:center">
-      <h2>You've been unsubscribed.</h2>
-      <p>You won't receive any further emails from us.</p>
-    </body></html>`
-  );
+  const frontendUrl = process.env.FRONTEND_URL ?? "http://localhost:3000";
+  return c.redirect(`${frontendUrl}/unsubscribe.html`, 302);
 });
 
 export default app;
