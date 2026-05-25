@@ -13,11 +13,12 @@ The repo is in an **early scaffold** phase. The sections below describe the **ta
 | Area | Built today | Target (this doc) |
 |---|---|---|
 | Repo layout | `backend/` + `frontend/` (two packages) | Monorepo: `apps/web`, `apps/api`, `services/*`, `workers/`, `db/` |
-| Backend routes | `GET /`, `GET /health`, `GET /scrape?url=` | `/api/v1/*` (campaigns, drafts, webhooks, analytics, admin) |
-| Scraping | Cheerio only; `sourceRegistry` in **code** (`backend/src/config/`) | Crawl4AI + Cheerio fallback; `source_registry` **table** |
-| Database | None | PostgreSQL + pgvector, Drizzle |
-| Frontend | Shell: sidebar nav + dashboard placeholder | Full dashboard, review queue, leads, replies, demos |
-| Workers, Docker, services | None | `workers/`, `docker-compose.yml`, `services/*` |
+| Backend routes | `/api/v1/*` routes live; legacy `/scrape`, `/health`, `/unsubscribe` also running | `/api/v1/*` complete per target spec |
+| Scraping | Crawl4AI + Cheerio scrapers built; `runScrapeJob` runner; `sourceRegistry` still in-code | `source_registry` table replaces in-code map |
+| Database | Drizzle schema + all tables defined; migrations **not yet generated/applied** | Migrations in `db/migrations/`; pgvector live |
+| Frontend | Full pages: campaigns, review queue, leads, replies, analytics, registry, profile, settings | Same — feature-complete |
+| Workers & services | All 5 cron workers + sender/drafting/enrichment/scraping services built | Security middleware, purge worker, template-improver full logic |
+| Docker | `docker-compose.yml` present | Same |
 
 When adding features, prefer extending **existing** paths until a deliberate migration to the target layout. New shared types should eventually live in `shared/` (not yet created).
 
@@ -31,35 +32,87 @@ When adding features, prefer extending **existing** paths until a deliberate mig
 
 | File | Purpose |
 |---|---|
-| `src/index.ts` | Hono app — routes below |
-| `src/services/scrapers/cheerioScraper.ts` | Fetches URL, parses HTML with Cheerio; returns `Lead { company?, email?, website }` |
-| `src/config/sourceRegistry.ts` | In-code map of source name → CSS selectors (`generic` only today) |
+| `src/index.ts` | Hono app — all routes mounted; CORS middleware; `/unsubscribe` one-click handler |
+| `src/db/index.ts` | Drizzle client wired to `DATABASE_URL` |
+| `src/db/schema/tables.ts` | Full table definitions (all target tables except `audit_log`) |
+| `src/db/schema/enums.ts` | All enums |
+| `src/config/sourceRegistry.ts` | In-code CSS selector map — still used until DB migrations run |
+| `src/routes/campaigns.ts` | `POST/GET /campaigns`, `GET /campaigns/:id`, `PATCH /campaigns/:id/status` |
+| `src/routes/leads.ts` | `POST /campaigns/:id/leads/import`, `GET /campaigns/:id/leads`, `GET /leads` |
+| `src/routes/drafts.ts` | `GET /drafts/queue`, `PATCH /drafts/:id/approve`, `PATCH /drafts/:id/reject`, `PATCH /drafts/:id/edit` |
+| `src/routes/replies.ts` | `POST /webhooks/ses/reply`, `GET /replies/flagged`, `PATCH /replies/:id/resolve` |
+| `src/routes/demos.ts` | `POST/GET /demos`, `PATCH /demos/:id/assign` |
+| `src/routes/analytics.ts` | `GET /analytics/overview`, `/analytics/templates`, `/analytics/export` |
+| `src/routes/admin.ts` | `GET/POST /registry/sources`, `GET/POST /suppression` |
+| `src/services/scrapers/cheerioScraper.ts` | Static HTML scraper; returns `Lead { company?, email?, website }` |
+| `src/services/scrapers/crawl4aiScraper.ts` | Crawl4AI HTTP client for JS-rendered pages |
+| `src/services/scraping/runScrapeJob.ts` | Orchestrates scrape jobs; updates `scrape_jobs` status/counts |
+| `src/services/drafting/index.ts` | Claude Haiku 4.5 Batch API email generation; 3 personas; confidence in same call |
+| `src/services/enrichment/snovio.ts` | Snov.io token auth, domain lookup, email verification — built but enrichment-retry worker on hold |
+| `src/services/sender/index.ts` | AWS SES send; warm-up cap; suppression + 90-day + risk-flag + verified checks; A/B routing |
+| `src/templates/outreachEmail.ts` | HTML email template with one-click unsubscribe link |
+| `src/workers/index.ts` | All 5 cron jobs: follow-up-sender (9am), warmup-tracker (midnight), scrape-retry (4am), enrichment-retry (3am, on hold), template-improver (Sun midnight) |
 
-**Live routes (no `/api/v1` prefix yet):**
+**Live routes:**
 
 ```
-GET  /              # health text ("Backend running")
+GET  /              # health text
 GET  /health        # JSON { status, message }
-GET  /scrape?url=   # scrape one URL; 400 if missing url; 500 on fetch/parse error
+GET  /scrape?url=   # legacy one-off scrape
+GET  /unsubscribe?id=  # one-click suppression + redirect
+
+POST   /api/v1/campaigns
+GET    /api/v1/campaigns
+GET    /api/v1/campaigns/:id
+PATCH  /api/v1/campaigns/:id/status
+POST   /api/v1/campaigns/:id/leads/import
+GET    /api/v1/campaigns/:id/leads
+GET    /api/v1/leads
+GET    /api/v1/drafts/queue
+PATCH  /api/v1/drafts/:id/approve
+PATCH  /api/v1/drafts/:id/reject
+PATCH  /api/v1/drafts/:id/edit
+POST   /api/v1/webhooks/ses/reply
+GET    /api/v1/replies/flagged
+PATCH  /api/v1/replies/:id/resolve
+POST   /api/v1/demos
+GET    /api/v1/demos
+PATCH  /api/v1/demos/:id/assign
+GET    /api/v1/analytics/overview
+GET    /api/v1/analytics/templates
+GET    /api/v1/analytics/export
+GET    /api/v1/registry/sources
+POST   /api/v1/registry/sources
+GET    /api/v1/suppression
+POST   /api/v1/suppression
 ```
 
-**Dev commands (use until root `bun run dev` exists):**
+**Dev commands:**
 
 ```bash
 cd backend
-bun install          # install dependencies
-bun run src/index.ts # run with hot reload (--hot flag in package.json)
-bun run --hot src/index.ts  # explicit hot reload
+bun install
+bun run src/index.ts   # hot reload
 ```
 
 ### Frontend (`frontend/`)
 
 **Framework:** Next.js (App Router) | **UI:** shadcn/ui (radix-nova) + Tailwind CSS v4
 
-| File | Purpose |
+| File/Dir | Purpose |
 |---|---|
-| `src/app/layout.tsx` | Root layout + sidebar (Campaigns, Review Queue, Leads, Replies, Dashboard) — links are `#` placeholders |
-| `src/app/page.tsx` | Dashboard landing (title + subtitle only) |
+| `src/app/layout.tsx` | Root layout + sidebar component |
+| `src/components/sidebar.tsx` | Full nav sidebar (Campaigns, Review Queue, Leads, Replies, Analytics, Registry) |
+| `src/app/campaigns/` | Campaign list + detail pages with actions |
+| `src/app/drafts/` | Review queue — approve/reject/edit drafts |
+| `src/app/leads/` | Leads list |
+| `src/app/replies/` | Replies list and flagged queue |
+| `src/app/analytics/` | Analytics dashboard + loading skeleton |
+| `src/app/registry/` | Source registry admin page |
+| `src/app/profile/` | Profile page |
+| `src/app/settings/` | Settings page |
+| `src/lib/api.ts` | Typed fetch helpers for all API routes |
+| `src/components/book-demo-modal.tsx` | Demo booking modal |
 | `src/components/ui/` | shadcn components — add via CLI, do not hand-edit |
 | `src/lib/utils.ts` | `cn()` (clsx + tailwind-merge) |
 | `src/app/globals.css` | Design tokens (`oklch` CSS variables) |
@@ -103,8 +156,8 @@ npm run lint
 | AI — classification | Claude Haiku 4.5 | Prompt caching for reply classification |
 | Hosting | AWS Lightsail | 2GB RAM, 2 vCPUs |
 | Background jobs | node-cron | No Redis, Bull, or external queue |
-| Enrichment (primary) | Snov.io API | Email verification + contact enrichment |
-| Enrichment (fallback) | Apollo.io | Only if Snov.io coverage insufficient for a vertical |
+| Enrichment (primary) | Snov.io API | Email verification + contact enrichment — service built, worker on hold |
+| Enrichment (fallback) | Cowork | Only if Snov.io coverage insufficient for a vertical |
 
 ---
 
@@ -117,7 +170,7 @@ npm run lint
 │   └── api/                  # Hono backend (migrates from backend/)
 ├── services/
 │   ├── scraper/              # Crawl4AI + Cheerio fallback
-│   ├── enrichment/           # Snov.io (+ Apollo fallback)
+│   ├── enrichment/           # Snov.io (+ Cowork fallback)
 │   ├── drafting/             # Claude Haiku Batch API
 │   ├── scoring/              # Hard gates + draft quality
 │   ├── sender/               # AWS SES + warm-up
@@ -172,10 +225,11 @@ bun run workers                      # start all cron jobs
 | Worker | Schedule | What it does |
 |---|---|---|
 | `follow-up-sender` | Daily 9am | Follow-ups (attempts 1–3) for no-reply leads |
-| `enrichment-retry` | Daily 3am | Retry Snov.io for unverified leads |
+| `enrichment-retry` | Daily 3am | Retry Snov.io for unverified leads (on hold — not yet connected) |
 | `scrape-retry` | Daily 4am | Retry failed `scrape_jobs` under `max_retries` |
 | `template-improver` | Sunday midnight | Top variants → skill.md after 50+ sends |
 | `warmup-tracker` | Daily midnight | Warm-up phase + daily send cap |
+| `purge-old-records` | Weekly Sunday 2am | Hard-delete expired rows per data retention policy; log counts to `audit_log` |
 
 ### Tests
 
@@ -189,21 +243,22 @@ bun test services/scoring
 
 ## Not Yet Built
 
-Everything in the target stack and layout that is **not** listed under **What's Built Today**:
+Items from the target spec that are **not yet implemented**:
 
-- Monorepo root (`bun run dev`, `apps/*`, `shared/`)
-- PostgreSQL + pgvector + Drizzle (`db/schema`, migrations)
-- Crawl4AI Docker integration; scrape jobs, rate limits, daily caps
-- `source_registry` as DB table (today: in-code `backend/src/config/sourceRegistry.ts`)
-- Snov.io / Apollo enrichment
-- Claude Haiku drafting (Batch API) + confidence scoring in same call
-- Review queue UI and draft approve/reject/edit APIs
-- AWS SES sending, warm-up phases, suppression checks
-- Reply webhook, classification, decision tree
-- Campaigns, CSV import, analytics, admin registry/suppression APIs
-- Workers (`workers/index.ts` + cron schedules)
-- Template improver, A/B routing, pgvector on `email_drafts`
-- Demo booking flow
+- Monorepo migration (`apps/web`, `apps/api`, `shared/`) — still `backend/` + `frontend/`
+- DB migrations — schema defined in Drizzle but `drizzle-kit generate` + `migrate` not yet run; `db/migrations/` folder does not exist
+- `source_registry` DB table not yet active as the live source — in-code `backend/src/config/sourceRegistry.ts` still in use
+- Enrichment retry worker on hold — `snovio.ts` service is built but not connected end-to-end; `enrichment-retry` cron logs a placeholder
+- `audit_log` table — defined in target schema but not in `backend/src/db/schema/tables.ts` yet
+- `dpa_signed` column on `campaigns` table — in target schema, not yet in Drizzle schema
+- `approved_by` / `approved_at` columns on `email_drafts` — in target schema, not yet added
+- `purge-old-records` cron worker — scheduled in target but not in `backend/src/workers/index.ts`
+- Template improver full logic — cron job runs and logs `templatePerformance` rows but does not do pgvector similarity or update `skill.md`
+- Security middleware not yet wired: API key auth (`X-API-Key` / `SECRET_API_KEY`), rate limiting, SSRF protection in scraper, SNS signature verification on webhook, CSV injection sanitization
+- CORS locked to `NEXT_PUBLIC_API_URL` only — currently allows both `localhost:3000` and `127.0.0.1:3000` explicitly; needs env-driven config
+- `POST /admin/leads/:id/erase` right-to-deletion endpoint — in target API spec, not yet built
+- `GET/POST /admin/audit-log` and `/admin/audit-log/export` — not yet built
+- Email domain hardening (SPF, DKIM, DMARC) — DNS / SES console setup, not code
 
 ---
 
@@ -236,11 +291,12 @@ id, company_id (FK), first_name, last_name, email (UNIQUE), role,
 is_verified, status, created_at, updated_at
 
 // campaigns
-id, name, vertical, geography, company_size_target, status, created_at, updated_at
+id, name, vertical, geography, company_size_target, status, dpa_signed (BOOLEAN NOT NULL DEFAULT false), created_at, updated_at
 
 // email_drafts
 id, lead_id (FK), campaign_id (FK), persona, subject, body,
 confidence_score, status, created_at
+approved_by (nullable), approved_at (nullable)  // audit trail — who approved/rejected and when
 // + body_embedding vector(1536) for improver (HNSW index)
 
 // email_events
@@ -273,6 +329,9 @@ scheduled_at, sent_at, draft_id (FK)
 // demos
 id, lead_id (FK), campaign_id (FK), reply_id (FK), assigned_to,
 status (pending | scheduled | completed | cancelled), created_at
+
+// audit_log
+id, timestamp, actor (user identifier or system), action, target_id, target_type, ip_address, metadata (JSON)
 ```
 
 ### Key relationships
@@ -359,6 +418,9 @@ GET    /registry/sources
 POST   /registry/sources
 GET    /suppression
 POST   /suppression
+POST   /admin/leads/:id/erase          # right-to-deletion; hard-deletes PII, logs to audit_log
+GET    /admin/audit-log               # paginated JSON
+GET    /admin/audit-log/export        # CSV download for compliance
 ```
 
 ---
@@ -380,9 +442,11 @@ ANTHROPIC_API_KEY=
 SNOVIO_CLIENT_ID=
 SNOVIO_CLIENT_SECRET=
 
-APOLLO_API_KEY=                        # fallback enrichment only
+COWORK_API_KEY=                        # fallback enrichment only
 
 CRAWL4AI_BASE_URL=http://localhost:11235
+
+SECRET_API_KEY=                         # internal API auth — required on all /api/v1/* routes
 
 NODE_ENV=development | production
 PORT=3001
@@ -421,6 +485,127 @@ Non-negotiable:
 
 ---
 
+---
+
+## Security
+
+### SSRF protection
+
+The scraper accepts arbitrary URLs from `source_registry` and CSV imports. Before any fetch (Crawl4AI or Cheerio), resolve the hostname and block requests to private/internal ranges:
+
+- `localhost` / `127.x.x.x`
+- `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`
+- Link-local `169.254.0.0/16` (AWS metadata endpoint)
+
+Reject the job and set `scrape_jobs.status = blocked` if the resolved IP falls in any of these ranges. Never whitelist exceptions.
+
+### SES webhook signature verification
+
+`POST /webhooks/ses/reply` receives SNS notifications from AWS. Before processing any payload:
+
+1. Verify the `SigningCertURL` domain is `amazonaws.com`
+2. Download the cert and verify the SNS `Signature` field against the raw message
+3. Reject (HTTP 403) any request that fails verification — never process unverified payloads
+
+Use the AWS SDK's built-in SNS message validator; do not hand-roll this.
+
+### CSV injection sanitization
+
+CSV imports (`POST /campaigns/:id/leads/import`) must strip formula-injection characters before inserting any field into the DB. For every string cell, if the value starts with `=`, `+`, `-`, or `@`, prefix it with a single quote or reject the row with a flag. Apply this in the import parser before validation, not after.
+
+### CORS
+
+Lock `Access-Control-Allow-Origin` to the value of `NEXT_PUBLIC_API_URL` only. Never use a wildcard (`*`). Set this in Hono middleware at app startup so it applies to every route.
+
+### API authentication
+
+All `/api/v1/*` routes require an `X-API-Key` header validated against `SECRET_API_KEY` (env var). Requests missing or mismatching the key return HTTP 401 immediately — no DB access, no logging of the payload. Add `SECRET_API_KEY` to the env var list. The middleware must run before any route handler.
+
+### Route-level rate limiting
+
+Apply rate limiting in Hono middleware (no Redis required — in-memory sliding window is fine for a single-instance Lightsail deploy):
+
+- **Default:** 100 req / min per IP
+- **Webhook endpoint:** 50 req / min per IP
+- **CSV import:** 10 req / min per API key
+
+Return HTTP 429 with a `Retry-After` header on breach. Log the IP and route.
+
+### Secrets hygiene
+
+- Never log env vars or interpolate them into error messages
+- Rotate `ANTHROPIC_API_KEY`, `SNOVIO_CLIENT_SECRET`, `COWORK_API_KEY`, and `SECRET_API_KEY` on a 90-day schedule minimum
+- Add `.env*` to `.gitignore` at repo root — enforced, not optional
+- In production, pull secrets from AWS Secrets Manager or Parameter Store; `.env` is for local dev only
+
+### Encryption in transit and at rest
+
+- **In transit:** TLS 1.2+ enforced on all connections — API, DB, SES, Snov.io, Cowork. Never allow HTTP for any external call; use `https://` explicitly in all service clients
+- **At rest:** Enable AWS Lightsail/RDS encryption at rest on the PostgreSQL volume. Never store raw PII (email addresses, names) in plaintext log files or error messages
+- **DB connections:** `DATABASE_URL` must use `sslmode=require`; reject unencrypted Postgres connections
+
+### Data retention and purge policy
+
+Enforced by a scheduled worker or DB job:
+
+| Table | Retention | Action |
+|---|---|---|
+| `email_events` | 90 days after `sent_at` | Hard delete |
+| `replies` | 90 days after `received_at` | Hard delete |
+| `risk_flags` | 90 days after lead suppressed | Hard delete |
+| `scrape_jobs` (failed/complete) | 30 days | Hard delete |
+| `suppression_list` | Indefinite | Keep — legal requirement |
+| `audit_log` | Indefinite | Keep — compliance export |
+
+Add a `purge-old-records` cron worker running weekly. Log purge counts to `audit_log`.
+
+### Right-to-deletion
+
+Required by PDPA (SG), Australia Privacy Act, and CAN-SPAM opt-out obligations:
+
+- `POST /admin/leads/:id/erase` — hard-deletes all PII for a lead: name, email, company data, drafts, events, flags, follow-ups. Replaces email with `[deleted]` in `suppression_list` entry so the 90-day re-contact gate still applies without retaining PII
+- Erasure must complete within **30 days** of request
+- Log every erasure to `audit_log` with timestamp and requesting actor
+- CSV exports must exclude erased leads
+
+### Automated isolation tests in CI
+
+Add a dedicated test suite (`tests/security/isolation.test.ts`) that runs on every push:
+
+- Assert that a query scoped to `org_id = A` returns zero rows from any table where `org_id = B`
+- Assert that suppression list checks cannot surface a lead erased via right-to-deletion
+- Assert that the enrichment retry worker only processes leads belonging to its campaign's org
+- CI must fail and block merge if any isolation test fails — these are non-negotiable
+
+### Audit log exportability
+
+The `audit_log` table (admin actions, permission changes, document access, erasures, purges) must be exportable:
+
+- `GET /admin/audit-log?from=&to=` — returns paginated JSON
+- `GET /admin/audit-log/export` — returns CSV download for compliance orgs
+- Export includes: `timestamp`, `actor`, `action`, `target_id`, `target_type`, `ip_address`
+- Access restricted to admin API key only
+
+### Data processing agreements
+
+Before any live org data enters the system:
+
+- A data processing agreement (DPA) must be signed per market: SG (PDPA), AU (Privacy Act), US (CAN-SPAM)
+- Document which data is processed, for how long, and the legal basis for processing
+- DPA status tracked per campaign in `campaigns` table as `dpa_signed BOOLEAN NOT NULL DEFAULT false`
+- The sender worker must check `dpa_signed = true` before scheduling any email — treat it as a hard gate equivalent to the suppression check
+
+
+### Email domain hardening
+
+Before the first SES send, the sending domain must have all three DNS records configured and verified:
+
+- **SPF** — authorize SES to send on behalf of the domain
+- **DKIM** — enable SES Easy DKIM (2048-bit); verify in SES console
+- **DMARC** — `p=quarantine` minimum; set `rua` to a monitored inbox
+
+Without these, cold outreach to SG/AU/US targets will be flagged or rejected, and the domain is spoofable.
+
 ## AI Usage Rules
 
 - **Drafting:** Claude Haiku 4.5 via **Batch API only**
@@ -438,16 +623,32 @@ Non-negotiable:
 
 **Runtime:** Bun | **Framework:** Hono
 
-- `src/index.ts` — Hono app with three routes: `GET /` (health text), `GET /health` (JSON), `GET /scrape?url=...` (scrape URL for lead data)
-- `src/services/scrapers/cheerioScraper.ts` — fetches URL, parses HTML with Cheerio, returns `Lead { company?, email?, website }`
-- `src/config/sourceRegistry.ts` — maps source names to CSS selector configs (company selector, email selector); extend when adding scrape targets until DB `source_registry` exists
+- `src/index.ts` — Hono app; CORS middleware; all `/api/v1/*` routers mounted; `/unsubscribe` one-click handler
+- `src/db/` — Drizzle client + full schema (all target tables except `audit_log`; missing `dpa_signed`, `approved_by/at` columns)
+- `src/routes/` — all target API routes implemented (campaigns, leads, drafts, replies, demos, analytics, admin registry/suppression)
+- `src/services/scrapers/cheerioScraper.ts` — static HTML scraper
+- `src/services/scrapers/crawl4aiScraper.ts` — Crawl4AI HTTP client for JS-rendered pages
+- `src/services/scraping/runScrapeJob.ts` — scrape job orchestrator; updates `scrape_jobs` table
+- `src/services/drafting/index.ts` — Claude Haiku 4.5 Batch API; 3 persona prompts; confidence score in same call; prompt caching on system prompt
+- `src/services/enrichment/snovio.ts` — Snov.io OAuth, domain lookup, email verify — built but not yet connected end-to-end
+- `src/services/sender/index.ts` — AWS SES send; warm-up cap; suppression/90-day/risk/verified hard gates; A/B routing (20/80)
+- `src/templates/outreachEmail.ts` — branded HTML email with one-click unsubscribe
+- `src/workers/index.ts` — 5 node-cron jobs: follow-up-sender, warmup-tracker, scrape-retry, enrichment-retry (on hold), template-improver (logs only)
+- `src/config/sourceRegistry.ts` — in-code CSS selector map; still active until DB migrations run
 
 ### Current — Frontend (`frontend/`)
 
 **Framework:** Next.js (App Router) | **UI:** shadcn/ui (radix-nova style) + Tailwind CSS v4
 
-- `src/app/layout.tsx` — root layout with persistent sidebar (Campaigns, Review Queue, Leads, Replies, Dashboard)
-- `src/app/page.tsx` — dashboard landing
+- `src/app/layout.tsx` + `src/components/sidebar.tsx` — root layout with full nav sidebar
+- `src/app/campaigns/` — campaign list and detail pages
+- `src/app/drafts/` — review queue (approve / reject / edit drafts)
+- `src/app/leads/` — leads list
+- `src/app/replies/` — replies and flagged queue
+- `src/app/analytics/` — analytics dashboard with loading skeleton
+- `src/app/registry/` — source registry admin
+- `src/app/profile/` and `src/app/settings/` — profile and settings pages
+- `src/lib/api.ts` — typed fetch client for all backend API routes
 - `src/components/ui/` — shadcn components (do not edit manually; use `npx shadcn@latest add <component>`)
 - `src/lib/utils.ts` — `cn()` utility (clsx + tailwind-merge)
 - Path alias `@/*` → `src/*`
@@ -461,7 +662,7 @@ source_registry / scrape_jobs
         ↓
    services/scraper (Crawl4AI → Cheerio fallback)
         ↓
-   services/enrichment (Snov.io → Apollo fallback)
+   services/enrichment (Cowork → Snov.io fallback)
         ↓
    services/drafting (Claude Haiku Batch API, 3 personas)
         ↓
@@ -490,7 +691,7 @@ source_registry / scrape_jobs
 ### Target — Service map
 
 - `services/scraper` — Crawl4AI for JS pages; Cheerio for static HTML; enforces rate limits, daily caps, `scrape_jobs` status
-- `services/enrichment` — Snov.io primary; Apollo when vertical coverage is insufficient
+- `services/enrichment` — Snov.io primary; Cowork when vertical coverage is insufficient
 - `services/drafting` — Batch API email generation; persona prompts; max 125 words; confidence in same response
 - `services/scoring` — Hard gates (suppression, 90-day rule, legal flags, unverified email) + draft quality score
 - `services/sender` — SES send, warm-up daily cap, suppression check, one-click unsubscribe, A/B routing (20% / 80%)
