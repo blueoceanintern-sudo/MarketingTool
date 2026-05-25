@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Email Template Preview — BlueOcean</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --primary: #021745;
+      --background: #fbf8fd;
+      --grey-100: #ECEEF2;
+      --grey-500: #7D8799;
+      --font-sans: 'DM Sans', sans-serif;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: var(--font-sans);
+      background: #e8ecf2;
+      min-height: 100vh;
+      padding: 32px 16px;
+    }
+    .chrome-bar {
+      max-width: 680px;
+      margin: 0 auto 0;
+      background: #d1d5db;
+      border-radius: 8px 8px 0 0;
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .chrome-dot { width: 12px; height: 12px; border-radius: 50%; }
+    .chrome-dot.red   { background: #ef4444; }
+    .chrome-dot.amber { background: #f59e0b; }
+    .chrome-dot.green { background: #22c55e; }
+    .chrome-label {
+      margin-left: auto;
+      font-size: 11px;
+      color: #6b7280;
+      font-weight: 500;
+    }
+
+    /* ── Email client shell ── */
+    .email-shell {
+      max-width: 680px;
+      margin: 0 auto;
+      background: #ffffff;
+      border-radius: 0 0 8px 8px;
+      box-shadow: 0 4px 24px rgba(0,0,0,.12);
+      overflow: hidden;
+    }
+
+    /* header bar */
+    .shell-header {
+      background: #f3f4f6;
+      border-bottom: 1px solid #e5e7eb;
+      padding: 16px 24px;
+    }
+    .shell-header .meta-row {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      font-size: 13px;
+      color: #6b7280;
+      margin-bottom: 6px;
+    }
+    .shell-header .meta-row:last-child { margin-bottom: 0; }
+    .shell-header .label { font-weight: 600; color: #374151; min-width: 40px; }
+    .shell-header .subject-row {
+      font-size: 15px;
+      font-weight: 700;
+      color: #111827;
+      margin-bottom: 10px;
+    }
+
+    /* ── Email body (replicates what email clients render) ── */
+    .email-body {
+      padding: 0;
+      background: #f5f7fa;
+    }
+
+    /* inner email table layout */
+    .email-wrap {
+      background: #f5f7fa;
+      padding: 32px 16px;
+    }
+    .email-card {
+      max-width: 600px;
+      margin: 0 auto;
+      background: #ffffff;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    }
+    .email-top {
+      background: #021745;
+      padding: 20px 32px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .email-logo-box {
+      width: 32px;
+      height: 32px;
+      background: #1b3d8a;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+      flex-shrink: 0;
+    }
+    .email-logo-text {
+      color: #ffffff;
+      font-size: 17px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+    }
+    .email-content {
+      padding: 32px 32px 24px;
+      color: #1b1b1f;
+      font-size: 15px;
+      line-height: 1.75;
+    }
+    .email-content p { margin-bottom: 16px; }
+    .email-content p:last-child { margin-bottom: 0; }
+    .email-divider {
+      margin: 0 32px;
+      height: 1px;
+      background: #eceef2;
+    }
+    .email-footer {
+      padding: 24px 32px 32px;
+      text-align: center;
+    }
+    .email-footer .footer-note {
+      font-size: 12px;
+      color: #7d8799;
+      line-height: 1.5;
+      margin-bottom: 16px;
+    }
+    .unsubscribe-btn {
+      display: inline-block;
+      background: #f5f7fa;
+      border: 1px solid #c2c8d4;
+      color: #3d4557;
+      font-size: 12px;
+      font-weight: 500;
+      padding: 9px 22px;
+      border-radius: 6px;
+      text-decoration: none;
+      letter-spacing: 0.1px;
+      cursor: pointer;
+      transition: background .15s;
+    }
+    .unsubscribe-btn:hover { background: #eceef2; }
+    .email-footer .footer-org {
+      margin-top: 20px;
+      font-size: 11px;
+      color: #b0b8c8;
+    }
+
+    /* ── Legend ── */
+    .legend {
+      max-width: 680px;
+      margin: 24px auto 0;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .legend-item {
+      background: #fff;
+      border-radius: 8px;
+      padding: 14px 16px;
+      border: 1px solid #e5e7eb;
+    }
+    .legend-item .legend-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #374151;
+      margin-bottom: 4px;
+      font-family: var(--font-sans);
+    }
+    .legend-item .legend-desc {
+      font-size: 12px;
+      color: #6b7280;
+      line-height: 1.5;
+      font-family: var(--font-sans);
+    }
+    .legend-item .legend-desc code {
+      background: #f3f4f6;
+      border-radius: 3px;
+      padding: 1px 5px;
+      font-size: 11px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Browser chrome -->
+  <div class="chrome-bar">
+    <div class="chrome-dot red"></div>
+    <div class="chrome-dot amber"></div>
+    <div class="chrome-dot green"></div>
+    <span class="chrome-label">Email Template Preview — BlueOcean</span>
+  </div>
+
+  <!-- Email client shell -->
+  <div class="email-shell">
+
+    <!-- Header meta -->
+    <div class="shell-header">
+      <div class="subject-row">Streamline Your Operations with AI-Powered Automation</div>
+      <div class="meta-row"><span class="label">From</span> BlueOcean Outreach &lt;outreach@blueocean.com&gt;</div>
+      <div class="meta-row"><span class="label">To</span> Sarah Chen &lt;s.chen@acmecorp.com&gt;</div>
+      <div class="meta-row"><span class="label">Date</span> Mon, 25 May 2026 09:00:00 +0800</div>
+    </div>
+
+    <!-- Rendered email body -->
+    <div class="email-body">
+      <div class="email-wrap">
+        <div class="email-card">
+
+          <!-- Brand header -->
+          <div class="email-top">
+            <div class="email-logo-box">B</div>
+            <span class="email-logo-text">BlueOcean</span>
+          </div>
+
+          <!-- Body copy (sample — ops persona) -->
+          <div class="email-content">
+            <p>Hi Sarah,</p>
+            <p>
+              I noticed Acme Corp is scaling operations across APAC — managing that kind of
+              cross-region coordination manually creates real process drag.
+            </p>
+            <p>
+              BlueOcean helps ops teams like yours automate the repetitive parts of outreach
+              and pipeline management, so your team focuses on work that actually moves
+              the needle.
+            </p>
+            <p>
+              Would a 20-minute call this week make sense? Happy to show you exactly where
+              we've helped similar teams cut turnaround time by 40%.
+            </p>
+            <p>
+              Best,<br />
+              <strong>The BlueOcean Team</strong>
+            </p>
+          </div>
+
+          <div class="email-divider"></div>
+
+          <!-- Footer with unsubscribe -->
+          <div class="email-footer">
+            <p class="footer-note">
+              You received this email because your business contact is publicly listed.<br />
+              To stop receiving emails from us, click the button below.
+            </p>
+            <a class="unsubscribe-btn" href="/unsubscribe.html">
+              Unsubscribe
+            </a>
+            <p class="footer-org">
+              BlueOcean &middot; Singapore &middot; Australia &middot; United States
+            </p>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Legend -->
+  <div class="legend">
+    <div class="legend-item">
+      <div class="legend-title">Unsubscribe flow</div>
+      <div class="legend-desc">
+        Button links to <code>GET /unsubscribe?id=&lt;leadId&gt;</code>.
+        Backend suppresses the email, marks lead <code>suppressed</code>,
+        then redirects here to <code>/unsubscribe.html</code>.
+      </div>
+    </div>
+    <div class="legend-item">
+      <div class="legend-title">Re-collection blocked</div>
+      <div class="legend-desc">
+        CSV import checks <code>suppression_list</code> before inserting.
+        Suppressed emails are silently skipped — they can never be re-added.
+      </div>
+    </div>
+    <div class="legend-item">
+      <div class="legend-title">Sender pre-flight</div>
+      <div class="legend-desc">
+        Every send hits <code>suppression_list</code> as the first hard gate,
+        before the 90-day rule, risk flags, or daily cap checks.
+      </div>
+    </div>
+    <div class="legend-item">
+      <div class="legend-title">HTML + plain text</div>
+      <div class="legend-desc">
+        SES sends both <code>Body.Html</code> and <code>Body.Text</code>
+        so the unsubscribe link is always accessible regardless of client.
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

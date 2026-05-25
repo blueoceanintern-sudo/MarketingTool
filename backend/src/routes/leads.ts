@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { db } from "../db";
-import { leads, companies, campaigns, riskFlags } from "../db/schema";
+import { leads, companies, campaigns, riskFlags, suppressionList } from "../db/schema";
 import { eq, and } from "drizzle-orm";
 
 function formatLead(row: {
@@ -113,6 +113,10 @@ leadsRouter.post("/:id/leads/import", async (c) => {
 
     const email = row["email"] ?? "";
     if (!email) { flagged.push(`row ${i + 1}: missing email`); continue; }
+
+    // Block suppressed emails — they opted out and must not be re-collected
+    const [suppressed] = await db.select({ id: suppressionList.id }).from(suppressionList).where(eq(suppressionList.email, email)).limit(1);
+    if (suppressed) { skipped.push(email); continue; }
 
     // Check for duplicate email
     const [existing] = await db.select({ id: leads.id }).from(leads).where(eq(leads.email, email)).limit(1);
