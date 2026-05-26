@@ -121,9 +121,12 @@ NEXT_PUBLIC_API_URL=http://localhost:3001
 ### 3. Set up the database
 
 ```bash
+# Start PostgreSQL (pgvector/pgvector:pg16) from repo root
+docker-compose up -d postgres
+
 cd backend
-bun drizzle-kit generate   # generate migrations from schema
-bun drizzle-kit migrate    # apply to your database
+bun drizzle-kit generate   # generate migrations from schema (only if schema changed)
+bun drizzle-kit migrate    # apply migrations to your database
 ```
 
 ### 4. Start services
