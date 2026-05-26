@@ -26,6 +26,7 @@
     "hono": "^4.12.18",
     "node-cron": "^4.2.1",
     "node-fetch": "^3.3.2",
+    "playwright": "^1.60.0",
     "postgres": "^3.4.9"
   }
 }

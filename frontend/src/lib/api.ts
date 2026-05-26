@@ -31,6 +31,10 @@ export interface Campaign {
   created_at: string;
 }
 
+export type EmailStatus = "verified" | "pattern_guessed" | "not_found";
+export type EnrichmentSource = "registry" | "cowork_claude" | "snovio" | "manual";
+export type EnrichmentRouting = "auto_queue" | "rep_review";
+
 export interface Lead {
   id: string;
   first_name: string;
@@ -38,11 +42,46 @@ export interface Lead {
   email: string;
   role: string;
   is_verified: boolean;
+  email_status: EmailStatus | null;
+  enrichment_source: EnrichmentSource | null;
+  routing: EnrichmentRouting | null;
+  enriched_at: string | null;
   status: LeadStatus;
   company_name: string;
   campaign_id?: string;
   campaign_name?: string;
   created_at: string;
+}
+
+export interface EnrichmentRecord {
+  lead_id: string;
+  enriched_at: string;
+  enrichment_source: EnrichmentSource;
+  market: "SG" | "AU" | "US";
+  institution: {
+    name: string;
+    type: string;
+    registration_id: string | null;
+    size: "small" | "medium" | "large" | "unknown";
+    website: string | null;
+    region: string;
+  };
+  contact: {
+    full_name: string | null;
+    first_name: string | null;
+    role: string | null;
+    email: string | null;
+    email_status: EmailStatus;
+  };
+  pipeline_flags: {
+    is_duplicate: boolean;
+    missing_critical_fields: boolean;
+    missing_fields_detail: string[];
+    risk_flag: boolean;
+    risk_flag_reason: string | null;
+  };
+  routing: EnrichmentRouting;
+  routing_reason: string | null;
 }
 
 export interface Draft {
@@ -168,6 +207,10 @@ export async function getCampaign(id: string): Promise<Campaign | null> {
 export async function getLeads(campaignId?: string): Promise<Lead[]> {
   const path = campaignId ? `/campaigns/${campaignId}/leads` : "/leads";
   return (await apiFetch<Lead[]>(path)) ?? [];
+}
+
+export async function getLeadEnrichment(leadId: string): Promise<EnrichmentRecord | null> {
+  return apiFetch<EnrichmentRecord>(`/leads/${leadId}/enrichment`);
 }
 
 export async function getDraftQueue(): Promise<Draft[]> {

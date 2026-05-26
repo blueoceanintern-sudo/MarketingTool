@@ -1,11 +1,4 @@
-import type { Lead } from "../scrapers/cheerioScraper";
-
-export interface EnrichedLead extends Lead {
-  firstName?: string;
-  lastName?: string;
-  role?: string;
-  isVerified: boolean;
-}
+import type { EnrichmentInput, EnrichmentProvider, ProviderResult } from "./types";
 
 interface SnovioTokenResponse {
   access_token: string;
@@ -67,27 +60,48 @@ async function verifyEmail(email: string, token: string): Promise<boolean> {
   return body.data?.status === "valid";
 }
 
-export async function enrichLead(lead: Lead): Promise<EnrichedLead> {
-  if (!lead.email && !lead.website) return { ...lead, isVerified: false };
+export const snovioProvider: EnrichmentProvider = {
+  name: "snovio",
 
-  const token = await getAccessToken();
+  async enrich(input: EnrichmentInput): Promise<ProviderResult | null> {
+    const seed = input.seed;
+    if (!seed.email && !seed.companyWebsite) return null;
 
-  if (lead.email) {
-    const verified = await verifyEmail(lead.email, token);
-    return { ...lead, isVerified: verified };
-  }
+    const token = await getAccessToken();
 
-  const domain = new URL(lead.website).hostname.replace(/^www\./, "");
-  const results = await findByDomain(domain, token);
-  if (results.length === 0) return { ...lead, isVerified: false };
+    if (seed.email) {
+      const verified = await verifyEmail(seed.email, token);
+      return {
+        source: "snovio",
+        contact: {
+          email: seed.email,
+          email_status: verified ? "verified" : "pattern_guessed",
+          full_name: joinName(seed.firstName, seed.lastName),
+          first_name: seed.firstName,
+          role: seed.role,
+        },
+      };
+    }
 
-  const best = results[0]!;
-  return {
-    ...lead,
-    email: best.email,
-    firstName: best.first_name,
-    lastName: best.last_name,
-    role: best.position,
-    isVerified: best.verified ?? false,
-  };
+    const domain = new URL(seed.companyWebsite!).hostname.replace(/^www\./, "");
+    const results = await findByDomain(domain, token);
+    if (results.length === 0) return null;
+
+    const best = results[0]!;
+    return {
+      source: "snovio",
+      contact: {
+        email: best.email,
+        email_status: best.verified ? "verified" : "pattern_guessed",
+        full_name: joinName(best.first_name ?? null, best.last_name ?? null),
+        first_name: best.first_name ?? null,
+        role: best.position ?? null,
+      },
+    };
+  },
+};
+
+function joinName(first: string | null, last: string | null): string | null {
+  const parts = [first, last].filter((p): p is string => Boolean(p?.trim()));
+  return parts.length > 0 ? parts.join(" ") : null;
 }
