@@ -1,3 +1,4 @@
+CREATE EXTENSION IF NOT EXISTS vector;--> statement-breakpoint
 CREATE TYPE "public"."campaign_status" AS ENUM('draft', 'active', 'paused', 'complete');--> statement-breakpoint
 CREATE TYPE "public"."company_size" AS ENUM('small', 'medium', 'large', 'enterprise');--> statement-breakpoint
 CREATE TYPE "public"."draft_status" AS ENUM('pending_review', 'approved', 'rejected', 'scheduled', 'sent');--> statement-breakpoint
