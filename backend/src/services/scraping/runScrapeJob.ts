@@ -1,6 +1,6 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "../../db";
-import { campaigns, companies, leads, scrapeJobs, sourceRegistry } from "../../db/schema";
+import { campaigns, companies, leads, scrapeJobs, sourceRegistry, normalizeVertical, normalizeGeo } from "../../db/schema";
 import { scrapeWithFallback } from "../scrapers/crawl4aiScraper";
 import { scrapeWebsite } from "../scrapers/cheerioScraper";
 import { enrichLead } from "../enrichment/orchestrator";
@@ -8,7 +8,7 @@ import { enrichLead } from "../enrichment/orchestrator";
 function parseGeographies(geography: string): string[] {
   return geography
     .split(",")
-    .map((g) => g.trim().toUpperCase())
+    .map(normalizeGeo)
     .filter(Boolean);
 }
 
@@ -89,7 +89,7 @@ export async function runScrapeJob(jobId: string, campaignId: string): Promise<v
   const geos = parseGeographies(campaign.geography);
   const sourceConditions = [
     eq(sourceRegistry.active, true),
-    eq(sourceRegistry.vertical, campaign.vertical),
+    eq(sourceRegistry.vertical, normalizeVertical(campaign.vertical)),
   ];
   if (geos.length > 0) sourceConditions.push(inArray(sourceRegistry.geo, geos));
 

@@ -137,6 +137,22 @@ export interface AnalyticsOverview {
   reply_rate: number;
 }
 
+export type ScraperType = "crawl4ai" | "cheerio" | "api";
+
+export interface SourceRegistry {
+  id: string;
+  name: string;
+  vertical: string;
+  geo: string;
+  url: string;
+  scraper_type: ScraperType;
+  legal_flag: boolean;
+  selectors: Record<string, string> | null;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 // ── API functions ─────────────────────────────────────────────────────────────
 
 export async function getCampaigns(): Promise<Campaign[]> {
@@ -224,6 +240,37 @@ export async function getReplies(flaggedOnly = false): Promise<Reply[]> {
 
 export async function getDemos(): Promise<Demo[]> {
   return (await apiFetch<Demo[]>("/demos")) ?? [];
+}
+
+export async function getRegistrySources(): Promise<SourceRegistry[]> {
+  return (await apiFetch<SourceRegistry[]>("/registry/sources")) ?? [];
+}
+
+export async function createRegistrySource(payload: {
+  name: string;
+  vertical: string;
+  geo: string;
+  url: string;
+  scraper_type: ScraperType;
+  legal_flag?: boolean;
+  selectors?: Record<string, string>;
+  active?: boolean;
+}): Promise<{ source: SourceRegistry | null; error?: string }> {
+  try {
+    const res = await fetch(`${BASE}/api/v1/registry/sources`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return { source: null, error: body.error ?? `Request failed (${res.status})` };
+    }
+    const source = (await res.json()) as SourceRegistry;
+    return { source };
+  } catch {
+    return { source: null, error: "Could not reach the API." };
+  }
 }
 
 export async function getAnalyticsOverview(): Promise<AnalyticsOverview | null> {

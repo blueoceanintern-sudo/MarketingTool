@@ -15,6 +15,11 @@ import {
   enrichmentSourceEnum,
 } from "./enums";
 
+// Canonical forms for the free-form taxonomy columns. Apply at every write
+// site so reads can use simple equality without LOWER()/UPPER() wrappers.
+export const normalizeVertical = (s: string): string => s.trim().toLowerCase();
+export const normalizeGeo = (s: string): string => s.trim().toUpperCase();
+
 export const companies = pgTable("companies", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),

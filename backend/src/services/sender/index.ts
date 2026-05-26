@@ -1,6 +1,6 @@
 import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
 import { db } from "../../db";
-import { suppressionList, emailDrafts, emailEvents } from "../../db/schema";
+import { suppressionList, emailDrafts, emailEvents, campaigns } from "../../db/schema";
 import { eq, and, isNotNull, count, gte } from "drizzle-orm";
 import { buildEmailHtml } from "../../templates/outreachEmail";
 
@@ -111,6 +111,18 @@ export async function sendDraft(payload: SendPayload): Promise<SendResult> {
   if (!draft) return { draftId, status: "blocked", reason: "draft_not_found" };
   if (draft.status !== "scheduled") {
     return { draftId, status: "blocked", reason: `draft_status_${draft.status}` };
+  }
+
+  // Campaign must be active before any outreach goes out — draft/paused
+  // campaigns build the lead pool but never send; complete is terminal.
+  const [campaign] = await db
+    .select({ status: campaigns.status })
+    .from(campaigns)
+    .where(eq(campaigns.id, draft.campaignId))
+    .limit(1);
+  if (!campaign) return { draftId, status: "blocked", reason: "campaign_not_found" };
+  if (campaign.status !== "active") {
+    return { draftId, status: "blocked", reason: `campaign_status_${campaign.status}` };
   }
 
   const fromAddress = process.env.AWS_SES_FROM_ADDRESS;

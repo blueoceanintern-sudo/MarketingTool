@@ -12,6 +12,7 @@ interface Props {
 export default function CampaignActions({ campaignId, status }: Props) {
   const router = useRouter();
   const [scraping, setScraping] = useState(false);
+  const [busyStatus, setBusyStatus] = useState<CampaignStatus | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
   async function handleScrape() {
@@ -27,10 +28,13 @@ export default function CampaignActions({ campaignId, status }: Props) {
     router.refresh();
   }
 
-  async function handlePause() {
-    const { ok, error } = await updateCampaignStatus(campaignId, "paused");
+  async function handleStatusChange(next: CampaignStatus, label: string) {
+    setBusyStatus(next);
+    setMessage(null);
+    const { ok, error } = await updateCampaignStatus(campaignId, next);
+    setBusyStatus(null);
     if (!ok) {
-      setMessage(error ?? "Could not pause campaign");
+      setMessage(error ?? `Could not ${label.toLowerCase()} campaign`);
       return;
     }
     router.refresh();
@@ -38,24 +42,62 @@ export default function CampaignActions({ campaignId, status }: Props) {
 
   return (
     <div className="flex flex-col items-end gap-2">
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap justify-end">
         <button
           type="button"
           onClick={handleScrape}
-          disabled={scraping}
+          disabled={scraping || status === "complete"}
           className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg text-[14px] font-semibold disabled:opacity-60"
         >
           <span className="material-symbols-outlined text-[20px]">travel_explore</span>
           {scraping ? "Scraping…" : "Run Scrape"}
         </button>
+
+        {status === "draft" && (
+          <button
+            type="button"
+            onClick={() => handleStatusChange("active", "Activate")}
+            disabled={busyStatus !== null}
+            className="flex items-center gap-2 px-4 py-2 bg-success text-white rounded-lg text-[14px] font-semibold disabled:opacity-60"
+          >
+            <span className="material-symbols-outlined text-[20px]">play_arrow</span>
+            {busyStatus === "active" ? "Activating…" : "Activate"}
+          </button>
+        )}
+
         {status === "active" && (
           <button
             type="button"
-            onClick={handlePause}
-            className="flex items-center gap-2 px-4 py-2 border border-danger rounded-lg text-[14px] font-semibold text-danger hover:bg-danger-bg"
+            onClick={() => handleStatusChange("paused", "Pause")}
+            disabled={busyStatus !== null}
+            className="flex items-center gap-2 px-4 py-2 border border-danger rounded-lg text-[14px] font-semibold text-danger hover:bg-danger-bg disabled:opacity-60"
           >
             <span className="material-symbols-outlined text-[20px]">pause_circle</span>
-            Pause
+            {busyStatus === "paused" ? "Pausing…" : "Pause"}
+          </button>
+        )}
+
+        {status === "paused" && (
+          <button
+            type="button"
+            onClick={() => handleStatusChange("active", "Resume")}
+            disabled={busyStatus !== null}
+            className="flex items-center gap-2 px-4 py-2 bg-success text-white rounded-lg text-[14px] font-semibold disabled:opacity-60"
+          >
+            <span className="material-symbols-outlined text-[20px]">play_arrow</span>
+            {busyStatus === "active" ? "Resuming…" : "Resume"}
+          </button>
+        )}
+
+        {(status === "active" || status === "paused") && (
+          <button
+            type="button"
+            onClick={() => handleStatusChange("complete", "Mark complete")}
+            disabled={busyStatus !== null}
+            className="flex items-center gap-2 px-4 py-2 border border-grey-200 rounded-lg text-[14px] font-semibold text-grey-700 hover:bg-grey-50 disabled:opacity-60"
+          >
+            <span className="material-symbols-outlined text-[20px]">flag</span>
+            {busyStatus === "complete" ? "Completing…" : "Mark Complete"}
           </button>
         )}
       </div>
