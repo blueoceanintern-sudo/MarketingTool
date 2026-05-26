@@ -3,6 +3,7 @@ import { db } from "../../db";
 import { campaigns, companies, leads, scrapeJobs, sourceRegistry } from "../../db/schema";
 import { scrapeWithFallback } from "../scrapers/crawl4aiScraper";
 import { scrapeWebsite } from "../scrapers/cheerioScraper";
+import { enrichLead } from "../enrichment/orchestrator";
 
 function parseGeographies(geography: string): string[] {
   return geography
@@ -46,16 +47,26 @@ async function persistScrapedLead(
     company = inserted!;
   }
 
-  await db.insert(leads).values({
+  // Scraped emails are presence-only — they haven't been verified by a
+  // registry. Mark them pattern_guessed and let the orchestrator upgrade
+  // the status if a downstream provider verifies them.
+  const [lead] = await db.insert(leads).values({
     companyId: company.id,
     campaignId,
     email,
     firstName: null,
     lastName: null,
     role: null,
-    isVerified: Boolean(scraped.email),
+    isVerified: false,
+    emailStatus: "pattern_guessed",
     status: "new",
-  });
+  }).returning();
+
+  if (lead) {
+    void enrichLead(lead.id).catch((err) => {
+      console.error(`[scrape] enrichment failed for ${lead.id}:`, err);
+    });
+  }
 
   return true;
 }

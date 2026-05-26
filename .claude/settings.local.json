@@ -7,7 +7,9 @@
       "Bash(bun run *)",
       "Bash(npx tsc *)",
       "Bash(npm install *)",
-      "Bash(bun install *)"
+      "Bash(bun install *)",
+      "Bash(bun test *)",
+      "Bash(bunx tsc *)"
     ]
   }
 }

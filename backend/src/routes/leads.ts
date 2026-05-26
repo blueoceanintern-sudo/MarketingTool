@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import { db } from "../db";
-import { leads, companies, campaigns, riskFlags, suppressionList } from "../db/schema";
-import { eq, and } from "drizzle-orm";
+import { leads, companies, campaigns, suppressionList, enrichmentRecords } from "../db/schema";
+import { eq, desc } from "drizzle-orm";
+import { enrichLead } from "../services/enrichment/orchestrator";
 
 function formatLead(row: {
   id: string;
@@ -11,6 +12,10 @@ function formatLead(row: {
   role: string | null;
   isVerified: boolean;
   status: string;
+  emailStatus: string | null;
+  enrichmentSource: string | null;
+  routing: string | null;
+  enrichedAt: Date | null;
   campaignId: string | null;
   createdAt: Date;
   companyName: string;
@@ -23,6 +28,10 @@ function formatLead(row: {
     email: row.email,
     role: row.role ?? "",
     is_verified: row.isVerified,
+    email_status: row.emailStatus,
+    enrichment_source: row.enrichmentSource,
+    routing: row.routing,
+    enriched_at: row.enrichedAt?.toISOString() ?? null,
     status: row.status,
     company_name: row.companyName,
     campaign_id: row.campaignId ?? undefined,
@@ -44,6 +53,10 @@ allLeadsRouter.get("/", async (c) => {
       role: leads.role,
       isVerified: leads.isVerified,
       status: leads.status,
+      emailStatus: leads.emailStatus,
+      enrichmentSource: leads.enrichmentSource,
+      routing: leads.routing,
+      enrichedAt: leads.enrichedAt,
       campaignId: leads.campaignId,
       createdAt: leads.createdAt,
       companyName: companies.name,
@@ -72,6 +85,10 @@ leadsRouter.get("/:id/leads", async (c) => {
       role: leads.role,
       isVerified: leads.isVerified,
       status: leads.status,
+      emailStatus: leads.emailStatus,
+      enrichmentSource: leads.enrichmentSource,
+      routing: leads.routing,
+      enrichedAt: leads.enrichedAt,
       campaignId: leads.campaignId,
       createdAt: leads.createdAt,
       companyName: companies.name,
@@ -103,8 +120,8 @@ leadsRouter.post("/:id/leads/import", async (c) => {
   }
 
   const imported: string[] = [];
-  const flagged: string[] = [];
   const skipped: string[] = [];
+  const enrichmentQueue: string[] = [];
 
   for (let i = 1; i < rows.length; i++) {
     const values = (rows[i] ?? "").split(",").map((v) => v.trim());
@@ -112,7 +129,7 @@ leadsRouter.post("/:id/leads/import", async (c) => {
     headers.forEach((h, idx) => { row[h] = values[idx] ?? ""; });
 
     const email = row["email"] ?? "";
-    if (!email) { flagged.push(`row ${i + 1}: missing email`); continue; }
+    if (!email) { skipped.push(`row ${i + 1}: missing email`); continue; }
 
     // Block suppressed emails — they opted out and must not be re-collected
     const [suppressed] = await db.select({ id: suppressionList.id }).from(suppressionList).where(eq(suppressionList.email, email)).limit(1);
@@ -121,8 +138,6 @@ leadsRouter.post("/:id/leads/import", async (c) => {
     // Check for duplicate email
     const [existing] = await db.select({ id: leads.id }).from(leads).where(eq(leads.email, email)).limit(1);
     if (existing) { skipped.push(email); continue; }
-
-    const missingFields = required.filter((f) => !row[f]);
 
     // Upsert company
     const companyName = row["company_name"] ?? "";
@@ -157,20 +172,48 @@ leadsRouter.post("/:id/leads/import", async (c) => {
       email,
       role: row["role"] ?? "",
       isVerified: false,
+      emailStatus: "pattern_guessed",
       status: "new",
     }).returning();
 
-    // Flag missing-field leads
-    if (missingFields.length > 0 && lead) {
-      await db.insert(riskFlags).values({
-        leadId: lead.id,
-        flagType: "missing_field",
-      });
-      flagged.push(email);
-    } else {
-      imported.push(email);
-    }
+    imported.push(email);
+    if (lead) enrichmentQueue.push(lead.id);
   }
 
-  return c.json({ imported: imported.length, flagged: flagged.length, skipped: skipped.length }, 201);
+  // Enrichment runs async — orchestrator owns pipeline_flags + routing.
+  // Worker `enrichment-retry` catches any failures.
+  for (const leadId of enrichmentQueue) {
+    void enrichLead(leadId).catch((err) => {
+      console.error(`[leads/import] enrichment failed for ${leadId}:`, err);
+    });
+  }
+
+  return c.json(
+    { imported: imported.length, skipped: skipped.length, enrichment_queued: enrichmentQueue.length },
+    201,
+  );
+});
+
+allLeadsRouter.get("/:id/enrichment", async (c) => {
+  const leadId = c.req.param("id");
+  const [record] = await db
+    .select()
+    .from(enrichmentRecords)
+    .where(eq(enrichmentRecords.leadId, leadId))
+    .orderBy(desc(enrichmentRecords.enrichedAt))
+    .limit(1);
+
+  if (!record) return c.json({ error: "No enrichment record for this lead" }, 404);
+
+  return c.json({
+    lead_id: record.leadId,
+    enriched_at: record.enrichedAt.toISOString(),
+    enrichment_source: record.enrichmentSource,
+    market: record.market,
+    institution: record.institution,
+    contact: record.contact,
+    pipeline_flags: record.pipelineFlags,
+    routing: record.routing,
+    routing_reason: record.routingReason,
+  });
 });

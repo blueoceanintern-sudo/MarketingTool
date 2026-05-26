@@ -1,4 +1,5 @@
 import { describe, it, expect, mock, beforeEach } from "bun:test";
+import type { EnrichmentInput } from "../src/services/enrichment/types";
 
 process.env.SNOVIO_CLIENT_ID = "test_client_id";
 process.env.SNOVIO_CLIENT_SECRET = "test_client_secret";
@@ -24,46 +25,62 @@ global.fetch = mock(async (url: string) => {
   return { ok: true, json: async () => mockResponses[key] };
 }) as unknown as typeof fetch;
 
-const { enrichLead } = await import("../src/services/enrichment/snovio");
+const { snovioProvider } = await import("../src/services/enrichment/snovio");
 
-describe("snovio — enrichLead", () => {
-  beforeEach(() => fetchCalls.length = 0);
+function input(seed: Partial<EnrichmentInput["seed"]>): EnrichmentInput {
+  return {
+    leadId: "lead-1",
+    campaignId: null,
+    market: "SG",
+    seed: {
+      firstName: null,
+      lastName: null,
+      email: null,
+      role: null,
+      companyName: "Acme",
+      companyWebsite: null,
+      industry: null,
+      region: "SG",
+      ...seed,
+    },
+  };
+}
 
-  it("returns original lead with isVerified=false when neither email nor website is provided", async () => {
-    const result = await enrichLead({ website: "" });
-    expect(result.isVerified).toBe(false);
+describe("snovioProvider", () => {
+  beforeEach(() => { fetchCalls.length = 0; });
+
+  it("returns null when neither email nor website is provided", async () => {
+    const result = await snovioProvider.enrich(input({}));
+    expect(result).toBeNull();
     expect(fetchCalls.length).toBe(0);
   });
 
-  it("verifies an existing email and returns isVerified=true when status is valid", async () => {
-    const result = await enrichLead({ email: "ceo@domain.com", website: "https://domain.com" });
-    expect(result.isVerified).toBe(true);
-    expect(result.email).toBe("ceo@domain.com");
+  it("verifies an existing email and returns email_status=verified when valid", async () => {
+    const result = await snovioProvider.enrich(input({ email: "ceo@domain.com", companyWebsite: "https://domain.com" }));
+    expect(result?.contact?.email).toBe("ceo@domain.com");
+    expect(result?.contact?.email_status).toBe("verified");
   });
 
-  it("returns isVerified=false when verification status is not 'valid'", async () => {
+  it("returns email_status=pattern_guessed when verification status is not 'valid'", async () => {
     (mockResponses as any)["get-emails-verification-status"] = { data: { status: "invalid" } };
-    const result = await enrichLead({ email: "bad@domain.com", website: "https://domain.com" });
-    expect(result.isVerified).toBe(false);
-    // Restore
+    const result = await snovioProvider.enrich(input({ email: "bad@domain.com", companyWebsite: "https://domain.com" }));
+    expect(result?.contact?.email_status).toBe("pattern_guessed");
     (mockResponses as any)["get-emails-verification-status"] = { data: { status: "valid" } };
   });
 
-  it("enriches lead by domain when no email is present", async () => {
-    const result = await enrichLead({ website: "https://domain.com" });
-    expect(result.email).toBe("ceo@domain.com");
-    expect(result.firstName).toBe("Alice");
-    expect(result.lastName).toBe("Wong");
-    expect(result.role).toBe("CEO");
-    expect(result.isVerified).toBe(true);
+  it("enriches by domain when no email is present", async () => {
+    const result = await snovioProvider.enrich(input({ companyWebsite: "https://domain.com" }));
+    expect(result?.contact?.email).toBe("ceo@domain.com");
+    expect(result?.contact?.first_name).toBe("Alice");
+    expect(result?.contact?.full_name).toBe("Alice Wong");
+    expect(result?.contact?.role).toBe("CEO");
+    expect(result?.contact?.email_status).toBe("verified");
   });
 
-  it("returns isVerified=false when domain search returns no emails", async () => {
+  it("returns null when domain search yields no emails", async () => {
     (mockResponses as any)["domain-emails-with-info"] = { data: { emails: [] } };
-    const result = await enrichLead({ website: "https://empty.com" });
-    expect(result.isVerified).toBe(false);
-    expect(result.email).toBeUndefined();
-    // Restore
+    const result = await snovioProvider.enrich(input({ companyWebsite: "https://empty.com" }));
+    expect(result).toBeNull();
     (mockResponses as any)["domain-emails-with-info"] = {
       data: {
         emails: [{ email: "ceo@domain.com", first_name: "Alice", last_name: "Wong", position: "CEO", verified: true }],
@@ -73,11 +90,9 @@ describe("snovio — enrichLead", () => {
 
   it("fetches the OAuth token at most once across multiple consecutive calls", async () => {
     fetchCalls.length = 0;
-    // Two back-to-back calls — token is cached after the first (or already cached from earlier tests)
-    await enrichLead({ email: "a@domain.com", website: "https://domain.com" });
-    await enrichLead({ email: "b@domain.com", website: "https://domain.com" });
+    await snovioProvider.enrich(input({ email: "a@domain.com", companyWebsite: "https://domain.com" }));
+    await snovioProvider.enrich(input({ email: "b@domain.com", companyWebsite: "https://domain.com" }));
     const oauthCalls = fetchCalls.filter((u) => u.includes("oauth")).length;
-    // 0 = token was pre-cached; 1 = first fetch happened here. Never 2.
     expect(oauthCalls).toBeLessThanOrEqual(1);
   });
 });

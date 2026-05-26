@@ -1,9 +1,10 @@
 import cron from "node-cron";
 import { db } from "../db";
 import { followUps, leads, emailEvents, riskFlags, scrapeJobs, campaigns, templatePerformance } from "../db/schema";
-import { eq, and, isNull, lte, isNotNull, lt, desc } from "drizzle-orm";
+import { eq, and, isNull, lte, isNotNull, lt, desc, or } from "drizzle-orm";
 import { sendDraft, getTotalSent } from "../services/sender";
 import { runScrapeJob } from "../services/scraping/runScrapeJob";
+import { enrichLead } from "../services/enrichment/orchestrator";
 
 // ---------------------------------------------------------------------------
 // warmup-tracker  — midnight daily
@@ -121,10 +122,41 @@ cron.schedule("0 4 * * *", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// enrichment-retry  — 03:00 daily (on hold — Snov.io not connected)
+// enrichment-retry  — 03:00 daily
+// Picks leads that were never enriched, or whose last attempt returned
+// not_found more than 7 days ago. Capped by ENRICHMENT_DAILY_RUN_CAP.
 // ---------------------------------------------------------------------------
-cron.schedule("0 3 * * *", () => {
-  console.log("[enrichment-retry] on hold — Snov.io enrichment not yet connected");
+cron.schedule("0 3 * * *", async () => {
+  console.log("[enrichment-retry] running");
+
+  const cap = Number(process.env.ENRICHMENT_DAILY_RUN_CAP ?? 200);
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+  const candidates = await db
+    .select({ id: leads.id })
+    .from(leads)
+    .where(
+      or(
+        isNull(leads.enrichedAt),
+        and(eq(leads.emailStatus, "not_found"), lt(leads.enrichedAt, sevenDaysAgo)),
+      ),
+    )
+    .limit(cap);
+
+  const counts = { attempted: 0, verified: 0, pattern_guessed: 0, not_found: 0, errors: 0 };
+
+  for (const { id } of candidates) {
+    counts.attempted++;
+    try {
+      const record = await enrichLead(id);
+      counts[record.contact.email_status]++;
+    } catch (err) {
+      counts.errors++;
+      console.error(`[enrichment-retry] lead ${id} failed:`, err);
+    }
+  }
+
+  console.log(`[enrichment-retry] done: ${JSON.stringify(counts)}`);
 });
 
 // ---------------------------------------------------------------------------

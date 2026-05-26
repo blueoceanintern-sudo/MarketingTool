@@ -10,6 +10,9 @@ import {
   scrapeJobStatusEnum,
   scraperTypeEnum,
   suppressionReasonEnum,
+  emailStatusEnum,
+  enrichmentRoutingEnum,
+  enrichmentSourceEnum,
 } from "./enums";
 
 export const companies = pgTable("companies", {
@@ -44,6 +47,10 @@ export const leads = pgTable("leads", {
   role: text("role"),
   isVerified: boolean("is_verified").default(false).notNull(),
   status: leadStatusEnum("status").default("new").notNull(),
+  emailStatus: emailStatusEnum("email_status"),
+  enrichmentSource: enrichmentSourceEnum("enrichment_source"),
+  routing: enrichmentRoutingEnum("routing"),
+  enrichedAt: timestamp("enriched_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -155,3 +162,45 @@ export const demos = pgTable("demos", {
   status: text("status", { enum: ["pending", "scheduled", "completed", "cancelled"] }).default("pending").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
+
+export interface EnrichmentInstitution {
+  name: string;
+  type: string;
+  registration_id: string | null;
+  size: "small" | "medium" | "large" | "unknown";
+  website: string | null;
+  region: string;
+}
+
+export interface EnrichmentContact {
+  full_name: string | null;
+  first_name: string | null;
+  role: string | null;
+  email: string | null;
+  email_status: "verified" | "pattern_guessed" | "not_found";
+}
+
+export interface EnrichmentPipelineFlags {
+  is_duplicate: boolean;
+  missing_critical_fields: boolean;
+  missing_fields_detail: string[];
+  risk_flag: boolean;
+  risk_flag_reason: string | null;
+}
+
+export const enrichmentRecords = pgTable("enrichment_records", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  leadId: uuid("lead_id").references(() => leads.id).notNull(),
+  campaignId: uuid("campaign_id").references(() => campaigns.id),
+  enrichedAt: timestamp("enriched_at").notNull(),
+  enrichmentSource: enrichmentSourceEnum("enrichment_source").notNull(),
+  market: text("market").notNull(),
+  institution: json("institution").$type<EnrichmentInstitution>().notNull(),
+  contact: json("contact").$type<EnrichmentContact>().notNull(),
+  pipelineFlags: json("pipeline_flags").$type<EnrichmentPipelineFlags>().notNull(),
+  routing: enrichmentRoutingEnum("routing").notNull(),
+  routingReason: text("routing_reason"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  index("enrichment_records_lead_enriched_at_idx").on(t.leadId, t.enrichedAt.desc()),
+]);
