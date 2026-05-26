@@ -125,9 +125,13 @@ NEXT_PUBLIC_API_URL=http://localhost:3001
 docker-compose up -d postgres
 
 cd backend
-bun drizzle-kit generate   # generate migrations from schema (only if schema changed)
-bun drizzle-kit migrate    # apply migrations to your database
+bun run db:generate   # generate migrations from schema (only if schema changed)
+bun run db:migrate    # apply migrations to your database
+bun run db:seed            # load shared dev fixtures (source_registry rows, etc.)
 ```
+
+The seed script is idempotent — safe to re-run any time. New fixtures go into
+`backend/src/db/seed.sql`.
 
 ### 4. Start services
 
