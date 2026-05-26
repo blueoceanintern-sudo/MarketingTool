@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { db } from "../db";
-import { campaigns, leads, emailDrafts, emailEvents, scrapeJobs } from "../db/schema";
+import { campaigns, leads, emailDrafts, emailEvents, scrapeJobs, normalizeVertical, normalizeGeo } from "../db/schema";
 import { eq, and, isNotNull, count } from "drizzle-orm";
 import { runScrapeJob } from "../services/scraping/runScrapeJob";
 
@@ -87,14 +87,15 @@ campaignsRouter.post("/", async (c) => {
     return c.json({ error: "name, vertical, geography, company_size_target are required" }, 400);
   }
 
-  const geo = Array.isArray(body.geography) ? body.geography.join(",") : body.geography;
+  const rawGeo = Array.isArray(body.geography) ? body.geography.join(",") : body.geography;
+  const geo = rawGeo.split(",").map((g) => normalizeGeo(g)).filter(Boolean).join(",");
   const sizeTarget = body.company_size_target as "small" | "medium" | "large" | "enterprise";
 
   const [row] = await db
     .insert(campaigns)
     .values({
       name: body.name,
-      vertical: body.vertical,
+      vertical: normalizeVertical(body.vertical),
       geography: geo,
       companySizeTarget: sizeTarget,
       status: body.status ?? "draft",
@@ -103,6 +104,13 @@ campaignsRouter.post("/", async (c) => {
 
   return c.json(formatCampaign(row!, await computeStats(row!.id)), 201);
 });
+
+const ALLOWED_TRANSITIONS: Record<CampaignStatus, CampaignStatus[]> = {
+  draft:    ["draft", "active"],
+  active:   ["active", "paused", "complete"],
+  paused:   ["paused", "active", "complete"],
+  complete: ["complete"],
+};
 
 campaignsRouter.patch("/:id/status", async (c) => {
   const [row] = await db
@@ -116,6 +124,14 @@ campaignsRouter.patch("/:id/status", async (c) => {
   const validStatuses: CampaignStatus[] = ["draft", "active", "paused", "complete"];
   if (!validStatuses.includes(body.status)) {
     return c.json({ error: `status must be one of: ${validStatuses.join(", ")}` }, 400);
+  }
+
+  const current = row.status as CampaignStatus;
+  if (!ALLOWED_TRANSITIONS[current].includes(body.status)) {
+    return c.json(
+      { error: `Cannot transition campaign from "${current}" to "${body.status}"` },
+      400,
+    );
   }
 
   const [updated] = await db
@@ -134,6 +150,10 @@ campaignsRouter.post("/:id/scrape", async (c) => {
     .where(eq(campaigns.id, c.req.param("id")))
     .limit(1);
   if (!campaign) return c.json({ error: "Campaign not found" }, 404);
+
+  if (campaign.status === "complete") {
+    return c.json({ error: "Cannot scrape a completed campaign" }, 400);
+  }
 
   const [job] = await db
     .insert(scrapeJobs)

@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { db } from "../db";
-import { sourceRegistry, suppressionList } from "../db/schema";
+import { sourceRegistry, suppressionList, normalizeVertical, normalizeGeo } from "../db/schema";
 import { eq } from "drizzle-orm";
 
 export const adminRouter = new Hono();
@@ -44,8 +44,8 @@ adminRouter.post("/registry/sources", async (c) => {
     .insert(sourceRegistry)
     .values({
       name: body.name,
-      vertical: body.vertical,
-      geo: body.geo,
+      vertical: normalizeVertical(body.vertical),
+      geo: normalizeGeo(body.geo),
       url: body.url,
       scraperType,
       legalFlag: body.legal_flag ?? false,
