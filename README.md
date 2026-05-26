@@ -136,7 +136,7 @@ bun drizzle-kit migrate    # apply migrations to your database
 docker-compose up crawl4ai
 
 # Backend (port 3001)
-cd backend && bun run src/index.ts
+cd backend && bun run dev
 
 # Frontend (port 3000)
 cd frontend && npm run dev
