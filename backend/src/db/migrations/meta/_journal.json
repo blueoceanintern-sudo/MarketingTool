@@ -5,29 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1779094500857,
-      "tag": "0000_gorgeous_drax",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1779765901623,
-      "tag": "0001_brave_pretty_boy",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1779847221836,
-      "tag": "0002_dizzy_vision",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1779933621836,
-      "tag": "0003_add_last_contacted_at_to_leads",
+      "when": 1779865979004,
+      "tag": "0000_lonely_falcon",
       "breakpoints": true
     }
   ]
