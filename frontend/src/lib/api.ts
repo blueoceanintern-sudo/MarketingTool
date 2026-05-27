@@ -46,6 +46,7 @@ export interface Lead {
   enrichment_source: EnrichmentSource | null;
   routing: EnrichmentRouting | null;
   enriched_at: string | null;
+  scraper_used: ScraperType | null;
   status: LeadStatus;
   company_name: string;
   campaign_id?: string;

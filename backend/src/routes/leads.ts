@@ -16,6 +16,7 @@ function formatLead(row: {
   enrichmentSource: string | null;
   routing: string | null;
   enrichedAt: Date | null;
+  scraperUsed: string | null;
   campaignId: string | null;
   createdAt: Date;
   companyName: string;
@@ -32,6 +33,7 @@ function formatLead(row: {
     enrichment_source: row.enrichmentSource,
     routing: row.routing,
     enriched_at: row.enrichedAt?.toISOString() ?? null,
+    scraper_used: row.scraperUsed,
     status: row.status,
     company_name: row.companyName,
     campaign_id: row.campaignId ?? undefined,
@@ -57,6 +59,7 @@ allLeadsRouter.get("/", async (c) => {
       enrichmentSource: leads.enrichmentSource,
       routing: leads.routing,
       enrichedAt: leads.enrichedAt,
+      scraperUsed: leads.scraperUsed,
       campaignId: leads.campaignId,
       createdAt: leads.createdAt,
       companyName: companies.name,
@@ -89,6 +92,7 @@ leadsRouter.get("/:id/leads", async (c) => {
       enrichmentSource: leads.enrichmentSource,
       routing: leads.routing,
       enrichedAt: leads.enrichedAt,
+      scraperUsed: leads.scraperUsed,
       campaignId: leads.campaignId,
       createdAt: leads.createdAt,
       companyName: companies.name,
