@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>BlueOcean Outreach Pipeline</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@600;700;800&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #f8f7f4;
+    --surface: #ffffff;
+    --border: #e4e1d8;
+    --text: #1a1916;
+    --muted: #7a7770;
+    --accent: #1a1916;
+    --auto-fill: #f0fdfa;
+    --auto-stroke: #2dd4bf;
+    --human-fill: #f5f3ff;
+    --human-stroke: #a78bfa;
+    --email-fill: #fff7ed;
+    --email-stroke: #fb923c;
+    --bad-fill: #fef2f2;
+    --bad-stroke: #f87171;
+    --good-fill: #f0fdf4;
+    --good-stroke: #4ade80;
+  }
+
+  body {
+    font-family: 'DM Mono', monospace;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 24px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+
+  .title-block h1 {
+    font-family: 'Syne', sans-serif;
+    font-size: 18px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    line-height: 1;
+  }
+
+  .title-block p {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 3px;
+    letter-spacing: 0.04em;
+  }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+
+  .legend {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 0.03em;
+  }
+
+  .legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    border: 1.5px solid;
+    flex-shrink: 0;
+  }
+
+  .btn {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 7px 14px;
+    border-radius: 6px;
+    border: 1.5px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+    letter-spacing: 0.03em;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+
+  .btn:hover { background: var(--bg); border-color: #bbb; }
+  .btn:active { transform: scale(0.97); }
+
+  .zoom-controls {
+    display: flex;
+    gap: 4px;
+  }
+
+  .zoom-controls .btn {
+    padding: 6px 10px;
+    font-size: 14px;
+    line-height: 1;
+  }
+
+  #canvas {
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+    cursor: grab;
+  }
+
+  #canvas:active { cursor: grabbing; }
+
+  #diagram-wrapper {
+    position: absolute;
+    top: 0; left: 0;
+    transform-origin: 0 0;
+    will-change: transform;
+  }
+
+  #diagram-container {
+    padding: 40px;
+  }
+
+  #diagram-container .mermaid {
+    display: block;
+  }
+
+  #loading {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    background: var(--bg);
+    z-index: 10;
+  }
+
+  .spinner {
+    width: 32px;
+    height: 32px;
+    border: 2px solid var(--border);
+    border-top-color: var(--text);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  #loading p {
+    font-size: 12px;
+    color: var(--muted);
+    letter-spacing: 0.05em;
+  }
+
+  #hint {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 11px;
+    color: var(--muted);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 5px 12px;
+    border-radius: 20px;
+    pointer-events: none;
+    opacity: 1;
+    transition: opacity 1s;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="title-block">
+    <h1>BlueOcean Outreach Pipeline</h1>
+    <p>B2B automated email outreach · SG · AU · US</p>
+  </div>
+  <div class="header-right">
+    <div class="legend">
+      <div class="legend-item">
+        <div class="legend-dot" style="background:var(--auto-fill);border-color:var(--auto-stroke)"></div>
+        Automated
+      </div>
+      <div class="legend-item">
+        <div class="legend-dot" style="background:var(--human-fill);border-color:var(--human-stroke)"></div>
+        Human review
+      </div>
+      <div class="legend-item">
+        <div class="legend-dot" style="background:var(--email-fill);border-color:var(--email-stroke)"></div>
+        Email drafting
+      </div>
+      <div class="legend-item">
+        <div class="legend-dot" style="background:var(--bad-fill);border-color:var(--bad-stroke)"></div>
+        Rejection
+      </div>
+      <div class="legend-item">
+        <div class="legend-dot" style="background:var(--good-fill);border-color:var(--good-stroke)"></div>
+        Success
+      </div>
+    </div>
+    <div class="zoom-controls">
+      <button class="btn" id="zoomIn">+</button>
+      <button class="btn" id="zoomReset">Reset</button>
+      <button class="btn" id="zoomOut">−</button>
+    </div>
+    <button class="btn" id="exportBtn">Export PNG</button>
+  </div>
+</header>
+
+<div id="canvas">
+  <div id="loading">
+    <div class="spinner"></div>
+    <p>Rendering pipeline...</p>
+  </div>
+  <div id="diagram-wrapper">
+    <div id="diagram-container">
+      <div class="mermaid">
+---
+config:
+  layout: elk
+  elk:
+    nodePlacementStrategy: SIMPLE
+---
+flowchart TD
+    Start([Campaign Trigger]) --> Scrape
+    Scrape["Scrape Leads\nMOE · ACARA · NCES\n+ dynamic URLs via Claude"] --> Enrich
+    Enrich["Enrich Lead\nCowork + Claude in Chrome\n→ NDJSON schema"] --> Gate
+    Gate{Hard Gate} -->|"duplicate · unverified\nrisk flag · missing fields"| GateFail
+    Gate -->|all pass| Assign
+    GateFail["Route to Rep Review\nStop draft generation"] --> EndQ([Queued for Review])
+    Assign["Claude assigns lead\nto up to 3 campaigns\ngoal + lead data"] --> Draft
+    Draft["Generate drafts\n1 per campaign · max 3 per lead"] --> P1
+    P1{"Phase 1\nFirst 500 emails?"} -->|yes| RepReview
+    P1 -->|no| Score
+    Score["Score each draft 0–100\ncompleteness · persona\npersonalisation · length &lt;125w"] --> ScoreGate
+    ScoreGate{Score} -->|"&lt; 70"| RepReview
+    ScoreGate -->|"≥ 70"| AutoSend
+    RepReview["Rep Review Queue\napprove · edit · reject"] -->|approved| SendQ
+    RepReview -->|rejected| LogEnd([Logged & rejected])
+    AutoSend["Auto-schedule send"] --> SendQ
+    SendQ["AWS SES\n2× per week per lead"] --> Reply
+    Reply{Reply webhook} -->|positive| Demo([Demo booked])
+    Reply -->|no reply| FU["Follow-up sequence"] --> Reply
+    Reply -->|negative| Obj([Objection tracked])
+    Demo --> Dash
+    Obj --> Dash
+    Dash["Dashboard\nopen rate · reply rate · CAC\ndemo bookings · spam rate"]
+
+    classDef auto fill:#f0fdfa,stroke:#2dd4bf,stroke-width:1.5px,color:#134e4a
+    classDef human fill:#f5f3ff,stroke:#a78bfa,stroke-width:1.5px,color:#3b0764
+    classDef email fill:#fff7ed,stroke:#fb923c,stroke-width:1.5px,color:#7c2d12
+    classDef bad fill:#fef2f2,stroke:#f87171,stroke-width:1.5px,color:#7f1d1d
+    classDef good fill:#f0fdf4,stroke:#4ade80,stroke-width:1.5px,color:#14532d
+    classDef neutral fill:#f8f7f4,stroke:#d1cfc7,stroke-width:1.5px,color:#1a1916
+
+    class Scrape,Enrich,Assign,AutoSend,SendQ,FU,Dash auto
+    class Gate,P1,ScoreGate,RepReview human
+    class Draft,Score email
+    class GateFail,EndQ,LogEnd,Obj bad
+    class Demo good
+    class Start neutral
+      </div>
+    </div>
+  </div>
+  <div id="hint">scroll to zoom · drag to pan</div>
+</div>
+
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+import elkjs from 'https://cdn.jsdelivr.net/npm/@mermaid-js/layout-elk@0.1.7/dist/mermaid-layout-elk.esm.min.mjs';
+
+mermaid.registerLayoutLoaders(elkjs);
+mermaid.initialize({
+  startOnLoad: false,
+  theme: 'base',
+  themeVariables: {
+    fontFamily: '"DM Mono", monospace',
+    fontSize: '13px',
+    primaryColor: '#f0fdfa',
+    primaryBorderColor: '#2dd4bf',
+    lineColor: '#9ca3af',
+    edgeLabelBackground: '#f8f7f4',
+  }
+});
+
+await mermaid.run({ querySelector: '.mermaid' });
+
+document.getElementById('loading').style.display = 'none';
+
+const wrapper = document.getElementById('diagram-wrapper');
+const canvas = document.getElementById('canvas');
+
+let scale = 1, ox = 40, oy = 40;
+let dragging = false, lastX = 0, lastY = 0;
+
+function applyTransform() {
+  wrapper.style.transform = `translate(${ox}px,${oy}px) scale(${scale})`;
+}
+
+function fitDiagram() {
+  const svg = wrapper.querySelector('svg');
+  if (!svg) return;
+  const cw = canvas.clientWidth, ch = canvas.clientHeight;
+  const dw = svg.getBoundingClientRect().width / scale;
+  const dh = svg.getBoundingClientRect().height / scale;
+  scale = Math.min((cw - 80) / dw, (ch - 80) / dh, 1);
+  ox = (cw - dw * scale) / 2;
+  oy = (ch - dh * scale) / 2;
+  applyTransform();
+}
+
+setTimeout(fitDiagram, 100);
+
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const delta = e.deltaY > 0 ? 0.9 : 1.1;
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  ox = mx - (mx - ox) * delta;
+  oy = my - (my - oy) * delta;
+  scale = Math.min(Math.max(scale * delta, 0.15), 4);
+  applyTransform();
+}, { passive: false });
+
+canvas.addEventListener('mousedown', e => { dragging = true; lastX = e.clientX; lastY = e.clientY; });
+window.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  ox += e.clientX - lastX; oy += e.clientY - lastY;
+  lastX = e.clientX; lastY = e.clientY;
+  applyTransform();
+});
+window.addEventListener('mouseup', () => { dragging = false; });
+
+canvas.addEventListener('touchstart', e => { if (e.touches.length === 1) { dragging = true; lastX = e.touches[0].clientX; lastY = e.touches[0].clientY; } });
+canvas.addEventListener('touchmove', e => {
+  if (!dragging || e.touches.length !== 1) return;
+  e.preventDefault();
+  ox += e.touches[0].clientX - lastX; oy += e.touches[0].clientY - lastY;
+  lastX = e.touches[0].clientX; lastY = e.touches[0].clientY;
+  applyTransform();
+}, { passive: false });
+canvas.addEventListener('touchend', () => { dragging = false; });
+
+document.getElementById('zoomIn').onclick = () => { scale = Math.min(scale * 1.2, 4); applyTransform(); };
+document.getElementById('zoomOut').onclick = () => { scale = Math.max(scale * 0.8, 0.15); applyTransform(); };
+document.getElementById('zoomReset').onclick = fitDiagram;
+
+document.getElementById('exportBtn').onclick = async () => {
+  const btn = document.getElementById('exportBtn');
+  btn.textContent = 'Exporting...';
+  const savedTransform = wrapper.style.transform;
+  wrapper.style.transform = 'translate(40px,40px) scale(1)';
+  await new Promise(r => setTimeout(r, 100));
+  const svg = wrapper.querySelector('svg');
+  const w = svg.getBoundingClientRect().width + 80;
+  const h = svg.getBoundingClientRect().height + 80;
+  const canvas2 = await html2canvas(document.getElementById('diagram-wrapper'), {
+    backgroundColor: '#f8f7f4',
+    scale: 2,
+    width: w, height: h,
+    useCORS: true,
+  });
+  wrapper.style.transform = savedTransform;
+  const link = document.createElement('a');
+  link.download = 'blueocean-pipeline.png';
+  link.href = canvas2.toDataURL('image/png');
+  link.click();
+  btn.textContent = 'Export PNG';
+};
+
+setTimeout(() => {
+  const hint = document.getElementById('hint');
+  if (hint) hint.style.opacity = '0';
+}, 3000);
+</script>
+</body>
+</html>
