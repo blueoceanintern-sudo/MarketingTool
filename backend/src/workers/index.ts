@@ -1,9 +1,10 @@
 import cron from "node-cron";
 import { db } from "../db";
-import { followUps, leads, emailEvents, riskFlags, scrapeJobs, campaigns, templatePerformance } from "../db/schema";
-import { eq, and, isNull, lte, isNotNull, lt, desc } from "drizzle-orm";
+import { followUps, leads, emailEvents, riskFlags, scrapeJobs, campaigns, templatePerformance, replies } from "../db/schema";
+import { eq, and, isNull, lte, isNotNull, lt, desc, or, inArray } from "drizzle-orm";
 import { sendDraft, getTotalSent } from "../services/sender";
 import { runScrapeJob } from "../services/scraping/runScrapeJob";
+import { enrichLead } from "../services/enrichment/orchestrator";
 
 // ---------------------------------------------------------------------------
 // warmup-tracker  — midnight daily
@@ -52,19 +53,10 @@ cron.schedule("0 9 * * *", async () => {
       .where(eq(riskFlags.leadId, fu.leadId))
       .limit(1);
 
-    // Get last sent_at for 90-day check
-    const [lastSent] = await db
-      .select({ sentAt: emailEvents.sentAt })
-      .from(emailEvents)
-      .where(and(eq(emailEvents.leadId, fu.leadId), isNotNull(emailEvents.sentAt)))
-      .orderBy(desc(emailEvents.sentAt))
-      .limit(1);
-
     const result = await sendDraft({
       draftId: fu.draftId,
       toEmail: fu.leadEmail,
       leadId: fu.leadId,
-      lastSentAt: lastSent?.sentAt?.toISOString(),
       isVerified: fu.isVerified,
       hasRiskFlags: !!flag,
     });
@@ -121,10 +113,41 @@ cron.schedule("0 4 * * *", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// enrichment-retry  — 03:00 daily (on hold — Snov.io not connected)
+// enrichment-retry  — 03:00 daily
+// Picks leads that were never enriched, or whose last attempt returned
+// not_found more than 7 days ago. Capped by ENRICHMENT_DAILY_RUN_CAP.
 // ---------------------------------------------------------------------------
-cron.schedule("0 3 * * *", () => {
-  console.log("[enrichment-retry] on hold — Snov.io enrichment not yet connected");
+cron.schedule("0 3 * * *", async () => {
+  console.log("[enrichment-retry] running");
+
+  const cap = Number(process.env.ENRICHMENT_DAILY_RUN_CAP ?? 200);
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+  const candidates = await db
+    .select({ id: leads.id })
+    .from(leads)
+    .where(
+      or(
+        isNull(leads.enrichedAt),
+        and(eq(leads.emailStatus, "not_found"), lt(leads.enrichedAt, sevenDaysAgo)),
+      ),
+    )
+    .limit(cap);
+
+  const counts = { attempted: 0, verified: 0, pattern_guessed: 0, not_found: 0, errors: 0 };
+
+  for (const { id } of candidates) {
+    counts.attempted++;
+    try {
+      const record = await enrichLead(id);
+      counts[record.contact.email_status]++;
+    } catch (err) {
+      counts.errors++;
+      console.error(`[enrichment-retry] lead ${id} failed:`, err);
+    }
+  }
+
+  console.log(`[enrichment-retry] done: ${JSON.stringify(counts)}`);
 });
 
 // ---------------------------------------------------------------------------
@@ -146,6 +169,58 @@ cron.schedule("0 0 * * 0", async () => {
   }
 
   console.log(`[template-improver] reviewed ${rows.length} template entries`);
+});
+
+// ---------------------------------------------------------------------------
+// purge-old-records  — Sunday 02:00
+// Retention: replies 180d, email_events 90d, scrape_jobs (failed/complete) 30d
+// ---------------------------------------------------------------------------
+cron.schedule("0 2 * * 0", async () => {
+  console.log("[purge-old-records] running");
+
+  const now = Date.now();
+  const ninetyDaysAgo = new Date(now - 90 * 24 * 60 * 60 * 1000);
+  const oneEightyDaysAgo = new Date(now - 180 * 24 * 60 * 60 * 1000);
+  const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+
+  // Replies older than 180 days.
+  const purgedReplies = await db
+    .delete(replies)
+    .where(lt(replies.receivedAt, oneEightyDaysAgo))
+    .returning({ id: replies.id });
+
+  // email_events older than 90 days — delete any linked replies first (FK constraint).
+  const staleEvents = await db
+    .select({ id: emailEvents.id })
+    .from(emailEvents)
+    .where(and(isNotNull(emailEvents.sentAt), lt(emailEvents.sentAt, ninetyDaysAgo)));
+
+  let purgedEvents = 0;
+  if (staleEvents.length > 0) {
+    const ids = staleEvents.map((e) => e.id);
+    await db.delete(replies).where(inArray(replies.emailEventId, ids));
+    const deleted = await db
+      .delete(emailEvents)
+      .where(inArray(emailEvents.id, ids))
+      .returning({ id: emailEvents.id });
+    purgedEvents = deleted.length;
+  }
+
+  // scrape_jobs (failed or complete) older than 30 days.
+  const purgedScrapeJobs = await db
+    .delete(scrapeJobs)
+    .where(
+      and(
+        or(eq(scrapeJobs.status, "failed"), eq(scrapeJobs.status, "complete")),
+        lt(scrapeJobs.createdAt, thirtyDaysAgo),
+      ),
+    )
+    .returning({ id: scrapeJobs.id });
+
+  console.log(
+    `[purge-old-records] done: replies=${purgedReplies.length}, ` +
+    `emailEvents=${purgedEvents}, scrapeJobs=${purgedScrapeJobs.length}`,
+  );
 });
 
 console.log("[workers] all cron jobs registered");

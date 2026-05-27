@@ -10,3 +10,6 @@ export const flagTypeEnum = pgEnum("flag_type", ["duplicate", "unverified_email"
 export const scrapeJobStatusEnum = pgEnum("scrape_job_status", ["queued", "running", "complete", "failed", "blocked"]);
 export const scraperTypeEnum = pgEnum("scraper_type", ["crawl4ai", "cheerio", "api"]);
 export const suppressionReasonEnum = pgEnum("suppression_reason", ["unsubscribed", "spam_complaint", "hostile", "manual"]);
+export const emailStatusEnum = pgEnum("email_status", ["verified", "pattern_guessed", "not_found"]);
+export const enrichmentRoutingEnum = pgEnum("enrichment_routing", ["auto_queue", "rep_review"]);
+export const enrichmentSourceEnum = pgEnum("enrichment_source", ["registry", "cowork_claude", "snovio", "manual"]);

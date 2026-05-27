@@ -125,9 +125,13 @@ NEXT_PUBLIC_API_URL=http://localhost:3001
 docker-compose up -d postgres
 
 cd backend
-bun drizzle-kit generate   # generate migrations from schema (only if schema changed)
-bun drizzle-kit migrate    # apply migrations to your database
+bun run db:generate   # generate migrations from schema (only if schema changed)
+bun run db:migrate    # apply migrations to your database
+bun run db:seed            # load shared dev fixtures (source_registry rows, etc.)
 ```
+
+The seed script is idempotent — safe to re-run any time. New fixtures go into
+`backend/src/db/seed.sql`.
 
 ### 4. Start services
 
@@ -136,11 +140,68 @@ bun drizzle-kit migrate    # apply migrations to your database
 docker-compose up crawl4ai
 
 # Backend (port 3001)
-cd backend && bun run src/index.ts
+cd backend && bun run dev
 
 # Frontend (port 3000)
 cd frontend && npm run dev
 ```
+
+### 5. Install Playwright Chromium (first run only)
+
+The enrichment pipeline drives a headless Chrome via Playwright. Install the
+browser binary once per machine:
+
+```bash
+cd backend && bunx playwright install chromium
+```
+
+On Linux deployment targets also run `bunx playwright install-deps chromium`
+to pull in system libraries (fonts, libnss, etc.). Not needed on macOS.
+
+---
+
+## Deployment (AWS Lightsail)
+
+Target: single-instance Lightsail VM, 2GB RAM / 2 vCPUs.
+
+### First-time setup on the VM
+
+```bash
+# 1. System deps for Playwright Chromium
+sudo apt-get update
+cd backend && bunx playwright install-deps chromium
+bunx playwright install chromium
+
+# 2. Persistent volume for the enrichment NDJSON
+sudo mkdir -p /var/lib/blueocean
+sudo chown $USER /var/lib/blueocean
+```
+
+Then set `ENRICHED_LEADS_PATH=/var/lib/blueocean/enriched_leads.ndjson` in the
+production env so deploys don't truncate the file.
+
+### Secrets
+
+Per `CLAUDE.md` §Security, `.env` is for local dev only. In production, pull
+secrets from **AWS Systems Manager Parameter Store** (or Secrets Manager) at
+boot. At minimum these must come from Parameter Store, never the repo:
+`DATABASE_URL`, `ANTHROPIC_API_KEY`, `AWS_SECRET_ACCESS_KEY`,
+`SNOVIO_CLIENT_SECRET`.
+
+### Every deploy
+
+```bash
+git pull
+cd backend && bun install
+bun run db:migrate           # apply any new Drizzle migrations
+# restart your process manager (systemd / pm2 / etc.)
+```
+
+### Email domain hardening (one-time, before first SES send)
+
+Configure SPF + DKIM + DMARC on the sending domain in the AWS SES console
+before any cold outreach. Without these, deliverability into SG/AU/US targets
+will be poor and the domain is spoofable.
 
 ---
 
