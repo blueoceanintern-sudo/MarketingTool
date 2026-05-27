@@ -162,7 +162,7 @@ export default function LeadsClient({ initialLeads }: Props) {
                 <th className="px-4 py-4 text-[14px] font-semibold">Email</th>
                 <th className="px-4 py-4 text-[14px] font-semibold">Email Status</th>
                 <th className="px-4 py-4 text-[14px] font-semibold">Routing</th>
-                <th className="px-4 py-4 text-[14px] font-semibold">Source</th>
+                <th className="px-4 py-4 text-[14px] font-semibold" title="Which provider filled in the lead's institution/contact details">Enrichment Source</th>
                 <th className="px-4 py-4 text-[14px] font-semibold">Campaign</th>
                 <th className="px-4 py-4 text-[14px] font-semibold">Status</th>
               </tr>
@@ -259,6 +259,13 @@ function EnrichmentDrawer({ lead, onClose }: { lead: Lead; onClose: () => void }
         </div>
 
         <div className="px-6 py-5 space-y-5">
+          <Section title="Acquisition">
+            <Field
+              label="Scraper"
+              value={lead.scraper_used ?? "manual / CSV import"}
+            />
+          </Section>
+
           {loading ? (
             <p className="text-[13px] text-grey-400">Loading enrichment record…</p>
           ) : !record ? (

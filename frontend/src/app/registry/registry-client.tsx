@@ -170,7 +170,7 @@ export default function RegistryClient({ initialSources }: Props) {
                 <th className="px-4 py-4 text-[14px] font-semibold">Vertical</th>
                 <th className="px-4 py-4 text-[14px] font-semibold text-center">Geo</th>
                 <th className="px-4 py-4 text-[14px] font-semibold">URL</th>
-                <th className="px-4 py-4 text-[14px] font-semibold">Scraper</th>
+                <th className="px-4 py-4 text-[14px] font-semibold" title="Engine to try first; falls back to Cheerio if it fails">Engine (preferred)</th>
                 <th className="px-4 py-4 text-[14px] font-semibold text-center">Active</th>
                 <th className="px-4 py-4 text-[14px] font-semibold">Created</th>
               </tr>
