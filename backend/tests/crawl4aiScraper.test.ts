@@ -22,15 +22,16 @@ mock.module("node-fetch", () => ({
 // crawl4aiScraper uses the global fetch (no import) — configure per test
 let crawl4aiPayload: object | null = {
   success: true,
-  result: {
-    markdown: "Reach us at cto@techcorp.com for details.",
+  results: [{
+    success: true,
+    markdown: { raw_markdown: "Reach us at cto@techcorp.com for details." },
     metadata: { title: "TechCorp" },
-  },
+  }],
 };
 
 global.fetch = mock(async (_url: string) => {
   if (crawl4aiPayload === null) throw new Error("Crawl4AI unreachable");
-  return { ok: true, json: async () => crawl4aiPayload };
+  return { ok: true, text: async () => "", json: async () => crawl4aiPayload };
 }) as unknown as typeof fetch;
 
 const { scrapeWithFallback } = await import("../src/services/scrapers/crawl4aiScraper");
@@ -39,10 +40,11 @@ describe("crawl4aiScraper — scrapeWithFallback", () => {
   beforeEach(() => {
     crawl4aiPayload = {
       success: true,
-      result: {
-        markdown: "Reach us at cto@techcorp.com for details.",
+      results: [{
+        success: true,
+        markdown: { raw_markdown: "Reach us at cto@techcorp.com for details." },
         metadata: { title: "TechCorp" },
-      },
+      }],
     };
   });
 
@@ -62,19 +64,29 @@ describe("crawl4aiScraper — scrapeWithFallback", () => {
     expect(lead.email).toBe("fb@fallback.com");
   }, 6000);
 
-  it("falls back to cheerio when crawl4ai returns success=false", async () => {
-    crawl4aiPayload = { success: false, error: "blocked by CAPTCHA" };
+  it("falls back to cheerio when crawl4ai returns success=false at top level", async () => {
+    crawl4aiPayload = { success: false, detail: "blocked by CAPTCHA" };
     const lead = await scrapeWithFallback("https://techcorp.com");
     expect(lead.scraper).toBe("cheerio");
   }, 6000);
 
-  it("extracts email from markdown text in crawl4ai result", async () => {
+  it("falls back to cheerio when per-result success=false (e.g. anti-bot block)", async () => {
     crawl4aiPayload = {
       success: true,
-      result: {
-        markdown: "Email our sales team: sales@example.io",
+      results: [{ success: false, error_message: "Blocked by anti-bot protection" }],
+    };
+    const lead = await scrapeWithFallback("https://techcorp.com");
+    expect(lead.scraper).toBe("cheerio");
+  }, 6000);
+
+  it("extracts email from markdown.raw_markdown in crawl4ai result", async () => {
+    crawl4aiPayload = {
+      success: true,
+      results: [{
+        success: true,
+        markdown: { raw_markdown: "Email our sales team: sales@example.io" },
         metadata: { title: "Example Co" },
-      },
+      }],
     };
     const lead = await scrapeWithFallback("https://example.io");
     expect(lead.email).toBe("sales@example.io");

@@ -23,7 +23,8 @@ async function scrapeSourceUrl(url: string, scraperType: string) {
 async function persistScrapedLead(
   campaignId: string,
   scraped: { company?: string; email?: string; website: string },
-  campaignGeo: string
+  campaignGeo: string,
+  scraperUsed: "crawl4ai" | "cheerio"
 ) {
   if (!scraped.email) return false;
 
@@ -59,6 +60,7 @@ async function persistScrapedLead(
     role: null,
     isVerified: false,
     emailStatus: "pattern_guessed",
+    scraperUsed,
     status: "new",
   }).returning();
 
@@ -116,7 +118,8 @@ export async function runScrapeJob(jobId: string, campaignId: string): Promise<v
   for (const source of sources) {
     try {
       const result = await scrapeSourceUrl(source.url, source.scraperType);
-      const saved = await persistScrapedLead(campaignId, result, source.geo);
+      const saved = await persistScrapedLead(campaignId, result, source.geo, result.scraper);
+    //   console.log(`[scrape] ${source.name} → scraper=${result.scraper}, email=${result.email ?? "none"}`);
       if (saved) leadsScraped++;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

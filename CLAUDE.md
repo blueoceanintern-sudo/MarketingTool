@@ -287,8 +287,14 @@ scraper_type:      crawl4ai | cheerio | api
 id, name, industry, company_size, location, created_at, updated_at
 
 // leads
-id, company_id (FK), first_name, last_name, email (UNIQUE), role,
-is_verified, status, created_at, updated_at
+id, company_id (FK), campaign_id (FK, nullable), first_name, last_name,
+email (UNIQUE), role, is_verified, status,
+email_status (verified | pattern_guessed | not_found, nullable),
+enrichment_source (registry | cowork_claude | snovio | manual, nullable),
+routing (auto_queue | rep_review, nullable),
+enriched_at (nullable),
+scraper_used (crawl4ai | cheerio | api, nullable),  // which scraper produced this lead; null for CSV / manual
+created_at, updated_at
 
 // campaigns
 id, name, vertical, geography, company_size_target, status, dpa_signed (BOOLEAN NOT NULL DEFAULT false), created_at, updated_at
