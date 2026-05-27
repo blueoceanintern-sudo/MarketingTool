@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, boolean, integer, real, timestamp, json, vector, index, unique } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, boolean, integer, real, timestamp, json, jsonb, vector, index, unique } from "drizzle-orm/pg-core";
 import {
   companySizeEnum,
   leadStatusEnum,
@@ -69,6 +69,8 @@ export const emailDrafts = pgTable("email_drafts", {
   body: text("body").notNull(),
   confidenceScore: real("confidence_score").notNull(),
   status: draftStatusEnum("status").default("pending_review").notNull(),
+  approvedBy: text("approved_by"),
+  approvedAt: timestamp("approved_at"),
   bodyEmbedding: vector("body_embedding", { dimensions: 1536 }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (t) => [
@@ -166,6 +168,17 @@ export const demos = pgTable("demos", {
   assignedTo: text("assigned_to"),
   status: text("status", { enum: ["pending", "scheduled", "completed", "cancelled"] }).default("pending").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const auditLog = pgTable("audit_log", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  timestamp: timestamp("timestamp").defaultNow().notNull(),
+  actor: text("actor").notNull(),
+  action: text("action").notNull(),
+  targetId: uuid("target_id"),
+  targetType: text("target_type"),
+  ipAddress: text("ip_address"),
+  metadata: jsonb("metadata"),
 });
 
 export interface EnrichmentInstitution {
