@@ -1,0 +1,1 @@
+ALTER TABLE "leads" ADD COLUMN "scraper_used" "scraper_type";

@@ -57,6 +57,7 @@ export const leads = pgTable("leads", {
   enrichmentSource: enrichmentSourceEnum("enrichment_source"),
   routing: enrichmentRoutingEnum("routing"),
   enrichedAt: timestamp("enriched_at"),
+  scraperUsed: scraperTypeEnum("scraper_used"),
   lastContactedAt: timestamp("last_contacted_at", { withTimezone: true }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
