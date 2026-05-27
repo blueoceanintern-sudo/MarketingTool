@@ -31,6 +31,10 @@ export interface Campaign {
   created_at: string;
 }
 
+export type EmailStatus = "verified" | "pattern_guessed" | "not_found";
+export type EnrichmentSource = "registry" | "cowork_claude" | "snovio" | "manual";
+export type EnrichmentRouting = "auto_queue" | "rep_review";
+
 export interface Lead {
   id: string;
   first_name: string;
@@ -38,11 +42,47 @@ export interface Lead {
   email: string;
   role: string;
   is_verified: boolean;
+  email_status: EmailStatus | null;
+  enrichment_source: EnrichmentSource | null;
+  routing: EnrichmentRouting | null;
+  enriched_at: string | null;
+  scraper_used: ScraperType | null;
   status: LeadStatus;
   company_name: string;
   campaign_id?: string;
   campaign_name?: string;
   created_at: string;
+}
+
+export interface EnrichmentRecord {
+  lead_id: string;
+  enriched_at: string;
+  enrichment_source: EnrichmentSource;
+  market: "SG" | "AU" | "US";
+  institution: {
+    name: string;
+    type: string;
+    registration_id: string | null;
+    size: "small" | "medium" | "large" | "unknown";
+    website: string | null;
+    region: string;
+  };
+  contact: {
+    full_name: string | null;
+    first_name: string | null;
+    role: string | null;
+    email: string | null;
+    email_status: EmailStatus;
+  };
+  pipeline_flags: {
+    is_duplicate: boolean;
+    missing_critical_fields: boolean;
+    missing_fields_detail: string[];
+    risk_flag: boolean;
+    risk_flag_reason: string | null;
+  };
+  routing: EnrichmentRouting;
+  routing_reason: string | null;
 }
 
 export interface Draft {
@@ -96,6 +136,22 @@ export interface AnalyticsOverview {
   total_suppressions: number;
   open_rate: number;
   reply_rate: number;
+}
+
+export type ScraperType = "crawl4ai" | "cheerio" | "api";
+
+export interface SourceRegistry {
+  id: string;
+  name: string;
+  vertical: string;
+  geo: string;
+  url: string;
+  scraper_type: ScraperType;
+  legal_flag: boolean;
+  selectors: Record<string, string> | null;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 // ── API functions ─────────────────────────────────────────────────────────────
@@ -170,6 +226,10 @@ export async function getLeads(campaignId?: string): Promise<Lead[]> {
   return (await apiFetch<Lead[]>(path)) ?? [];
 }
 
+export async function getLeadEnrichment(leadId: string): Promise<EnrichmentRecord | null> {
+  return apiFetch<EnrichmentRecord>(`/leads/${leadId}/enrichment`);
+}
+
 export async function getDraftQueue(): Promise<Draft[]> {
   return (await apiFetch<Draft[]>("/drafts/queue")) ?? [];
 }
@@ -181,6 +241,37 @@ export async function getReplies(flaggedOnly = false): Promise<Reply[]> {
 
 export async function getDemos(): Promise<Demo[]> {
   return (await apiFetch<Demo[]>("/demos")) ?? [];
+}
+
+export async function getRegistrySources(): Promise<SourceRegistry[]> {
+  return (await apiFetch<SourceRegistry[]>("/registry/sources")) ?? [];
+}
+
+export async function createRegistrySource(payload: {
+  name: string;
+  vertical: string;
+  geo: string;
+  url: string;
+  scraper_type: ScraperType;
+  legal_flag?: boolean;
+  selectors?: Record<string, string>;
+  active?: boolean;
+}): Promise<{ source: SourceRegistry | null; error?: string }> {
+  try {
+    const res = await fetch(`${BASE}/api/v1/registry/sources`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return { source: null, error: body.error ?? `Request failed (${res.status})` };
+    }
+    const source = (await res.json()) as SourceRegistry;
+    return { source };
+  } catch {
+    return { source: null, error: "Could not reach the API." };
+  }
 }
 
 export async function getAnalyticsOverview(): Promise<AnalyticsOverview | null> {

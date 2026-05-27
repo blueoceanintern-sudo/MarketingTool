@@ -1,7 +1,9 @@
-CREATE EXTENSION IF NOT EXISTS vector;--> statement-breakpoint
 CREATE TYPE "public"."campaign_status" AS ENUM('draft', 'active', 'paused', 'complete');--> statement-breakpoint
 CREATE TYPE "public"."company_size" AS ENUM('small', 'medium', 'large', 'enterprise');--> statement-breakpoint
 CREATE TYPE "public"."draft_status" AS ENUM('pending_review', 'approved', 'rejected', 'scheduled', 'sent');--> statement-breakpoint
+CREATE TYPE "public"."email_status" AS ENUM('verified', 'pattern_guessed', 'not_found');--> statement-breakpoint
+CREATE TYPE "public"."enrichment_routing" AS ENUM('auto_queue', 'rep_review');--> statement-breakpoint
+CREATE TYPE "public"."enrichment_source" AS ENUM('registry', 'cowork_claude', 'snovio', 'manual');--> statement-breakpoint
 CREATE TYPE "public"."flag_type" AS ENUM('duplicate', 'unverified_email', 'missing_field', 'legal_keyword', 'hostile_interaction', 'regulated_entity');--> statement-breakpoint
 CREATE TYPE "public"."lead_status" AS ENUM('new', 'contacted', 'replied', 'converted', 'suppressed');--> statement-breakpoint
 CREATE TYPE "public"."persona" AS ENUM('technical', 'executive', 'ops');--> statement-breakpoint
@@ -9,6 +11,17 @@ CREATE TYPE "public"."scrape_job_status" AS ENUM('queued', 'running', 'complete'
 CREATE TYPE "public"."scraper_type" AS ENUM('crawl4ai', 'cheerio', 'api');--> statement-breakpoint
 CREATE TYPE "public"."sentiment" AS ENUM('positive', 'negative', 'neutral');--> statement-breakpoint
 CREATE TYPE "public"."suppression_reason" AS ENUM('unsubscribed', 'spam_complaint', 'hostile', 'manual');--> statement-breakpoint
+CREATE TABLE "audit_log" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"timestamp" timestamp DEFAULT now() NOT NULL,
+	"actor" text NOT NULL,
+	"action" text NOT NULL,
+	"target_id" uuid,
+	"target_type" text,
+	"ip_address" text,
+	"metadata" jsonb
+);
+--> statement-breakpoint
 CREATE TABLE "campaigns" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"name" text NOT NULL,
@@ -49,6 +62,8 @@ CREATE TABLE "email_drafts" (
 	"body" text NOT NULL,
 	"confidence_score" real NOT NULL,
 	"status" "draft_status" DEFAULT 'pending_review' NOT NULL,
+	"approved_by" text,
+	"approved_at" timestamp,
 	"body_embedding" vector(1536),
 	"created_at" timestamp DEFAULT now() NOT NULL
 );
@@ -61,6 +76,21 @@ CREATE TABLE "email_events" (
 	"opened_at" timestamp,
 	"replied_at" timestamp,
 	"unsubscribed_at" timestamp
+);
+--> statement-breakpoint
+CREATE TABLE "enrichment_records" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"lead_id" uuid NOT NULL,
+	"campaign_id" uuid,
+	"enriched_at" timestamp NOT NULL,
+	"enrichment_source" "enrichment_source" NOT NULL,
+	"market" text NOT NULL,
+	"institution" json NOT NULL,
+	"contact" json NOT NULL,
+	"pipeline_flags" json NOT NULL,
+	"routing" "enrichment_routing" NOT NULL,
+	"routing_reason" text,
+	"created_at" timestamp DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "follow_ups" (
@@ -83,6 +113,12 @@ CREATE TABLE "leads" (
 	"role" text,
 	"is_verified" boolean DEFAULT false NOT NULL,
 	"status" "lead_status" DEFAULT 'new' NOT NULL,
+	"email_status" "email_status",
+	"enrichment_source" "enrichment_source",
+	"routing" "enrichment_routing",
+	"enriched_at" timestamp,
+	"scraper_used" "scraper_type",
+	"last_contacted_at" timestamp with time zone,
 	"created_at" timestamp DEFAULT now() NOT NULL,
 	"updated_at" timestamp DEFAULT now() NOT NULL,
 	CONSTRAINT "leads_email_unique" UNIQUE("email")
@@ -159,6 +195,8 @@ ALTER TABLE "email_drafts" ADD CONSTRAINT "email_drafts_lead_id_leads_id_fk" FOR
 ALTER TABLE "email_drafts" ADD CONSTRAINT "email_drafts_campaign_id_campaigns_id_fk" FOREIGN KEY ("campaign_id") REFERENCES "public"."campaigns"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "email_events" ADD CONSTRAINT "email_events_draft_id_email_drafts_id_fk" FOREIGN KEY ("draft_id") REFERENCES "public"."email_drafts"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "email_events" ADD CONSTRAINT "email_events_lead_id_leads_id_fk" FOREIGN KEY ("lead_id") REFERENCES "public"."leads"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "enrichment_records" ADD CONSTRAINT "enrichment_records_lead_id_leads_id_fk" FOREIGN KEY ("lead_id") REFERENCES "public"."leads"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "enrichment_records" ADD CONSTRAINT "enrichment_records_campaign_id_campaigns_id_fk" FOREIGN KEY ("campaign_id") REFERENCES "public"."campaigns"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "follow_ups" ADD CONSTRAINT "follow_ups_lead_id_leads_id_fk" FOREIGN KEY ("lead_id") REFERENCES "public"."leads"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "follow_ups" ADD CONSTRAINT "follow_ups_campaign_id_campaigns_id_fk" FOREIGN KEY ("campaign_id") REFERENCES "public"."campaigns"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "follow_ups" ADD CONSTRAINT "follow_ups_draft_id_email_drafts_id_fk" FOREIGN KEY ("draft_id") REFERENCES "public"."email_drafts"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
@@ -168,4 +206,5 @@ ALTER TABLE "replies" ADD CONSTRAINT "replies_email_event_id_email_events_id_fk"
 ALTER TABLE "risk_flags" ADD CONSTRAINT "risk_flags_lead_id_leads_id_fk" FOREIGN KEY ("lead_id") REFERENCES "public"."leads"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "scrape_jobs" ADD CONSTRAINT "scrape_jobs_campaign_id_campaigns_id_fk" FOREIGN KEY ("campaign_id") REFERENCES "public"."campaigns"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "template_performance" ADD CONSTRAINT "template_performance_campaign_id_campaigns_id_fk" FOREIGN KEY ("campaign_id") REFERENCES "public"."campaigns"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-CREATE INDEX "email_drafts_body_embedding_idx" ON "email_drafts" USING hnsw ("body_embedding" vector_cosine_ops);
+CREATE INDEX "email_drafts_body_embedding_idx" ON "email_drafts" USING hnsw ("body_embedding" vector_cosine_ops);--> statement-breakpoint
+CREATE INDEX "enrichment_records_lead_enriched_at_idx" ON "enrichment_records" USING btree ("lead_id","enriched_at" DESC NULLS LAST);

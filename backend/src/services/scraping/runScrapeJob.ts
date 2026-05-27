@@ -1,13 +1,14 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "../../db";
-import { campaigns, companies, leads, scrapeJobs, sourceRegistry } from "../../db/schema";
+import { campaigns, companies, leads, scrapeJobs, sourceRegistry, normalizeVertical, normalizeGeo } from "../../db/schema";
 import { scrapeWithFallback } from "../scrapers/crawl4aiScraper";
 import { scrapeWebsite } from "../scrapers/cheerioScraper";
+import { enrichLead } from "../enrichment/orchestrator";
 
 function parseGeographies(geography: string): string[] {
   return geography
     .split(",")
-    .map((g) => g.trim().toUpperCase())
+    .map(normalizeGeo)
     .filter(Boolean);
 }
 
@@ -22,7 +23,8 @@ async function scrapeSourceUrl(url: string, scraperType: string) {
 async function persistScrapedLead(
   campaignId: string,
   scraped: { company?: string; email?: string; website: string },
-  campaignGeo: string
+  campaignGeo: string,
+  scraperUsed: "crawl4ai" | "cheerio"
 ) {
   if (!scraped.email) return false;
 
@@ -46,16 +48,27 @@ async function persistScrapedLead(
     company = inserted!;
   }
 
-  await db.insert(leads).values({
+  // Scraped emails are presence-only — they haven't been verified by a
+  // registry. Mark them pattern_guessed and let the orchestrator upgrade
+  // the status if a downstream provider verifies them.
+  const [lead] = await db.insert(leads).values({
     companyId: company.id,
     campaignId,
     email,
     firstName: null,
     lastName: null,
     role: null,
-    isVerified: Boolean(scraped.email),
+    isVerified: false,
+    emailStatus: "pattern_guessed",
+    scraperUsed,
     status: "new",
-  });
+  }).returning();
+
+  if (lead) {
+    void enrichLead(lead.id).catch((err) => {
+      console.error(`[scrape] enrichment failed for ${lead.id}:`, err);
+    });
+  }
 
   return true;
 }
@@ -78,7 +91,7 @@ export async function runScrapeJob(jobId: string, campaignId: string): Promise<v
   const geos = parseGeographies(campaign.geography);
   const sourceConditions = [
     eq(sourceRegistry.active, true),
-    eq(sourceRegistry.vertical, campaign.vertical),
+    eq(sourceRegistry.vertical, normalizeVertical(campaign.vertical)),
   ];
   if (geos.length > 0) sourceConditions.push(inArray(sourceRegistry.geo, geos));
 
@@ -105,7 +118,8 @@ export async function runScrapeJob(jobId: string, campaignId: string): Promise<v
   for (const source of sources) {
     try {
       const result = await scrapeSourceUrl(source.url, source.scraperType);
-      const saved = await persistScrapedLead(campaignId, result, source.geo);
+      const saved = await persistScrapedLead(campaignId, result, source.geo, result.scraper);
+    //   console.log(`[scrape] ${source.name} → scraper=${result.scraper}, email=${result.email ?? "none"}`);
       if (saved) leadsScraped++;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

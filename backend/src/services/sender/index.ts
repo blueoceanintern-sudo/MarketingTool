@@ -1,6 +1,6 @@
 import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
 import { db } from "../../db";
-import { suppressionList, emailDrafts, emailEvents } from "../../db/schema";
+import { suppressionList, emailDrafts, emailEvents, campaigns, leads } from "../../db/schema";
 import { eq, and, isNotNull, count, gte } from "drizzle-orm";
 import { buildEmailHtml } from "../../templates/outreachEmail";
 
@@ -8,7 +8,6 @@ interface SendPayload {
   draftId: string;
   toEmail: string;
   leadId: string;
-  lastSentAt?: string;
   isVerified: boolean;
   hasRiskFlags: boolean;
 }
@@ -56,11 +55,6 @@ export async function getTotalSent(): Promise<number> {
   return getTotalSentFromDB();
 }
 
-function withinNinetyDays(lastSentAt: string): boolean {
-  const diffMs = Date.now() - new Date(lastSentAt).getTime();
-  return diffMs / (1000 * 60 * 60 * 24) < 90;
-}
-
 function getApiBase(): string {
   return process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 }
@@ -81,7 +75,7 @@ function getSesClient(): SESClient {
 }
 
 export async function sendDraft(payload: SendPayload): Promise<SendResult> {
-  const { draftId, toEmail, leadId, lastSentAt, isVerified, hasRiskFlags } = payload;
+  const { draftId, toEmail, leadId, isVerified, hasRiskFlags } = payload;
 
   const [suppressed] = await db
     .select({ id: suppressionList.id })
@@ -90,7 +84,13 @@ export async function sendDraft(payload: SendPayload): Promise<SendResult> {
     .limit(1);
   if (suppressed) return { draftId, status: "blocked", reason: "suppression_list" };
 
-  if (lastSentAt && withinNinetyDays(lastSentAt)) {
+  const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+  const [lead] = await db
+    .select({ lastContactedAt: leads.lastContactedAt })
+    .from(leads)
+    .where(eq(leads.id, leadId))
+    .limit(1);
+  if (lead?.lastContactedAt && lead.lastContactedAt > ninetyDaysAgo) {
     return { draftId, status: "blocked", reason: "90_day_rule" };
   }
 
@@ -111,6 +111,18 @@ export async function sendDraft(payload: SendPayload): Promise<SendResult> {
   if (!draft) return { draftId, status: "blocked", reason: "draft_not_found" };
   if (draft.status !== "scheduled") {
     return { draftId, status: "blocked", reason: `draft_status_${draft.status}` };
+  }
+
+  // Campaign must be active before any outreach goes out — draft/paused
+  // campaigns build the lead pool but never send; complete is terminal.
+  const [campaign] = await db
+    .select({ status: campaigns.status })
+    .from(campaigns)
+    .where(eq(campaigns.id, draft.campaignId))
+    .limit(1);
+  if (!campaign) return { draftId, status: "blocked", reason: "campaign_not_found" };
+  if (campaign.status !== "active") {
+    return { draftId, status: "blocked", reason: `campaign_status_${campaign.status}` };
   }
 
   const fromAddress = process.env.AWS_SES_FROM_ADDRESS;
@@ -136,8 +148,12 @@ export async function sendDraft(payload: SendPayload): Promise<SendResult> {
   const response = await getSesClient().send(command);
   const messageId = response.MessageId;
 
-  await db.insert(emailEvents).values({ draftId, leadId, sentAt: new Date() });
-  await db.update(emailDrafts).set({ status: "sent" }).where(eq(emailDrafts.id, draftId));
+  const now = new Date();
+  await Promise.all([
+    db.insert(emailEvents).values({ draftId, leadId, sentAt: now }),
+    db.update(emailDrafts).set({ status: "sent" }).where(eq(emailDrafts.id, draftId)),
+    db.update(leads).set({ lastContactedAt: now }).where(eq(leads.id, leadId)),
+  ]);
 
   return { draftId, status: "sent", messageId };
 }

@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, boolean, integer, real, timestamp, json, vector, index, unique } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, boolean, integer, real, timestamp, json, jsonb, vector, index, unique } from "drizzle-orm/pg-core";
 import {
   companySizeEnum,
   leadStatusEnum,
@@ -10,7 +10,15 @@ import {
   scrapeJobStatusEnum,
   scraperTypeEnum,
   suppressionReasonEnum,
+  emailStatusEnum,
+  enrichmentRoutingEnum,
+  enrichmentSourceEnum,
 } from "./enums";
+
+// Canonical forms for the free-form taxonomy columns. Apply at every write
+// site so reads can use simple equality without LOWER()/UPPER() wrappers.
+export const normalizeVertical = (s: string): string => s.trim().toLowerCase();
+export const normalizeGeo = (s: string): string => s.trim().toUpperCase();
 
 export const companies = pgTable("companies", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -44,6 +52,12 @@ export const leads = pgTable("leads", {
   role: text("role"),
   isVerified: boolean("is_verified").default(false).notNull(),
   status: leadStatusEnum("status").default("new").notNull(),
+  emailStatus: emailStatusEnum("email_status"),
+  enrichmentSource: enrichmentSourceEnum("enrichment_source"),
+  routing: enrichmentRoutingEnum("routing"),
+  enrichedAt: timestamp("enriched_at"),
+  scraperUsed: scraperTypeEnum("scraper_used"),
+  lastContactedAt: timestamp("last_contacted_at", { withTimezone: true }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -57,6 +71,8 @@ export const emailDrafts = pgTable("email_drafts", {
   body: text("body").notNull(),
   confidenceScore: real("confidence_score").notNull(),
   status: draftStatusEnum("status").default("pending_review").notNull(),
+  approvedBy: text("approved_by"),
+  approvedAt: timestamp("approved_at"),
   bodyEmbedding: vector("body_embedding", { dimensions: 1536 }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (t) => [
@@ -155,3 +171,56 @@ export const demos = pgTable("demos", {
   status: text("status", { enum: ["pending", "scheduled", "completed", "cancelled"] }).default("pending").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
+
+export const auditLog = pgTable("audit_log", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  timestamp: timestamp("timestamp").defaultNow().notNull(),
+  actor: text("actor").notNull(),
+  action: text("action").notNull(),
+  targetId: uuid("target_id"),
+  targetType: text("target_type"),
+  ipAddress: text("ip_address"),
+  metadata: jsonb("metadata"),
+});
+
+export interface EnrichmentInstitution {
+  name: string;
+  type: string;
+  registration_id: string | null;
+  size: "small" | "medium" | "large" | "unknown";
+  website: string | null;
+  region: string;
+}
+
+export interface EnrichmentContact {
+  full_name: string | null;
+  first_name: string | null;
+  role: string | null;
+  email: string | null;
+  email_status: "verified" | "pattern_guessed" | "not_found";
+}
+
+export interface EnrichmentPipelineFlags {
+  is_duplicate: boolean;
+  missing_critical_fields: boolean;
+  missing_fields_detail: string[];
+  risk_flag: boolean;
+  risk_flag_reason: string | null;
+}
+
+export const enrichmentRecords = pgTable("enrichment_records", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  leadId: uuid("lead_id").references(() => leads.id).notNull(),
+  campaignId: uuid("campaign_id").references(() => campaigns.id),
+  enrichedAt: timestamp("enriched_at").notNull(),
+  enrichmentSource: enrichmentSourceEnum("enrichment_source").notNull(),
+  market: text("market").notNull(),
+  institution: json("institution").$type<EnrichmentInstitution>().notNull(),
+  contact: json("contact").$type<EnrichmentContact>().notNull(),
+  pipelineFlags: json("pipeline_flags").$type<EnrichmentPipelineFlags>().notNull(),
+  routing: enrichmentRoutingEnum("routing").notNull(),
+  routingReason: text("routing_reason"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  index("enrichment_records_lead_enriched_at_idx").on(t.leadId, t.enrichedAt.desc()),
+]);

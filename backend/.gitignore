@@ -15,6 +15,9 @@ logs
 _.log
 report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
+# enrichment NDJSON output (ENRICHED_LEADS_PATH default: ./data/enriched_leads.ndjson)
+data/
+
 # dotenv environment variable files
 .env
 .env.development.local
