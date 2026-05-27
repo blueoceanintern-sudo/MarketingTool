@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, boolean, integer, real, timestamp, json, jsonb, vector, index, unique } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, boolean, integer, real, timestamp, json, vector, index, unique } from "drizzle-orm/pg-core";
 import {
   companySizeEnum,
   leadStatusEnum,
@@ -40,6 +40,7 @@ export const campaigns = pgTable("campaigns", {
   status: campaignStatusEnum("status").default("draft").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  dpaSigned: boolean("dpa_signed").default(false).notNull(),
 });
 
 export const leads = pgTable("leads", {
@@ -56,6 +57,7 @@ export const leads = pgTable("leads", {
   enrichmentSource: enrichmentSourceEnum("enrichment_source"),
   routing: enrichmentRoutingEnum("routing"),
   enrichedAt: timestamp("enriched_at"),
+  lastContactedAt: timestamp("last_contacted_at", { withTimezone: true }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -69,8 +71,6 @@ export const emailDrafts = pgTable("email_drafts", {
   body: text("body").notNull(),
   confidenceScore: real("confidence_score").notNull(),
   status: draftStatusEnum("status").default("pending_review").notNull(),
-  approvedBy: text("approved_by"),
-  approvedAt: timestamp("approved_at"),
   bodyEmbedding: vector("body_embedding", { dimensions: 1536 }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (t) => [
@@ -168,17 +168,6 @@ export const demos = pgTable("demos", {
   assignedTo: text("assigned_to"),
   status: text("status", { enum: ["pending", "scheduled", "completed", "cancelled"] }).default("pending").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
-
-export const auditLog = pgTable("audit_log", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  timestamp: timestamp("timestamp").defaultNow().notNull(),
-  actor: text("actor").notNull(),
-  action: text("action").notNull(),
-  targetId: uuid("target_id"),
-  targetType: text("target_type"),
-  ipAddress: text("ip_address"),
-  metadata: jsonb("metadata"),
 });
 
 export interface EnrichmentInstitution {
