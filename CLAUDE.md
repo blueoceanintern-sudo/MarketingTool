@@ -2,7 +2,7 @@
 
 This file defines **how to build** this project. For **what to build**, refer to the PRD.
 
-Automated B2B outreach pipeline: scrapes leads → enriches via Snov.io → AI drafts emails (3 personas via Claude Haiku) → rep reviews/approves → sends via AWS SES → agent monitors replies → routes through decision tree. Target markets: Singapore, Australia, US.
+Automated B2B outreach pipeline: scrapes leads → enriches via Snov.io → Claude assigns lead to up to 3 campaigns → AI drafts 1 email per campaign per lead → rep reviews/approves → sends via AWS SES (2× per week per lead) → agent monitors replies → routes through decision tree. Target markets: Singapore, Australia, US.
 
 ---
 
@@ -15,9 +15,9 @@ The repo is in an **early scaffold** phase. The sections below describe the **ta
 | Repo layout | `backend/` + `frontend/` (two packages) | Monorepo: `apps/web`, `apps/api`, `services/*`, `workers/`, `db/` |
 | Backend routes | `/api/v1/*` routes live; legacy `/scrape`, `/health`, `/unsubscribe` also running | `/api/v1/*` complete per target spec |
 | Scraping | Crawl4AI + Cheerio scrapers built; `runScrapeJob` runner; `sourceRegistry` still in-code | `source_registry` table replaces in-code map |
-| Database | Drizzle schema + all tables defined; migrations **not yet generated/applied** | Migrations in `db/migrations/`; pgvector live |
+| Database | Drizzle schema + all tables defined (incl. `audit_log`, `enrichment_records`); migrations **not yet generated/applied** | Migrations in `db/migrations/`; pgvector live |
 | Frontend | Full pages: campaigns, review queue, leads, replies, analytics, registry, profile, settings | Same — feature-complete |
-| Workers & services | All 5 cron workers + sender/drafting/enrichment/scraping services built | Security middleware, purge worker, template-improver full logic |
+| Workers & services | All 6 cron workers + sender/drafting/enrichment (fully connected) /scraping services built | Security middleware, template-improver full logic, campaign-assigner |
 | Docker | `docker-compose.yml` present | Same |
 
 When adding features, prefer extending **existing** paths until a deliberate migration to the target layout. New shared types should eventually live in `shared/` (not yet created).
@@ -34,7 +34,7 @@ When adding features, prefer extending **existing** paths until a deliberate mig
 |---|---|
 | `src/index.ts` | Hono app — all routes mounted; CORS middleware; `/unsubscribe` one-click handler |
 | `src/db/index.ts` | Drizzle client wired to `DATABASE_URL` |
-| `src/db/schema/tables.ts` | Full table definitions (all target tables except `audit_log`) |
+| `src/db/schema/tables.ts` | Full table definitions — all target tables including `audit_log` and `enrichment_records`; `approved_by`/`approved_at` on `email_drafts`; `lastContactedAt` on `leads`; still missing `dpa_signed` on `campaigns` and `is_dynamic`/`generated_by` on `source_registry` |
 | `src/db/schema/enums.ts` | All enums |
 | `src/config/sourceRegistry.ts` | In-code CSS selector map — still used until DB migrations run |
 | `src/routes/campaigns.ts` | `POST/GET /campaigns`, `GET /campaigns/:id`, `PATCH /campaigns/:id/status` |
@@ -47,11 +47,18 @@ When adding features, prefer extending **existing** paths until a deliberate mig
 | `src/services/scrapers/cheerioScraper.ts` | Static HTML scraper; returns `Lead { company?, email?, website }` |
 | `src/services/scrapers/crawl4aiScraper.ts` | Crawl4AI HTTP client for JS-rendered pages |
 | `src/services/scraping/runScrapeJob.ts` | Orchestrates scrape jobs; updates `scrape_jobs` status/counts |
-| `src/services/drafting/index.ts` | Claude Haiku 4.5 Batch API email generation; 3 personas; confidence in same call |
-| `src/services/enrichment/snovio.ts` | Snov.io token auth, domain lookup, email verification — built but enrichment-retry worker on hold |
+| `src/services/drafting/index.ts` | Claude Haiku 4.5 Batch API email generation; **still 3 personas (technical/executive/ops) — not yet refactored** to 1 draft per campaign per lead with campaign-goal-aligned prompts |
+| `src/services/enrichment/orchestrator.ts` | Full enrichment pipeline: registry → cowork (Claude browser agent) → Snov.io provider chain; persists to `enrichment_records` and updates `leads` |
+| `src/services/enrichment/cowork.ts` | Cowork provider — Claude Haiku 4.5 drives headless Chrome via Playwright; extracts institution + contact from public pages |
+| `src/services/enrichment/agent.ts` | Browser agent loop for Cowork; Claude decides navigate/read/click steps |
+| `src/services/enrichment/browserDriver.ts` | Playwright browser launcher used by the agent |
+| `src/services/enrichment/registryLookup.ts` | Registry lookup provider (first in chain) |
+| `src/services/enrichment/snovio.ts` | Snov.io provider — token auth, domain lookup, email verification |
+| `src/services/enrichment/ndjsonWriter.ts` | Appends enrichment records to NDJSON log file |
+| `src/services/enrichment/types.ts` | Shared enrichment types (`EnrichmentInput`, `EnrichmentProvider`, `EnrichmentRecord`, etc.) |
 | `src/services/sender/index.ts` | AWS SES send; warm-up cap; suppression + 90-day + risk-flag + verified checks; A/B routing |
 | `src/templates/outreachEmail.ts` | HTML email template with one-click unsubscribe link |
-| `src/workers/index.ts` | All 5 cron jobs: follow-up-sender (9am), warmup-tracker (midnight), scrape-retry (4am), enrichment-retry (3am, on hold), template-improver (Sun midnight) |
+| `src/workers/index.ts` | All 6 cron jobs: follow-up-sender (9am), warmup-tracker (midnight), scrape-retry (4am), enrichment-retry (3am — **fully connected** to `enrichLead()` orchestrator), template-improver (Sun midnight — logs only), purge-old-records (Sun 2am) |
 
 **Live routes:**
 
@@ -225,11 +232,11 @@ bun run workers                      # start all cron jobs
 | Worker | Schedule | What it does |
 |---|---|---|
 | `follow-up-sender` | Daily 9am | Follow-ups (attempts 1–3) for no-reply leads |
-| `enrichment-retry` | Daily 3am | Retry Snov.io for unverified leads (on hold — not yet connected) |
+| `enrichment-retry` | Daily 3am | Retries unenriched leads or `not_found` leads older than 7 days; calls `enrichLead()` via orchestrator; capped by `ENRICHMENT_DAILY_RUN_CAP` env var (default 200) |
 | `scrape-retry` | Daily 4am | Retry failed `scrape_jobs` under `max_retries` |
-| `template-improver` | Sunday midnight | Top variants → skill.md after 50+ sends |
+| `template-improver` | Sunday midnight | Logs `templatePerformance` rows by replyRate — full pgvector similarity + skill.md update **not yet implemented** |
 | `warmup-tracker` | Daily midnight | Warm-up phase + daily send cap |
-| `purge-old-records` | Weekly Sunday 2am | Hard-delete expired rows per data retention policy; log counts to `audit_log` |
+| `purge-old-records` | Weekly Sunday 2am | Hard-deletes replies >180d, email_events >90d, scrape_jobs (failed/complete) >30d |
 
 ### Tests
 
@@ -245,19 +252,18 @@ bun test services/scoring
 
 Items from the target spec that are **not yet implemented**:
 
+- `services/campaign-assigner` — not yet built; Claude assigns leads to up to 3 campaigns; needs `campaign_assignments` table
+- `services/source-registry` — not yet built; Tavily integration for dynamic URL generation per campaign trigger; needs `TAVILY_API_KEY` env var and `is_dynamic` / `generated_by` columns on `source_registry` table (columns also missing from the Drizzle schema)
 - Monorepo migration (`apps/web`, `apps/api`, `shared/`) — still `backend/` + `frontend/`
 - DB migrations — schema defined in Drizzle but `drizzle-kit generate` + `migrate` not yet run; `db/migrations/` folder does not exist
 - `source_registry` DB table not yet active as the live source — in-code `backend/src/config/sourceRegistry.ts` still in use
-- Enrichment retry worker on hold — `snovio.ts` service is built but not connected end-to-end; `enrichment-retry` cron logs a placeholder
-- `audit_log` table — defined in target schema but not in `backend/src/db/schema/tables.ts` yet
+- Drafting service not yet refactored — `src/services/drafting/index.ts` still uses 3 fixed personas (`technical` / `executive` / `ops`); target is 1 draft per campaign per lead with campaign-goal-aligned prompts and `campaign_type` field (not `persona`)
 - `dpa_signed` column on `campaigns` table — in target schema, not yet in Drizzle schema
-- `approved_by` / `approved_at` columns on `email_drafts` — in target schema, not yet added
-- `purge-old-records` cron worker — scheduled in target but not in `backend/src/workers/index.ts`
-- Template improver full logic — cron job runs and logs `templatePerformance` rows but does not do pgvector similarity or update `skill.md`
+- Template improver full logic — cron job runs and logs `templatePerformance` rows by replyRate but does not do pgvector similarity or update `skill.md`
 - Security middleware not yet wired: API key auth (`X-API-Key` / `SECRET_API_KEY`), rate limiting, SSRF protection in scraper, SNS signature verification on webhook, CSV injection sanitization
-- CORS locked to `NEXT_PUBLIC_API_URL` only — currently allows both `localhost:3000` and `127.0.0.1:3000` explicitly; needs env-driven config
+- CORS locked to `NEXT_PUBLIC_API_URL` only — currently hardcodes `localhost:3000` and `127.0.0.1:3000` in `src/index.ts`; needs env-driven config
 - `POST /admin/leads/:id/erase` right-to-deletion endpoint — in target API spec, not yet built
-- `GET/POST /admin/audit-log` and `/admin/audit-log/export` — not yet built
+- `GET /admin/audit-log` and `GET /admin/audit-log/export` — `audit_log` table is defined but no routes expose it yet
 - Email domain hardening (SPF, DKIM, DMARC) — DNS / SES console setup, not code
 
 ---
@@ -272,7 +278,7 @@ All tables in `db/schema/`. Drizzle only — never raw `pg` client.
 company_size:      small | medium | large | enterprise
 lead_status:       new | contacted | replied | converted | suppressed
 campaign_status:   draft | active | paused | complete
-persona:           technical | executive | ops
+campaign_type:     re_engagement | certification_upsell | event_promo | cold_outreach | general
 draft_status:      pending_review | approved | rejected | scheduled | sent
 sentiment:         positive | negative | neutral
 flag_type:         duplicate | unverified_email | missing_field | legal_keyword | hostile_interaction | regulated_entity
@@ -283,6 +289,10 @@ scraper_type:      crawl4ai | cheerio | api
 ### Tables
 
 ```ts
+// campaign_assignments
+id, lead_id (FK), campaign_id (FK), assigned_at, assignment_reason
+// Claude assigns each lead to up to 3 campaigns; enforced at service level (max 3 rows per lead_id)
+
 // companies
 id, name, industry, company_size, location, created_at, updated_at
 
@@ -294,16 +304,20 @@ enrichment_source (registry | cowork_claude | snovio | manual, nullable),
 routing (auto_queue | rep_review, nullable),
 enriched_at (nullable),
 scraper_used (crawl4ai | cheerio | api, nullable),  // which scraper produced this lead; null for CSV / manual
+last_contacted_at (nullable),  // ✅ built — set by sender on each SES send
 created_at, updated_at
 
 // campaigns
-id, name, vertical, geography, company_size_target, status, dpa_signed (BOOLEAN NOT NULL DEFAULT false), created_at, updated_at
+id, name, vertical, geography, company_size_target, status, created_at, updated_at
+// ⚠️ dpa_signed (BOOLEAN NOT NULL DEFAULT false) — in target spec, NOT YET in Drizzle schema
 
 // email_drafts
-id, lead_id (FK), campaign_id (FK), persona, subject, body,
-confidence_score, status, created_at
-approved_by (nullable), approved_at (nullable)  // audit trail — who approved/rejected and when
-// + body_embedding vector(1536) for improver (HNSW index)
+id, lead_id (FK), campaign_id (FK), persona (technical|executive|ops), subject, body,
+// ⚠️ campaign_type field is target spec — current schema uses persona enum instead (drafting not yet refactored)
+confidence_score, status, created_at,
+approved_by (nullable), approved_at (nullable),  // ✅ built
+body_embedding vector(1536) with HNSW index  // ✅ built
+// NOTE: max 1 draft per lead per campaign; max 3 drafts per lead total
 
 // email_events
 id, draft_id (FK), lead_id (FK), sent_at, opened_at, replied_at, unsubscribed_at
@@ -314,6 +328,8 @@ id, email_event_id (FK), body, sentiment, category, received_at
 // source_registry
 id, name, vertical, geo, url (UNIQUE), scraper_type, legal_flag,
 selectors (JSON), active, created_at, updated_at
+// ⚠️ is_dynamic, generated_by, generated_at — in target spec, NOT YET in Drizzle schema
+// normalizeVertical() and normalizeGeo() helpers defined in tables.ts — apply at every write site
 
 // scrape_jobs
 id, campaign_id (FK), status, leads_scraped, error_message,
@@ -323,7 +339,7 @@ retry_count, max_retries, started_at, completed_at, created_at, updated_at
 id, lead_id (FK), flag_type, flagged_at
 
 // template_performance
-id, campaign_id (FK), persona, open_rate, reply_rate, last_calculated_at
+id, campaign_id (FK), campaign_type, open_rate, reply_rate, last_calculated_at
 
 // suppression_list
 id, email, reason (unsubscribed | spam_complaint | hostile | manual), added_at
@@ -336,8 +352,17 @@ scheduled_at, sent_at, draft_id (FK)
 id, lead_id (FK), campaign_id (FK), reply_id (FK), assigned_to,
 status (pending | scheduled | completed | cancelled), created_at
 
-// audit_log
-id, timestamp, actor (user identifier or system), action, target_id, target_type, ip_address, metadata (JSON)
+// audit_log  ✅ built
+id, timestamp, actor (user identifier or system), action, target_id, target_type, ip_address, metadata (JSONB)
+
+// enrichment_records  ✅ built — beyond target spec; full structured enrichment output per lead
+id, lead_id (FK), campaign_id (FK, nullable), enriched_at, enrichment_source,
+market (SG | AU | US),
+institution (JSON: name, type, registration_id, size, website, region),
+contact (JSON: full_name, first_name, role, email, email_status),
+pipeline_flags (JSON: is_duplicate, missing_critical_fields, missing_fields_detail, risk_flag, risk_flag_reason),
+routing (auto_queue | rep_review), routing_reason, created_at
+// index on (lead_id, enriched_at DESC)
 ```
 
 ### Key relationships
@@ -361,7 +386,7 @@ id, timestamp, actor (user identifier or system), action, target_id, target_type
 ### A/B test routing
 
 - 20% experimental / 80% control at schedule time in `services/sender`
-- Track via `template_performance` (open_rate / reply_rate by persona + campaign)
+- Track via `template_performance` (open_rate / reply_rate by campaign_type + campaign)
 
 ---
 
@@ -448,7 +473,7 @@ ANTHROPIC_API_KEY=
 SNOVIO_CLIENT_ID=
 SNOVIO_CLIENT_SECRET=
 
-COWORK_API_KEY=                        # fallback enrichment only
+TAVILY_API_KEY=                         # dynamic source registry URL generation
 
 CRAWL4AI_BASE_URL=http://localhost:11235
 
@@ -614,11 +639,12 @@ Without these, cold outreach to SG/AU/US targets will be flagged or rejected, an
 
 ## AI Usage Rules
 
-- **Drafting:** Claude Haiku 4.5 via **Batch API only**
+- **Campaign assignment:** Claude Haiku 4.5 — assigns each enriched lead to up to 3 campaigns based on campaign goal + lead data (role, industry, intent, market); writes `assignment_reason` per assignment
+- **Drafting:** Claude Haiku 4.5 via **Batch API only** — 1 draft per campaign per lead; prompt is campaign-goal-specific, not persona-based
 - **Classification:** Claude Haiku 4.5 with **prompt caching**
 - **Confidence score:** same generation call as draft — no second API call
-- **Anti-hallucination:** approved persona templates + lead fields only; no free-form product claims
-- **Personas:** technical → implementation pain; executive → ROI; ops → process efficiency
+- **Anti-hallucination:** approved campaign templates + lead fields only; no free-form product claims
+- **Campaign-goal alignment:** each draft must follow its assigned campaign's objective — re-engagement references prior relationship; certification upsell leads with outcome/ROI; event promo has clear CTA with date; generic language scores low
 - **Max length:** 125 words in prompt + post-generation validation
 
 ---
@@ -629,17 +655,23 @@ Without these, cold outreach to SG/AU/US targets will be flagged or rejected, an
 
 **Runtime:** Bun | **Framework:** Hono
 
-- `src/index.ts` — Hono app; CORS middleware; all `/api/v1/*` routers mounted; `/unsubscribe` one-click handler
-- `src/db/` — Drizzle client + full schema (all target tables except `audit_log`; missing `dpa_signed`, `approved_by/at` columns)
-- `src/routes/` — all target API routes implemented (campaigns, leads, drafts, replies, demos, analytics, admin registry/suppression)
+- `src/index.ts` — Hono app; CORS middleware (hardcoded to `localhost:3000` / `127.0.0.1:3000` — not yet env-driven); all `/api/v1/*` routers mounted; `/unsubscribe` one-click handler; **no security middleware wired yet**
+- `src/db/` — Drizzle client + full schema; includes `audit_log` and `enrichment_records`; `approved_by`/`approved_at` on `email_drafts`; `lastContactedAt` on `leads`; still missing `dpa_signed` on `campaigns` and `is_dynamic`/`generated_by` on `source_registry`
+- `src/routes/` — all target API routes implemented (campaigns, leads, drafts, replies, demos, analytics, admin registry/suppression); still missing `/admin/leads/:id/erase` and `/admin/audit-log`
 - `src/services/scrapers/cheerioScraper.ts` — static HTML scraper
 - `src/services/scrapers/crawl4aiScraper.ts` — Crawl4AI HTTP client for JS-rendered pages
 - `src/services/scraping/runScrapeJob.ts` — scrape job orchestrator; updates `scrape_jobs` table
-- `src/services/drafting/index.ts` — Claude Haiku 4.5 Batch API; 3 persona prompts; confidence score in same call; prompt caching on system prompt
-- `src/services/enrichment/snovio.ts` — Snov.io OAuth, domain lookup, email verify — built but not yet connected end-to-end
+- `src/services/drafting/index.ts` — Claude Haiku 4.5 Batch API; **still uses 3 personas** (technical/executive/ops); not yet campaign-goal-aligned; confidence score included
+- `src/services/enrichment/orchestrator.ts` — full enrichment pipeline: registry → cowork → snovio provider chain; persists `enrichment_records`, updates `leads.emailStatus / enrichmentSource / routing / isVerified`
+- `src/services/enrichment/cowork.ts` — Cowork provider; Claude Haiku 4.5 drives Playwright headless Chrome; extracts institution + contact from public pages; rate-limited (2s min interval, `COWORK_DAILY_RUN_CAP` env)
+- `src/services/enrichment/snovio.ts` — Snov.io provider (third in chain); token auth, domain lookup, email verification
+- `src/services/enrichment/registryLookup.ts` — first-in-chain registry lookup provider
+- `src/services/enrichment/agent.ts` + `browserDriver.ts` — Claude browser agent loop + Playwright browser launcher
+- `src/services/enrichment/ndjsonWriter.ts` — appends enrichment results to NDJSON log
+- `src/services/enrichment/types.ts` — shared enrichment types
 - `src/services/sender/index.ts` — AWS SES send; warm-up cap; suppression/90-day/risk/verified hard gates; A/B routing (20/80)
 - `src/templates/outreachEmail.ts` — branded HTML email with one-click unsubscribe
-- `src/workers/index.ts` — 5 node-cron jobs: follow-up-sender, warmup-tracker, scrape-retry, enrichment-retry (on hold), template-improver (logs only)
+- `src/workers/index.ts` — 6 node-cron jobs: follow-up-sender, warmup-tracker, scrape-retry, enrichment-retry (fully connected), template-improver (logs only), purge-old-records
 - `src/config/sourceRegistry.ts` — in-code CSS selector map; still active until DB migrations run
 
 ### Current — Frontend (`frontend/`)
@@ -666,17 +698,21 @@ End-to-end pipeline once the monorepo and services are in place:
 ```
 source_registry / scrape_jobs
         ↓
+   services/source-registry (Tavily → 10 dynamic URLs per campaign trigger → validate → insert)
+        ↓
    services/scraper (Crawl4AI → Cheerio fallback)
         ↓
    services/enrichment (Cowork → Snov.io fallback)
         ↓
-   services/drafting (Claude Haiku Batch API, 3 personas)
+   services/campaign-assigner (Claude assigns lead to up to 3 campaigns → campaign_assignments)
+        ↓
+   services/drafting (Claude Haiku Batch API, 1 draft per campaign per lead, max 3 per lead)
         ↓
    services/scoring (hard gates + confidence in same call)
         ↓
    rep review queue OR auto-schedule (see Email logic below)
         ↓
-   services/sender (AWS SES, warm-up cap, A/B variant, unsubscribe link)
+   services/sender (AWS SES, warm-up cap, 2× per week per lead, unsubscribe link)
         ↓
    email_events → services/reply-handler (SES webhook, classification)
         ↓
@@ -696,9 +732,11 @@ source_registry / scrape_jobs
 
 ### Target — Service map
 
+- `services/campaign-assigner` — Claude Haiku assigns each enriched lead to up to 3 campaigns based on campaign goal + lead data; writes to `campaign_assignments` table; max 3 assignments enforced
 - `services/scraper` — Crawl4AI for JS pages; Cheerio for static HTML; enforces rate limits, daily caps, `scrape_jobs` status
 - `services/enrichment` — Snov.io primary; Cowork when vertical coverage is insufficient
-- `services/drafting` — Batch API email generation; persona prompts; max 125 words; confidence in same response
+- `services/source-registry` — Tavily API generates 10 dynamic URLs per campaign trigger; validates via HEAD request; deduplicates against existing `source_registry` rows; inserts with `is_dynamic = true`
+- `services/drafting` — Batch API email generation; 1 draft per campaign per lead (max 3 per lead); campaign-goal-aligned prompt; max 125 words; confidence score in same response
 - `services/scoring` — Hard gates (suppression, 90-day rule, legal flags, unverified email) + draft quality score
 - `services/sender` — SES send, warm-up daily cap, suppression check, one-click unsubscribe, A/B routing (20% / 80%)
 - `services/reply-handler` — Inbound SES webhook; Haiku classification with prompt caching; routes to follow-up / demo / flag
@@ -718,9 +756,15 @@ source_registry / scrape_jobs
 
 Outbound email behavior is enforced in `services/sender` and `services/scoring`, with follow-ups driven by `workers/follow-up-sender`.
 
-### Send phases (approval vs auto-schedule)
+### Draft generation
 
-Total sent = cumulative SES sends across all campaigns (not draft count).
+Each lead is assigned to up to 3 campaigns by `services/campaign-assigner`. One email draft is generated per campaign assignment — so a lead assigned to 3 campaigns gets 3 drafts, each tailored to that campaign's goal. This is enforced at the drafting service level: `MAX_DRAFTS_PER_LEAD = 3`, `MAX_DRAFTS_PER_LEAD_PER_CAMPAIGN = 1`.
+
+### Send cadence
+
+**2 emails per lead per week** maximum across all active campaigns. Enforced in `services/sender` by checking `email_events.sent_at` count per `lead_id` in the rolling 7-day window before scheduling. If the cap is reached, remaining drafts are pushed to the next available slot.
+
+### Send phases (approval vs auto-schedule)
 
 ```
 Phase 1 (total sent < 500):
@@ -746,6 +790,17 @@ Enforced by `services/sender` + `warmup-tracker` worker (midnight). Count only s
 
 If the cap is hit, remaining `scheduled` drafts stay queued until the next day.
 
+### Confidence score rubric
+
+Each draft is scored 0–100 across four equally weighted factors:
+
+| Factor | Description | Weight |
+|---|---|---|
+| Lead data completeness | Role, company size, industry, market present | 25% |
+| Campaign-goal alignment | Draft follows the assigned campaign's objective — re-engagement references prior relationship; certification upsell leads with ROI; event promo has clear CTA with date. Generic language scores low. | 25% |
+| Personalisation quality | Specificity and relevance to the lead's context | 25% |
+| Length compliance | Under 125 words | 25% |
+
 ### Pre-send checks (hard gates)
 
 Every send must pass **before** SES is called (implemented in `services/scoring` / `services/sender`):
@@ -764,7 +819,7 @@ At **schedule time** in `services/sender`:
 - **80%** → control template variant
 - **20%** → experimental variant
 
-Track outcomes in `template_performance` (open_rate, reply_rate by `campaign_id` + `persona`). Weekly `template-improver` worker promotes winners after 50+ sends.
+Track outcomes in `template_performance` (open_rate, reply_rate by `campaign_id` + `campaign_type`). Weekly `template-improver` worker promotes winners after 50+ sends.
 
 ### Follow-ups (no reply)
 
