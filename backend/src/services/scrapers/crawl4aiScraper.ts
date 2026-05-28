@@ -23,10 +23,7 @@ interface Crawl4AIResponse {
   detail?: string;
 }
 
-function extractEmailFromText(text: string): string | undefined {
-  const match = text.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
-  return match?.[0];
-}
+const EMAIL_REGEX = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g;
 
 // Light stealth — defeats basic UA / navigator fingerprint checks. Will NOT
 // beat serious Cloudflare or PerimeterX; those sites should be handled by
@@ -34,7 +31,15 @@ function extractEmailFromText(text: string): string | undefined {
 const STEALTH_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-async function crawl4aiScrape(url: string): Promise<Lead> {
+function extractAllEmails(text: string): string[] {
+  const emails = new Set<string>();
+  for (const match of text.matchAll(EMAIL_REGEX)) {
+    emails.add(match[0].toLowerCase());
+  }
+  return Array.from(emails);
+}
+
+async function crawl4aiScrape(url: string): Promise<Lead[]> {
   const baseUrl = process.env.CRAWL4AI_BASE_URL ?? "http://localhost:11235";
 
   const res = await fetch(`${baseUrl}/crawl`, {
@@ -82,23 +87,22 @@ async function crawl4aiScrape(url: string): Promise<Lead> {
     ?? first.extracted_content
     ?? "";
 
-  return {
-    company: first.metadata?.title?.trim() || undefined,
-    email: extractEmailFromText(text),
-    website: url,
-  };
+  const company = first.metadata?.title?.trim() || undefined;
+  return extractAllEmails(text).map((email) => ({ company, email, website: url }));
 }
 
-export async function scrapeWithFallback(url: string): Promise<Lead & { scraper: "crawl4ai" | "cheerio" }> {
+export async function scrapeWithFallback(
+  url: string,
+): Promise<{ leads: Lead[]; scraper: "crawl4ai" | "cheerio" }> {
   // enforce 1 req / 2s rate limit — callers should stagger but guard here too
   await new Promise((r) => setTimeout(r, 2000));
 
   try {
-    const lead = await crawl4aiScrape(url);
-    return { ...lead, scraper: "crawl4ai" };
+    const leads = await crawl4aiScrape(url);
+    return { leads, scraper: "crawl4ai" };
   } catch (err) {
     console.warn(`[crawl4ai] failed for ${url} — falling back to Cheerio:`, err instanceof Error ? err.message : err);
-    const lead = await cheerioFallback(url);
-    return { ...lead, scraper: "cheerio" };
+    const leads = await cheerioFallback(url);
+    return { leads, scraper: "cheerio" };
   }
 }

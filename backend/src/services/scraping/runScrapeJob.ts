@@ -12,12 +12,15 @@ function parseGeographies(geography: string): string[] {
     .filter(Boolean);
 }
 
-async function scrapeSourceUrl(url: string, scraperType: string) {
+async function scrapeSourceUrl(
+  url: string,
+  scraperType: string,
+): Promise<{ leads: Awaited<ReturnType<typeof scrapeWebsite>>; scraper: "crawl4ai" | "cheerio" }> {
   if (scraperType === "crawl4ai") {
     return scrapeWithFallback(url);
   }
-  const lead = await scrapeWebsite(url, "generic");
-  return { ...lead, scraper: "cheerio" as const };
+  const leads = await scrapeWebsite(url, "generic");
+  return { leads, scraper: "cheerio" };
 }
 
 async function persistScrapedLead(
@@ -118,9 +121,15 @@ export async function runScrapeJob(jobId: string, campaignId: string): Promise<v
   for (const source of sources) {
     try {
       const result = await scrapeSourceUrl(source.url, source.scraperType);
-      const saved = await persistScrapedLead(campaignId, result, source.geo, result.scraper);
-    //   console.log(`[scrape] ${source.name} → scraper=${result.scraper}, email=${result.email ?? "none"}`);
-      if (saved) leadsScraped++;
+      let savedForSource = 0;
+      for (const lead of result.leads) {
+        const saved = await persistScrapedLead(campaignId, lead, source.geo, result.scraper);
+        if (saved) {
+          savedForSource++;
+          leadsScraped++;
+        }
+      }
+      console.log(`[scrape] ${source.name} → scraper=${result.scraper}, found=${result.leads.length}, saved=${savedForSource}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       errors.push(`${source.name}: ${msg}`);
