@@ -1,0 +1,2 @@
+ALTER TABLE "source_registry" ADD COLUMN "generated_by" uuid;--> statement-breakpoint
+ALTER TABLE "source_registry" ADD CONSTRAINT "source_registry_generated_by_campaigns_id_fk" FOREIGN KEY ("generated_by") REFERENCES "public"."campaigns"("id") ON DELETE no action ON UPDATE no action;

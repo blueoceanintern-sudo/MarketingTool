@@ -114,6 +114,7 @@ export const sourceRegistry = pgTable("source_registry", {
   legalFlag: boolean("legal_flag").default(false).notNull(),
   selectors: json("selectors").$type<Record<string, string>>(),
   active: boolean("active").default(true).notNull(),
+  generatedBy: uuid("generated_by").references(() => campaigns.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
