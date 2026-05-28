@@ -3,6 +3,7 @@ import { db } from "../db";
 import { campaigns, leads, emailDrafts, emailEvents, scrapeJobs, normalizeVertical, normalizeGeo } from "../db/schema";
 import { eq, and, isNotNull, count } from "drizzle-orm";
 import { runScrapeJob } from "../services/scraping/runScrapeJob";
+import { generateDraftsForCampaign } from "../services/drafting/orchestrator";
 
 type CampaignStatus = "draft" | "active" | "paused" | "complete";
 
@@ -48,6 +49,9 @@ function formatCampaign(row: typeof campaigns.$inferSelect, stats: Awaited<Retur
     geography: row.geography.split(",").map((g) => g.trim()).filter(Boolean),
     company_size_target: row.companySizeTarget,
     status: row.status,
+    description: row.description,
+    pain_points: row.painPoints ?? [],
+    call_to_action: row.callToAction,
     created_at: row.createdAt.toISOString(),
     updated_at: row.updatedAt.toISOString(),
     ...stats,
@@ -81,6 +85,9 @@ campaignsRouter.post("/", async (c) => {
     geography?: string | string[];
     company_size_target?: string;
     status?: CampaignStatus;
+    description?: string | null;
+    pain_points?: string[] | null;
+    call_to_action?: string | null;
   }>();
 
   if (!body.name || !body.vertical || !body.geography || !body.company_size_target) {
@@ -91,6 +98,12 @@ campaignsRouter.post("/", async (c) => {
   const geo = rawGeo.split(",").map((g) => normalizeGeo(g)).filter(Boolean).join(",");
   const sizeTarget = body.company_size_target as "small" | "medium" | "large" | "enterprise";
 
+  const description = body.description?.trim() || null;
+  const callToAction = body.call_to_action?.trim() || null;
+  const painPoints = Array.isArray(body.pain_points)
+    ? body.pain_points.map((p) => p.trim()).filter(Boolean)
+    : null;
+
   const [row] = await db
     .insert(campaigns)
     .values({
@@ -99,10 +112,73 @@ campaignsRouter.post("/", async (c) => {
       geography: geo,
       companySizeTarget: sizeTarget,
       status: body.status ?? "draft",
+      description,
+      painPoints: painPoints && painPoints.length > 0 ? painPoints : null,
+      callToAction,
     })
     .returning();
 
   return c.json(formatCampaign(row!, await computeStats(row!.id)), 201);
+});
+
+campaignsRouter.patch("/:id", async (c) => {
+  const [row] = await db
+    .select()
+    .from(campaigns)
+    .where(eq(campaigns.id, c.req.param("id")))
+    .limit(1);
+  if (!row) return c.json({ error: "Campaign not found" }, 404);
+
+  const body = await c.req.json<{
+    name?: string;
+    vertical?: string;
+    geography?: string | string[];
+    company_size_target?: string;
+    description?: string | null;
+    pain_points?: string[] | null;
+    call_to_action?: string | null;
+  }>();
+
+  const updates: Partial<typeof campaigns.$inferInsert> = { updatedAt: new Date() };
+
+  if (body.name !== undefined) {
+    const trimmed = body.name.trim();
+    if (!trimmed) return c.json({ error: "name cannot be empty" }, 400);
+    updates.name = trimmed;
+  }
+  if (body.vertical !== undefined) {
+    const trimmed = body.vertical.trim();
+    if (!trimmed) return c.json({ error: "vertical cannot be empty" }, 400);
+    updates.vertical = normalizeVertical(trimmed);
+  }
+  if (body.geography !== undefined) {
+    const rawGeo = Array.isArray(body.geography) ? body.geography.join(",") : body.geography;
+    const geo = rawGeo.split(",").map((g) => normalizeGeo(g)).filter(Boolean).join(",");
+    if (!geo) return c.json({ error: "geography cannot be empty" }, 400);
+    updates.geography = geo;
+  }
+  if (body.company_size_target !== undefined) {
+    const valid = ["small", "medium", "large", "enterprise"] as const;
+    if (!valid.includes(body.company_size_target as (typeof valid)[number])) {
+      return c.json({ error: `company_size_target must be one of: ${valid.join(", ")}` }, 400);
+    }
+    updates.companySizeTarget = body.company_size_target as (typeof valid)[number];
+  }
+  if (body.description !== undefined) {
+    updates.description = body.description?.trim() || null;
+  }
+  if (body.pain_points !== undefined) {
+    const cleaned = Array.isArray(body.pain_points)
+      ? body.pain_points.map((p) => p.trim()).filter(Boolean)
+      : null;
+    updates.painPoints = cleaned && cleaned.length > 0 ? cleaned : null;
+  }
+  if (body.call_to_action !== undefined) {
+    updates.callToAction = body.call_to_action?.trim() || null;
+  }
+
+  const [updated] = await db.update(campaigns).set(updates).where(eq(campaigns.id, row.id)).returning();
+  return c.json(formatCampaign(updated!, await computeStats(updated!.id)));
 });
 
 const ALLOWED_TRANSITIONS: Record<CampaignStatus, CampaignStatus[]> = {
@@ -176,7 +252,21 @@ campaignsRouter.post("/:id/drafts/generate", async (c) => {
     .limit(1);
   if (!campaign) return c.json({ error: "Campaign not found" }, 404);
 
-  // Batch draft generation is handled by the drafting service (Claude Haiku Batch API).
-  // This endpoint queues the job — actual generation runs asynchronously.
+  // Fire-and-forget — Batch API jobs poll for several seconds. The campaign
+  // pulls its description / pain_points / call_to_action straight from the
+  // row inside the orchestrator, so emails are anchored on this campaign's
+  // goal rather than a generic per-persona template.
+  void generateDraftsForCampaign(campaign.id)
+    .then((result) => {
+      console.log(
+        `[drafting] campaign ${campaign.id}: generated=${result.generated}` +
+          (result.skipped_no_eligible ? " (no eligible leads)" : "") +
+          (result.errors.length ? ` errors=${result.errors.join("; ")}` : ""),
+      );
+    })
+    .catch((err) => {
+      console.error(`[drafting] campaign ${campaign.id} failed:`, err);
+    });
+
   return c.json({ message: "Draft generation queued", campaign_id: campaign.id }, 202);
 });

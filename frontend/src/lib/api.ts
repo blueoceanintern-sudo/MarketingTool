@@ -23,7 +23,11 @@ export interface Campaign {
   name: string;
   vertical: string;
   geography: string[];
+  company_size_target: string;
   status: CampaignStatus;
+  description: string | null;
+  pain_points: string[];
+  call_to_action: string | null;
   leads_count: number;
   drafts_pending: number;
   sent: number;
@@ -166,6 +170,9 @@ export async function createCampaign(payload: {
   geography: string[];
   company_size_target: string;
   status?: CampaignStatus;
+  description?: string | null;
+  pain_points?: string[];
+  call_to_action?: string | null;
 }): Promise<{ campaign: Campaign | null; error?: string }> {
   try {
     const res = await fetch(`${BASE}/api/v1/campaigns`, {
@@ -194,6 +201,50 @@ export async function triggerCampaignScrape(campaignId: string): Promise<{ ok: b
     return { ok: true };
   } catch {
     return { ok: false, error: "Could not reach the API." };
+  }
+}
+
+export async function triggerCampaignDraftGeneration(
+  campaignId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch(`${BASE}/api/v1/campaigns/${campaignId}/drafts/generate`, { method: "POST" });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return { ok: false, error: body.error ?? `Draft generation failed (${res.status})` };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "Could not reach the API." };
+  }
+}
+
+export async function updateCampaign(
+  campaignId: string,
+  payload: {
+    name?: string;
+    vertical?: string;
+    geography?: string[];
+    company_size_target?: string;
+    description?: string | null;
+    pain_points?: string[] | null;
+    call_to_action?: string | null;
+  },
+): Promise<{ campaign: Campaign | null; error?: string }> {
+  try {
+    const res = await fetch(`${BASE}/api/v1/campaigns/${campaignId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return { campaign: null, error: body.error ?? `Update failed (${res.status})` };
+    }
+    const campaign = (await res.json()) as Campaign;
+    return { campaign };
+  } catch {
+    return { campaign: null, error: "Could not reach the API." };
   }
 }
 

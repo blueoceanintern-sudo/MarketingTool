@@ -2,7 +2,12 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { triggerCampaignScrape, updateCampaignStatus, type CampaignStatus } from "@/lib/api";
+import {
+  triggerCampaignScrape,
+  triggerCampaignDraftGeneration,
+  updateCampaignStatus,
+  type CampaignStatus,
+} from "@/lib/api";
 
 interface Props {
   campaignId: string;
@@ -12,6 +17,7 @@ interface Props {
 export default function CampaignActions({ campaignId, status }: Props) {
   const router = useRouter();
   const [scraping, setScraping] = useState(false);
+  const [drafting, setDrafting] = useState(false);
   const [busyStatus, setBusyStatus] = useState<CampaignStatus | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -26,6 +32,18 @@ export default function CampaignActions({ campaignId, status }: Props) {
     }
     setMessage("Scrape started. Refresh in a moment to see new leads.");
     router.refresh();
+  }
+
+  async function handleGenerateDrafts() {
+    setDrafting(true);
+    setMessage(null);
+    const { ok, error } = await triggerCampaignDraftGeneration(campaignId);
+    setDrafting(false);
+    if (!ok) {
+      setMessage(error ?? "Draft generation failed");
+      return;
+    }
+    setMessage("Draft generation queued. The Batch API takes ~30–60s; check the Review Queue shortly.");
   }
 
   async function handleStatusChange(next: CampaignStatus, label: string) {
@@ -51,6 +69,17 @@ export default function CampaignActions({ campaignId, status }: Props) {
         >
           <span className="material-symbols-outlined text-[20px]">travel_explore</span>
           {scraping ? "Scraping…" : "Run Scrape"}
+        </button>
+
+        <button
+          type="button"
+          onClick={handleGenerateDrafts}
+          disabled={drafting || status === "complete" || status === "draft"}
+          title={status === "draft" ? "Activate the campaign before generating drafts" : undefined}
+          className="flex items-center gap-2 px-4 py-2 border border-primary text-primary rounded-lg text-[14px] font-semibold disabled:opacity-60"
+        >
+          <span className="material-symbols-outlined text-[20px]">edit_note</span>
+          {drafting ? "Queuing…" : "Generate Drafts Now"}
         </button>
 
         {status === "draft" && (
@@ -101,6 +130,12 @@ export default function CampaignActions({ campaignId, status }: Props) {
           </button>
         )}
       </div>
+      {(status === "active" || status === "paused") && (
+        <p className="text-[11px] text-grey-400 max-w-xs text-right leading-snug">
+          Drafts auto-generate every 30 min for enriched leads (auto_queue).
+          Use &ldquo;Now&rdquo; to skip the wait.
+        </p>
+      )}
       {message && <p className="text-[12px] text-grey-500 max-w-xs text-right">{message}</p>}
     </div>
   );

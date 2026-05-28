@@ -5,6 +5,7 @@ import { eq, and, isNull, lte, isNotNull, lt, desc, or, inArray } from "drizzle-
 import { sendDraft, getTotalSent } from "../services/sender";
 import { runScrapeJob } from "../services/scraping/runScrapeJob";
 import { enrichLead } from "../services/enrichment/orchestrator";
+import { generateDraftsForCampaign } from "../services/drafting/orchestrator";
 
 // ---------------------------------------------------------------------------
 // warmup-tracker  — midnight daily
@@ -220,6 +221,45 @@ cron.schedule("0 2 * * 0", async () => {
   console.log(
     `[purge-old-records] done: replies=${purgedReplies.length}, ` +
     `emailEvents=${purgedEvents}, scrapeJobs=${purgedScrapeJobs.length}`,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// drafting-runner  — every 30 min
+// Generates email drafts for every active campaign with eligible leads
+// (routing=auto_queue, no existing draft). Manual "Generate Drafts Now"
+// on the campaign page hits the same orchestrator; this is the unattended
+// path that runs on its own.
+// ---------------------------------------------------------------------------
+cron.schedule("*/30 * * * *", async () => {
+  console.log("[drafting-runner] running");
+
+  const activeCampaigns = await db
+    .select({ id: campaigns.id, name: campaigns.name })
+    .from(campaigns)
+    .where(eq(campaigns.status, "active"));
+
+  let totalGenerated = 0;
+  let campaignsWithWork = 0;
+
+  for (const c of activeCampaigns) {
+    try {
+      const result = await generateDraftsForCampaign(c.id);
+      if (result.generated > 0) {
+        campaignsWithWork++;
+        totalGenerated += result.generated;
+        console.log(`[drafting-runner] ${c.name}: generated=${result.generated}`);
+      }
+      if (result.errors.length > 0) {
+        console.warn(`[drafting-runner] ${c.name} errors: ${result.errors.join("; ")}`);
+      }
+    } catch (err) {
+      console.error(`[drafting-runner] campaign ${c.id} failed:`, err);
+    }
+  }
+
+  console.log(
+    `[drafting-runner] done: campaigns=${activeCampaigns.length}, with_work=${campaignsWithWork}, drafts=${totalGenerated}`,
   );
 });
 
