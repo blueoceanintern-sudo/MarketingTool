@@ -7,6 +7,8 @@ import { runScrapeJob } from "../services/scraping/runScrapeJob";
 import { enrichLead } from "../services/enrichment/orchestrator";
 import { generateDraftsForCampaign } from "../services/drafting/orchestrator";
 
+const MAX_FOLLOW_UP_ATTEMPTS = 3;
+
 // ---------------------------------------------------------------------------
 // warmup-tracker  — midnight daily
 // ---------------------------------------------------------------------------
@@ -26,6 +28,8 @@ cron.schedule("0 9 * * *", async () => {
       id: followUps.id,
       draftId: followUps.draftId,
       leadId: followUps.leadId,
+      campaignId: followUps.campaignId,
+      attemptNumber: followUps.attemptNumber,
       leadEmail: leads.email,
       isVerified: leads.isVerified,
     })
@@ -38,6 +42,25 @@ cron.schedule("0 9 * * *", async () => {
 
   for (const fu of pending) {
     if (!fu.draftId) continue;
+
+    // Hard cap: never exceed 3 follow-up attempts per lead per campaign
+    if (fu.attemptNumber > MAX_FOLLOW_UP_ATTEMPTS) continue;
+
+    // Enforce sequential ordering: attempt N requires attempt N-1 to be sent first
+    if (fu.attemptNumber > 1) {
+      const [prev] = await db
+        .select({ sentAt: followUps.sentAt })
+        .from(followUps)
+        .where(
+          and(
+            eq(followUps.leadId, fu.leadId),
+            eq(followUps.campaignId, fu.campaignId),
+            eq(followUps.attemptNumber, fu.attemptNumber - 1),
+          ),
+        )
+        .limit(1);
+      if (!prev?.sentAt) continue;
+    }
 
     // Skip if lead has already replied
     const [hasReply] = await db
@@ -174,14 +197,16 @@ cron.schedule("0 0 * * 0", async () => {
 
 // ---------------------------------------------------------------------------
 // purge-old-records  — Sunday 02:00
-// Retention: replies 180d, email_events 90d, scrape_jobs (failed/complete) 30d
+// Retention: replies 180d, email_events 365d, scrape_jobs (failed/complete) 30d
+// email_events kept 365d so the weekly send-cap check (7d window) and
+// historical analytics always have data; replies kept 180d for engagement insights.
 // ---------------------------------------------------------------------------
 cron.schedule("0 2 * * 0", async () => {
   console.log("[purge-old-records] running");
 
   const now = Date.now();
-  const ninetyDaysAgo = new Date(now - 90 * 24 * 60 * 60 * 1000);
   const oneEightyDaysAgo = new Date(now - 180 * 24 * 60 * 60 * 1000);
+  const threeSixtyFiveDaysAgo = new Date(now - 365 * 24 * 60 * 60 * 1000);
   const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
 
   // Replies older than 180 days.
@@ -190,11 +215,11 @@ cron.schedule("0 2 * * 0", async () => {
     .where(lt(replies.receivedAt, oneEightyDaysAgo))
     .returning({ id: replies.id });
 
-  // email_events older than 90 days — delete any linked replies first (FK constraint).
+  // email_events older than 365 days — delete any linked replies first (FK constraint).
   const staleEvents = await db
     .select({ id: emailEvents.id })
     .from(emailEvents)
-    .where(and(isNotNull(emailEvents.sentAt), lt(emailEvents.sentAt, ninetyDaysAgo)));
+    .where(and(isNotNull(emailEvents.sentAt), lt(emailEvents.sentAt, threeSixtyFiveDaysAgo)));
 
   let purgedEvents = 0;
   if (staleEvents.length > 0) {
