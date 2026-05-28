@@ -14,7 +14,7 @@ The repo is in an **early scaffold** phase. The sections below describe the **ta
 |---|---|---|
 | Repo layout | `backend/` + `frontend/` (two packages) | Monorepo: `apps/web`, `apps/api`, `services/*`, `workers/`, `db/` |
 | Backend routes | `/api/v1/*` routes live; legacy `/scrape`, `/health`, `/unsubscribe` also running | `/api/v1/*` complete per target spec |
-| Scraping | Crawl4AI + Cheerio scrapers built; `runScrapeJob` runner; `sourceRegistry` still in-code | `source_registry` table replaces in-code map |
+| Scraping | Crawl4AI + Cheerio scrapers built; `runScrapeJob` runner; reads from `source_registry` DB table | `source_registry` populated via Tavily for dynamic URL generation |
 | Database | Drizzle schema + all tables defined (incl. `audit_log`, `enrichment_records`); migrations **not yet generated/applied** | Migrations in `db/migrations/`; pgvector live |
 | Frontend | Full pages: campaigns, review queue, leads, replies, analytics, registry, profile, settings | Same — feature-complete |
 | Workers & services | All 6 cron workers + sender/drafting/enrichment (fully connected) /scraping services built | Security middleware, template-improver full logic, campaign-assigner |
@@ -34,9 +34,9 @@ When adding features, prefer extending **existing** paths until a deliberate mig
 |---|---|
 | `src/index.ts` | Hono app — all routes mounted; CORS middleware; `/unsubscribe` one-click handler |
 | `src/db/index.ts` | Drizzle client wired to `DATABASE_URL` |
-| `src/db/schema/tables.ts` | Full table definitions — all target tables including `audit_log` and `enrichment_records`; `approved_by`/`approved_at` on `email_drafts`; `lastContactedAt` on `leads`; still missing `dpa_signed` on `campaigns` and `is_dynamic`/`generated_by` on `source_registry` |
+| `src/db/schema/tables.ts` | Full table definitions — all target tables including `audit_log` and `enrichment_records`; `approved_by`/`approved_at` on `email_drafts`; `lastContactedAt` on `leads`; still missing `generated_by` on `source_registry` |
 | `src/db/schema/enums.ts` | All enums |
-| `src/config/sourceRegistry.ts` | In-code CSS selector map — still used until DB migrations run |
+| `src/config/sourceRegistry.ts` | Legacy CSS selector map — unused; `runScrapeJob` reads selectors from `source_registry` DB table |
 | `src/routes/campaigns.ts` | `POST/GET /campaigns`, `GET /campaigns/:id`, `PATCH /campaigns/:id/status` |
 | `src/routes/leads.ts` | `POST /campaigns/:id/leads/import`, `GET /campaigns/:id/leads`, `GET /leads` |
 | `src/routes/drafts.ts` | `GET /drafts/queue`, `PATCH /drafts/:id/approve`, `PATCH /drafts/:id/reject`, `PATCH /drafts/:id/edit` |
@@ -253,12 +253,10 @@ bun test services/scoring
 Items from the target spec that are **not yet implemented**:
 
 - `services/campaign-assigner` — not yet built; Claude assigns leads to up to 3 campaigns; needs `campaign_assignments` table
-- `services/source-registry` — not yet built; Tavily integration for dynamic URL generation per campaign trigger; needs `TAVILY_API_KEY` env var and `is_dynamic` / `generated_by` columns on `source_registry` table (columns also missing from the Drizzle schema)
+- `services/source-registry` — not yet built; Tavily integration for dynamic URL generation per campaign trigger; needs `TAVILY_API_KEY` env var and `generated_by` column on `source_registry` table (column also missing from the Drizzle schema)
 - Monorepo migration (`apps/web`, `apps/api`, `shared/`) — still `backend/` + `frontend/`
 - DB migrations — schema defined in Drizzle but `drizzle-kit generate` + `migrate` not yet run; `db/migrations/` folder does not exist
-- `source_registry` DB table not yet active as the live source — in-code `backend/src/config/sourceRegistry.ts` still in use
 - Drafting service not yet refactored — `src/services/drafting/index.ts` still uses 3 fixed personas (`technical` / `executive` / `ops`); target is 1 draft per campaign per lead with campaign-goal-aligned prompts and `campaign_type` field (not `persona`)
-- `dpa_signed` column on `campaigns` table — in target schema, not yet in Drizzle schema
 - Template improver full logic — cron job runs and logs `templatePerformance` rows by replyRate but does not do pgvector similarity or update `skill.md`
 - Security middleware not yet wired: API key auth (`X-API-Key` / `SECRET_API_KEY`), rate limiting, SSRF protection in scraper, SNS signature verification on webhook, CSV injection sanitization
 - CORS locked to `NEXT_PUBLIC_API_URL` only — currently hardcodes `localhost:3000` and `127.0.0.1:3000` in `src/index.ts`; needs env-driven config
@@ -309,7 +307,6 @@ created_at, updated_at
 
 // campaigns
 id, name, vertical, geography, company_size_target, status, created_at, updated_at
-// ⚠️ dpa_signed (BOOLEAN NOT NULL DEFAULT false) — in target spec, NOT YET in Drizzle schema
 
 // email_drafts
 id, lead_id (FK), campaign_id (FK), persona (technical|executive|ops), subject, body,
@@ -328,7 +325,7 @@ id, email_event_id (FK), body, sentiment, category, received_at
 // source_registry
 id, name, vertical, geo, url (UNIQUE), scraper_type, legal_flag,
 selectors (JSON), active, created_at, updated_at
-// ⚠️ is_dynamic, generated_by, generated_at — in target spec, NOT YET in Drizzle schema
+// ⚠️ generated_by — in target spec, NOT YET in Drizzle schema
 // normalizeVertical() and normalizeGeo() helpers defined in tables.ts — apply at every write site
 
 // scrape_jobs
@@ -496,7 +493,7 @@ NEXT_PUBLIC_API_URL=http://localhost:3001
 - **Errors** — log to DB with context; never swallow silently
 - **AI** — only via `services/drafting` and `services/reply-handler`; never from route handlers
 - **Background work** — `workers/` only; no inline async jobs in HTTP handlers
-- **New vertical/market** — `source_registry` DB row (target); today extend `backend/src/config/sourceRegistry.ts` until DB exists
+- **New vertical/market** — insert a `source_registry` DB row; `runScrapeJob` picks it up automatically by vertical + geo
 - **Frontend:** shadcn via `npx shadcn@latest add <component>`; import `@/components/ui/<name>`
 
 ---
@@ -617,16 +614,6 @@ The `audit_log` table (admin actions, permission changes, document access, erasu
 - Export includes: `timestamp`, `actor`, `action`, `target_id`, `target_type`, `ip_address`
 - Access restricted to admin API key only
 
-### Data processing agreements
-
-Before any live org data enters the system:
-
-- A data processing agreement (DPA) must be signed per market: SG (PDPA), AU (Privacy Act), US (CAN-SPAM)
-- Document which data is processed, for how long, and the legal basis for processing
-- DPA status tracked per campaign in `campaigns` table as `dpa_signed BOOLEAN NOT NULL DEFAULT false`
-- The sender worker must check `dpa_signed = true` before scheduling any email — treat it as a hard gate equivalent to the suppression check
-
-
 ### Email domain hardening
 
 Before the first SES send, the sending domain must have all three DNS records configured and verified:
@@ -656,7 +643,7 @@ Without these, cold outreach to SG/AU/US targets will be flagged or rejected, an
 **Runtime:** Bun | **Framework:** Hono
 
 - `src/index.ts` — Hono app; CORS middleware (hardcoded to `localhost:3000` / `127.0.0.1:3000` — not yet env-driven); all `/api/v1/*` routers mounted; `/unsubscribe` one-click handler; **no security middleware wired yet**
-- `src/db/` — Drizzle client + full schema; includes `audit_log` and `enrichment_records`; `approved_by`/`approved_at` on `email_drafts`; `lastContactedAt` on `leads`; still missing `dpa_signed` on `campaigns` and `is_dynamic`/`generated_by` on `source_registry`
+- `src/db/` — Drizzle client + full schema; includes `audit_log` and `enrichment_records`; `approved_by`/`approved_at` on `email_drafts`; `lastContactedAt` on `leads`; still missing `generated_by` on `source_registry`
 - `src/routes/` — all target API routes implemented (campaigns, leads, drafts, replies, demos, analytics, admin registry/suppression); still missing `/admin/leads/:id/erase` and `/admin/audit-log`
 - `src/services/scrapers/cheerioScraper.ts` — static HTML scraper
 - `src/services/scrapers/crawl4aiScraper.ts` — Crawl4AI HTTP client for JS-rendered pages
@@ -672,7 +659,7 @@ Without these, cold outreach to SG/AU/US targets will be flagged or rejected, an
 - `src/services/sender/index.ts` — AWS SES send; warm-up cap; suppression/90-day/risk/verified hard gates; A/B routing (20/80)
 - `src/templates/outreachEmail.ts` — branded HTML email with one-click unsubscribe
 - `src/workers/index.ts` — 6 node-cron jobs: follow-up-sender, warmup-tracker, scrape-retry, enrichment-retry (fully connected), template-improver (logs only), purge-old-records
-- `src/config/sourceRegistry.ts` — in-code CSS selector map; still active until DB migrations run
+- `src/config/sourceRegistry.ts` — legacy selector map; unused by `runScrapeJob` which reads from DB
 
 ### Current — Frontend (`frontend/`)
 
@@ -735,7 +722,7 @@ source_registry / scrape_jobs
 - `services/campaign-assigner` — Claude Haiku assigns each enriched lead to up to 3 campaigns based on campaign goal + lead data; writes to `campaign_assignments` table; max 3 assignments enforced
 - `services/scraper` — Crawl4AI for JS pages; Cheerio for static HTML; enforces rate limits, daily caps, `scrape_jobs` status
 - `services/enrichment` — Snov.io primary; Cowork when vertical coverage is insufficient
-- `services/source-registry` — Tavily API generates 10 dynamic URLs per campaign trigger; validates via HEAD request; deduplicates against existing `source_registry` rows; inserts with `is_dynamic = true`
+- `services/source-registry` — Tavily API generates 10 dynamic URLs per campaign trigger; validates via HEAD request; deduplicates against existing `source_registry` rows; inserts with `generated_by` set to the triggering campaign/service
 - `services/drafting` — Batch API email generation; 1 draft per campaign per lead (max 3 per lead); campaign-goal-aligned prompt; max 125 words; confidence score in same response
 - `services/scoring` — Hard gates (suppression, 90-day rule, legal flags, unverified email) + draft quality score
 - `services/sender` — SES send, warm-up daily cap, suppression check, one-click unsubscribe, A/B routing (20% / 80%)
