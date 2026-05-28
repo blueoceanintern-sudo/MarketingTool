@@ -10,6 +10,13 @@ interface LeadContext {
   industry?: string;
 }
 
+export interface CampaignContext {
+  name?: string;
+  description?: string | null;
+  painPoints?: string[] | null;
+  callToAction?: string | null;
+}
+
 export interface DraftResult {
   leadId: string;
   campaignId: string;
@@ -24,6 +31,7 @@ interface DraftRequest {
   campaignId: string;
   persona: Persona;
   lead: LeadContext;
+  campaign?: CampaignContext;
 }
 
 const PERSONA_PROMPTS: Record<Persona, string> = {
@@ -40,14 +48,18 @@ Focus on: process efficiency, time savings, workflow automation, team capacity.
 Tone: practical, results-focused, empathetic to day-to-day friction.`,
 };
 
-const SYSTEM_PROMPT = `You are an expert B2B cold email writer. Given a lead's details and a persona,
-write a short personalised outreach email.
+const SYSTEM_PROMPT = `You are an expert B2B cold email writer. Given a lead's details, a persona,
+and the campaign's specific goal, write a short personalised outreach email.
 
 Rules:
 - Maximum 125 words in the email body
 - Subject line: under 10 words, no clickbait
-- Use only the lead fields provided — never invent details
-- End with one clear call to action (a short call or 15-min chat)
+- Use only the lead fields and campaign context provided — never invent details
+- If a campaign call-to-action is provided, end the email with that CTA verbatim
+  in spirit (rephrase only for natural flow); otherwise fall back to a short call
+  or 15-min chat
+- If campaign pain points are provided, anchor the message in ONE of them — the
+  one most relevant to the lead's role and industry
 - No unsubscribe links (added by sender service)
 - No pricing, no free trial offers
 
@@ -58,11 +70,26 @@ Respond in this exact JSON format:
   "confidenceScore": <integer 0-100>
 }
 
-confidenceScore reflects how well the email fits the lead context (100 = perfect fit, low = missing key fields).`;
+confidenceScore reflects how well the email fits the lead context (100 = perfect
+fit; low = missing key lead fields OR no campaign context to anchor the message).`;
 
-function buildUserPrompt(lead: LeadContext, persona: Persona): string {
+function buildCampaignBlock(campaign?: CampaignContext): string {
+  if (!campaign) return "";
+  const lines: string[] = [];
+  if (campaign.name) lines.push(`- Campaign: ${campaign.name}`);
+  if (campaign.description) lines.push(`- Goal / value proposition: ${campaign.description}`);
+  if (campaign.painPoints && campaign.painPoints.length > 0) {
+    lines.push("- Pain points to draw from:");
+    for (const p of campaign.painPoints) lines.push(`    • ${p}`);
+  }
+  if (campaign.callToAction) lines.push(`- Preferred call to action: ${campaign.callToAction}`);
+  if (lines.length === 0) return "";
+  return `\nCampaign context:\n${lines.join("\n")}\n`;
+}
+
+function buildUserPrompt(lead: LeadContext, persona: Persona, campaign?: CampaignContext): string {
   return `Persona context: ${PERSONA_PROMPTS[persona]}
-
+${buildCampaignBlock(campaign)}
 Lead details:
 - Name: ${lead.firstName ?? "Unknown"} ${lead.lastName ?? ""}
 - Role: ${lead.role ?? "Unknown"}
@@ -98,7 +125,7 @@ export async function generateDraftsBatch(requests: DraftRequest[]): Promise<Dra
     model: "claude-haiku-4-5",
     max_tokens: 512,
     system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
-    messages: [{ role: "user", content: buildUserPrompt(req.lead, req.persona) }],
+    messages: [{ role: "user", content: buildUserPrompt(req.lead, req.persona, req.campaign) }],
   }));
 
   const batch = await client.messages.batches.create({

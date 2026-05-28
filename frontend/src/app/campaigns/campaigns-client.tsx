@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type SubmitEvent } from "react";
 import { createCampaign, type Campaign, type CampaignStatus } from "@/lib/api";
 
 const statusConfig: Record<CampaignStatus, { label: string; className: string }> = {
@@ -25,6 +25,7 @@ export default function CampaignsClient({ initialCampaigns }: Props) {
   const [campaigns, setCampaigns] = useState(initialCampaigns);
   const [statusFilter, setStatusFilter] = useState<CampaignStatus | "all">("all");
   const [showModal, setShowModal] = useState(false);
+  const [modalStep, setModalStep] = useState<1 | 2>(1);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [form, setForm] = useState({
@@ -32,7 +33,39 @@ export default function CampaignsClient({ initialCampaigns }: Props) {
     vertical: "",
     geography: "SG",
     company_size_target: "medium",
+    description: "",
+    pain_points: "",
+    call_to_action: "",
   });
+
+  function resetForm() {
+    setForm({
+      name: "",
+      vertical: "",
+      geography: "SG",
+      company_size_target: "medium",
+      description: "",
+      pain_points: "",
+      call_to_action: "",
+    });
+    setModalStep(1);
+    setFormError(null);
+  }
+
+  function closeModal() {
+    setShowModal(false);
+    resetForm();
+  }
+
+  function handleNext(e: SubmitEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!form.name.trim() || !form.vertical.trim() || !form.geography.trim()) {
+      setFormError("Name, vertical, and geography are required.");
+      return;
+    }
+    setFormError(null);
+    setModalStep(2);
+  }
 
   const filtered = useMemo(
     () => (statusFilter === "all" ? campaigns : campaigns.filter((c) => c.status === statusFilter)),
@@ -45,16 +78,23 @@ export default function CampaignsClient({ initialCampaigns }: Props) {
   const totalSent = campaigns.reduce((s, c) => s + c.sent, 0);
   const totalPending = campaigns.reduce((s, c) => s + c.drafts_pending, 0);
 
-  async function handleCreate(e: React.FormEvent) {
+  async function handleCreate(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault();
     setSubmitting(true);
     setFormError(null);
+    const painPoints = form.pain_points
+      .split("\n")
+      .map((p) => p.trim())
+      .filter(Boolean);
     const { campaign, error } = await createCampaign({
       name: form.name.trim(),
       vertical: form.vertical.trim(),
       geography: form.geography.split(",").map((g) => g.trim().toUpperCase()).filter(Boolean),
       company_size_target: form.company_size_target,
       status: "draft",
+      description: form.description.trim() || null,
+      pain_points: painPoints,
+      call_to_action: form.call_to_action.trim() || null,
     });
     setSubmitting(false);
     if (error || !campaign) {
@@ -63,7 +103,7 @@ export default function CampaignsClient({ initialCampaigns }: Props) {
     }
     setCampaigns((prev) => [campaign, ...prev]);
     setShowModal(false);
-    setForm({ name: "", vertical: "", geography: "SG", company_size_target: "medium" });
+    resetForm();
     router.push(`/campaigns/${campaign.id}`);
   }
 
@@ -168,59 +208,116 @@ export default function CampaignsClient({ initialCampaigns }: Props) {
 
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
-          <div className="bg-white rounded-lg w-full max-w-md p-6">
-            <h3 className="text-[18px] font-bold mb-4">New Campaign</h3>
-            <form onSubmit={handleCreate} className="flex flex-col gap-4">
-              <label className="flex flex-col gap-1 text-[13px]">
-                Name
-                <input
-                  required
-                  value={form.name}
-                  onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                  className="border border-grey-200 rounded-lg px-3 py-2"
-                />
-              </label>
-              <label className="flex flex-col gap-1 text-[13px]">
-                Vertical
-                <input
-                  required
-                  value={form.vertical}
-                  onChange={(e) => setForm((f) => ({ ...f, vertical: e.target.value }))}
-                  className="border border-grey-200 rounded-lg px-3 py-2"
-                />
-              </label>
-              <label className="flex flex-col gap-1 text-[13px]">
-                Geography (e.g. SG, AU)
-                <input
-                  required
-                  value={form.geography}
-                  onChange={(e) => setForm((f) => ({ ...f, geography: e.target.value }))}
-                  className="border border-grey-200 rounded-lg px-3 py-2"
-                />
-              </label>
-              <label className="flex flex-col gap-1 text-[13px]">
-                Company size
-                <select
-                  value={form.company_size_target}
-                  onChange={(e) => setForm((f) => ({ ...f, company_size_target: e.target.value }))}
-                  className="border border-grey-200 rounded-lg px-3 py-2"
-                >
-                  <option value="small">Small</option>
-                  <option value="medium">Medium</option>
-                  <option value="large">Large</option>
-                  <option value="enterprise">Enterprise</option>
-                </select>
-              </label>
-              {formError && <p className="text-danger text-[13px]">{formError}</p>}
-              <div className="flex gap-3 justify-end">
-                <button type="button" onClick={() => setShowModal(false)} className="px-4 py-2 border rounded-lg">
-                  Cancel
-                </button>
-                <button type="submit" disabled={submitting} className="px-6 py-2 bg-primary text-white rounded-lg">
-                  {submitting ? "Creating…" : "Create"}
-                </button>
-              </div>
-            </form>
+          <div className="bg-white rounded-lg w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-[18px] font-bold">New Campaign</h3>
+              <span className="text-[12px] text-grey-400">Step {modalStep} of 2</span>
+            </div>
+            <p className="text-[12px] text-grey-500 mb-4">
+              {modalStep === 1
+                ? "Required details"
+                : "Campaign context (optional) — helps the AI personalise emails for this campaign."}
+            </p>
+
+            {modalStep === 1 ? (
+              <form onSubmit={handleNext} className="flex flex-col gap-4">
+                <label className="flex flex-col gap-1 text-[13px]">
+                  Name
+                  <input
+                    required
+                    value={form.name}
+                    onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                    className="border border-grey-200 rounded-lg px-3 py-2"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-[13px]">
+                  Vertical
+                  <input
+                    required
+                    value={form.vertical}
+                    onChange={(e) => setForm((f) => ({ ...f, vertical: e.target.value }))}
+                    className="border border-grey-200 rounded-lg px-3 py-2"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-[13px]">
+                  Geography (e.g. SG, AU)
+                  <input
+                    required
+                    value={form.geography}
+                    onChange={(e) => setForm((f) => ({ ...f, geography: e.target.value }))}
+                    className="border border-grey-200 rounded-lg px-3 py-2"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-[13px]">
+                  Company size
+                  <select
+                    value={form.company_size_target}
+                    onChange={(e) => setForm((f) => ({ ...f, company_size_target: e.target.value }))}
+                    className="border border-grey-200 rounded-lg px-3 py-2"
+                  >
+                    <option value="small">Small</option>
+                    <option value="medium">Medium</option>
+                    <option value="large">Large</option>
+                    <option value="enterprise">Enterprise</option>
+                  </select>
+                </label>
+                {formError && <p className="text-danger text-[13px]">{formError}</p>}
+                <div className="flex gap-3 justify-end">
+                  <button type="button" onClick={closeModal} className="px-4 py-2 border rounded-lg">
+                    Cancel
+                  </button>
+                  <button type="submit" className="px-6 py-2 bg-primary text-white rounded-lg">
+                    Next
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <form onSubmit={handleCreate} className="flex flex-col gap-4">
+                <label className="flex flex-col gap-1 text-[13px]">
+                  Goal / value proposition
+                  <textarea
+                    rows={2}
+                    value={form.description}
+                    onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+                    placeholder="e.g. Help SG international schools cut admissions admin time by 40%"
+                    className="border border-grey-200 rounded-lg px-3 py-2"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-[13px]">
+                  Pain points (one per line)
+                  <textarea
+                    rows={3}
+                    value={form.pain_points}
+                    onChange={(e) => setForm((f) => ({ ...f, pain_points: e.target.value }))}
+                    placeholder={"Manual application processing\nSlow parent response times\nDisconnected admissions data"}
+                    className="border border-grey-200 rounded-lg px-3 py-2 font-mono text-[12px]"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-[13px]">
+                  Preferred call to action
+                  <input
+                    value={form.call_to_action}
+                    onChange={(e) => setForm((f) => ({ ...f, call_to_action: e.target.value }))}
+                    placeholder="e.g. Book a 15-min admissions walkthrough"
+                    className="border border-grey-200 rounded-lg px-3 py-2"
+                  />
+                </label>
+                {formError && <p className="text-danger text-[13px]">{formError}</p>}
+                <div className="flex gap-3 justify-between">
+                  <button type="button" onClick={() => setModalStep(1)} className="px-4 py-2 border rounded-lg">
+                    Back
+                  </button>
+                  <div className="flex gap-3">
+                    <button type="button" onClick={closeModal} className="px-4 py-2 border rounded-lg">
+                      Cancel
+                    </button>
+                    <button type="submit" disabled={submitting} className="px-6 py-2 bg-primary text-white rounded-lg">
+                      {submitting ? "Creating…" : "Create"}
+                    </button>
+                  </div>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}

@@ -38,6 +38,11 @@ export const campaigns = pgTable("campaigns", {
   geography: text("geography").notNull(),
   companySizeTarget: companySizeEnum("company_size_target").notNull(),
   status: campaignStatusEnum("status").default("draft").notNull(),
+  // Optional drafting context — surfaced to the Haiku prompt so emails feel
+  // campaign-specific rather than generic per-persona templates.
+  description: text("description"),
+  painPoints: text("pain_points").array(),
+  callToAction: text("call_to_action"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

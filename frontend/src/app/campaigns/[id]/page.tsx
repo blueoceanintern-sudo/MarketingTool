@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getCampaign, getLeads } from "@/lib/api";
 import type { Lead } from "@/lib/api";
 import CampaignActions from "./campaign-actions";
+import CampaignDetails from "./campaign-details";
 
 const AVATAR_COLORS = [
   "bg-primary-fixed text-on-primary-fixed",
@@ -88,6 +89,9 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
           </div>
         </div>
       )}
+
+      {/* Campaign details */}
+      {campaign && <CampaignDetails campaign={campaign} />}
 
       {/* Leads table */}
       <div className="bg-white rounded-lg shadow-[0_1px_3px_rgba(27,45,91,0.08)] border border-grey-100 overflow-hidden">
