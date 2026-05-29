@@ -1,5 +1,5 @@
 {
-  "id": "ef029fe1-350d-4d47-840c-1b3579d7e1c6",
+  "id": "b629b5aa-1631-4952-b140-d3639e088cb8",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -67,6 +67,95 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.campaign_leads": {
+      "name": "campaign_leads",
+      "schema": "",
+      "columns": {
+        "lead_id": {
+          "name": "lead_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "campaign_id": {
+          "name": "campaign_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "added_at": {
+          "name": "added_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "campaign_leads_campaign_id_idx": {
+          "name": "campaign_leads_campaign_id_idx",
+          "columns": [
+            {
+              "expression": "campaign_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "campaign_leads_lead_id_leads_id_fk": {
+          "name": "campaign_leads_lead_id_leads_id_fk",
+          "tableFrom": "campaign_leads",
+          "tableTo": "leads",
+          "columnsFrom": [
+            "lead_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "campaign_leads_campaign_id_campaigns_id_fk": {
+          "name": "campaign_leads_campaign_id_campaigns_id_fk",
+          "tableFrom": "campaign_leads",
+          "tableTo": "campaigns",
+          "columnsFrom": [
+            "campaign_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "campaign_leads_lead_id_campaign_id_pk": {
+          "name": "campaign_leads_lead_id_campaign_id_pk",
+          "columns": [
+            "lead_id",
+            "campaign_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.campaigns": {
       "name": "campaigns",
       "schema": "",
@@ -110,6 +199,24 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'draft'"
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "pain_points": {
+          "name": "pain_points",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "call_to_action": {
+          "name": "call_to_action",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
@@ -314,10 +421,9 @@
           "primaryKey": false,
           "notNull": true
         },
-        "persona": {
-          "name": "persona",
-          "type": "persona",
-          "typeSchema": "public",
+        "template_id": {
+          "name": "template_id",
+          "type": "uuid",
           "primaryKey": false,
           "notNull": true
         },
@@ -417,10 +523,32 @@
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
+        },
+        "email_drafts_template_id_prompt_templates_id_fk": {
+          "name": "email_drafts_template_id_prompt_templates_id_fk",
+          "tableFrom": "email_drafts",
+          "tableTo": "prompt_templates",
+          "columnsFrom": [
+            "template_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "email_drafts_lead_campaign_unique": {
+          "name": "email_drafts_lead_campaign_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "lead_id",
+            "campaign_id"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -759,12 +887,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "campaign_id": {
-          "name": "campaign_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
         "first_name": {
           "name": "first_name",
           "type": "text",
@@ -873,19 +995,6 @@
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
-        },
-        "leads_campaign_id_campaigns_id_fk": {
-          "name": "leads_campaign_id_campaigns_id_fk",
-          "tableFrom": "leads",
-          "tableTo": "campaigns",
-          "columnsFrom": [
-            "campaign_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -898,6 +1007,85 @@
           ]
         }
       },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.prompt_templates": {
+      "name": "prompt_templates",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "system_prompt": {
+          "name": "system_prompt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "weight": {
+          "name": "weight",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "active": {
+          "name": "active",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "parent_template_id": {
+          "name": "parent_template_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'user'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -1269,83 +1457,6 @@
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
-    },
-    "public.template_performance": {
-      "name": "template_performance",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "campaign_id": {
-          "name": "campaign_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "persona": {
-          "name": "persona",
-          "type": "persona",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "open_rate": {
-          "name": "open_rate",
-          "type": "real",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "reply_rate": {
-          "name": "reply_rate",
-          "type": "real",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "last_calculated_at": {
-          "name": "last_calculated_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "template_performance_campaign_id_campaigns_id_fk": {
-          "name": "template_performance_campaign_id_campaigns_id_fk",
-          "tableFrom": "template_performance",
-          "tableTo": "campaigns",
-          "columnsFrom": [
-            "campaign_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "tp_campaign_persona_unique": {
-          "name": "tp_campaign_persona_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "campaign_id",
-            "persona"
-          ]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
     }
   },
   "enums": {
@@ -1428,15 +1539,6 @@
         "replied",
         "converted",
         "suppressed"
-      ]
-    },
-    "public.persona": {
-      "name": "persona",
-      "schema": "public",
-      "values": [
-        "technical",
-        "executive",
-        "ops"
       ]
     },
     "public.scrape_job_status": {

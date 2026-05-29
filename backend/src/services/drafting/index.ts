@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
-
-type Persona = "technical" | "executive" | "ops";
+import { eq } from "drizzle-orm";
+import { db } from "../../db";
+import { promptTemplates } from "../../db/schema";
 
 interface LeadContext {
   firstName?: string;
@@ -20,7 +21,7 @@ export interface CampaignContext {
 export interface DraftResult {
   leadId: string;
   campaignId: string;
-  persona: Persona;
+  templateId: string;
   subject: string;
   body: string;
   confidenceScore: number;
@@ -29,49 +30,32 @@ export interface DraftResult {
 interface DraftRequest {
   leadId: string;
   campaignId: string;
-  persona: Persona;
   lead: LeadContext;
   campaign?: CampaignContext;
 }
 
-const PERSONA_PROMPTS: Record<Persona, string> = {
-  technical: `You write outbound B2B emails from the perspective of a technical solutions consultant.
-Focus on: implementation pain points, integration complexity, developer productivity, technical debt.
-Tone: peer-to-peer, direct, no fluff.`,
-
-  executive: `You write outbound B2B emails from the perspective of a business development executive.
-Focus on: ROI, revenue impact, competitive advantage, strategic outcomes.
-Tone: concise, confident, outcome-driven.`,
-
-  ops: `You write outbound B2B emails from the perspective of an operations efficiency specialist.
-Focus on: process efficiency, time savings, workflow automation, team capacity.
-Tone: practical, results-focused, empathetic to day-to-day friction.`,
-};
-
-const SYSTEM_PROMPT = `You are an expert B2B cold email writer. Given a lead's details, a persona,
-and the campaign's specific goal, write a short personalised outreach email.
-
-Rules:
-- Maximum 125 words in the email body
-- Subject line: under 10 words, no clickbait
-- Use only the lead fields and campaign context provided — never invent details
-- If a campaign call-to-action is provided, end the email with that CTA verbatim
-  in spirit (rephrase only for natural flow); otherwise fall back to a short call
-  or 15-min chat
-- If campaign pain points are provided, anchor the message in ONE of them — the
-  one most relevant to the lead's role and industry
-- No unsubscribe links (added by sender service)
-- No pricing, no free trial offers
-
-Respond in this exact JSON format:
-{
-  "subject": "...",
-  "body": "...",
-  "confidenceScore": <integer 0-100>
+interface PickedTemplate {
+  id: string;
+  systemPrompt: string;
 }
 
-confidenceScore reflects how well the email fits the lead context (100 = perfect
-fit; low = missing key lead fields OR no campaign context to anchor the message).`;
+// Weighted-random pick across active templates. Weight = relative probability;
+// a template with weight 3 is 3× as likely to be picked as one with weight 1.
+// Each draft picks independently so a single batch can span multiple templates.
+function pickTemplate(active: { id: string; systemPrompt: string; weight: number }[]): PickedTemplate {
+  const total = active.reduce((sum, t) => sum + Math.max(t.weight, 0), 0);
+  if (total <= 0) {
+    const first = active[0]!;
+    return { id: first.id, systemPrompt: first.systemPrompt };
+  }
+  let r = Math.random() * total;
+  for (const t of active) {
+    r -= Math.max(t.weight, 0);
+    if (r <= 0) return { id: t.id, systemPrompt: t.systemPrompt };
+  }
+  const last = active[active.length - 1]!;
+  return { id: last.id, systemPrompt: last.systemPrompt };
+}
 
 function buildCampaignBlock(campaign?: CampaignContext): string {
   if (!campaign) return "";
@@ -87,9 +71,8 @@ function buildCampaignBlock(campaign?: CampaignContext): string {
   return `\nCampaign context:\n${lines.join("\n")}\n`;
 }
 
-function buildUserPrompt(lead: LeadContext, persona: Persona, campaign?: CampaignContext): string {
-  return `Persona context: ${PERSONA_PROMPTS[persona]}
-${buildCampaignBlock(campaign)}
+function buildUserPrompt(lead: LeadContext, campaign?: CampaignContext): string {
+  return `${buildCampaignBlock(campaign)}
 Lead details:
 - Name: ${lead.firstName ?? "Unknown"} ${lead.lastName ?? ""}
 - Role: ${lead.role ?? "Unknown"}
@@ -116,22 +99,41 @@ function parseResponse(raw: string): { subject: string; body: string; confidence
 }
 
 export async function generateDraftsBatch(requests: DraftRequest[]): Promise<DraftResult[]> {
+  if (requests.length === 0) return [];
+
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY is required");
 
+  const activeTemplates = await db
+    .select({ id: promptTemplates.id, systemPrompt: promptTemplates.systemPrompt, weight: promptTemplates.weight })
+    .from(promptTemplates)
+    .where(eq(promptTemplates.active, true));
+
+  if (activeTemplates.length === 0) {
+    throw new Error("No active prompt templates — seed at least one row in prompt_templates");
+  }
+
   const client = new Anthropic({ apiKey });
 
-  const batchRequests: Anthropic.Messages.MessageCreateParamsNonStreaming[] = requests.map((req) => ({
-    model: "claude-haiku-4-5",
-    max_tokens: 512,
-    system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
-    messages: [{ role: "user", content: buildUserPrompt(req.lead, req.persona, req.campaign) }],
-  }));
+  // Pick a template per request so a single batch exercises multiple styles
+  // when weights spread the probability mass.
+  const requestTemplateIds: string[] = [];
+  const batchRequests: Anthropic.Messages.MessageCreateParamsNonStreaming[] = requests.map((req) => {
+    const tmpl = pickTemplate(activeTemplates);
+    requestTemplateIds.push(tmpl.id);
+    return {
+      model: "claude-haiku-4-5",
+      max_tokens: 512,
+      system: [{ type: "text", text: tmpl.systemPrompt, cache_control: { type: "ephemeral" } }],
+      messages: [{ role: "user", content: buildUserPrompt(req.lead, req.campaign) }],
+    };
+  });
 
   const batch = await client.messages.batches.create({
     requests: batchRequests.map((params, i) => {
       const req = requests[i]!;
-      return { custom_id: `${req.leadId}:${req.campaignId}:${req.persona}`, params };
+      const tmplId = requestTemplateIds[i]!;
+      return { custom_id: `${req.leadId}:${req.campaignId}:${tmplId}`, params };
     }),
   });
 
@@ -147,7 +149,7 @@ export async function generateDraftsBatch(requests: DraftRequest[]): Promise<Dra
   const results: DraftResult[] = [];
 
   for await (const result of await client.messages.batches.results(batchId)) {
-    const [leadId, campaignId, persona] = result.custom_id.split(":") as [string, string, Persona];
+    const [leadId, campaignId, templateId] = result.custom_id.split(":") as [string, string, string];
 
     if (result.result.type !== "succeeded") {
       console.error(`Draft failed for ${result.custom_id}:`, result.result);
@@ -159,7 +161,7 @@ export async function generateDraftsBatch(requests: DraftRequest[]): Promise<Dra
 
     try {
       const { subject, body, confidenceScore } = parseResponse(text.text);
-      results.push({ leadId, campaignId, persona, subject, body, confidenceScore });
+      results.push({ leadId, campaignId, templateId, subject, body, confidenceScore });
     } catch (err) {
       console.error(`Failed to parse draft for ${result.custom_id}:`, err);
     }

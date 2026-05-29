@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { db } from "../db";
-import { emailDrafts, emailEvents, leads, demos, suppressionList, templatePerformance } from "../db/schema";
+import { emailDrafts, emailEvents, leads, demos, suppressionList, promptTemplates } from "../db/schema";
 import { isNotNull, count, ne, eq, and, gte, sql } from "drizzle-orm";
 
 export const analyticsRouter = new Hono();
@@ -70,16 +70,60 @@ analyticsRouter.get("/daily-sends", async (c) => {
   return c.json({ data });
 });
 
+// Engagement comparison across prompt templates. Computed live by joining
+// email_drafts → email_events; cheap because the data is small. If volume
+// grows to where this is slow, add a template_performance cache table fed by
+// a daily cron.
 analyticsRouter.get("/templates", async (c) => {
-  const rows = await db.select().from(templatePerformance).orderBy(templatePerformance.replyRate);
-  return c.json(rows.map((r) => ({
-    id: r.id,
-    campaign_id: r.campaignId,
-    persona: r.persona,
-    open_rate: r.openRate,
-    reply_rate: r.replyRate,
-    last_calculated_at: r.lastCalculatedAt.toISOString(),
-  })));
+  const templates = await db
+    .select({
+      id: promptTemplates.id,
+      name: promptTemplates.name,
+      description: promptTemplates.description,
+      weight: promptTemplates.weight,
+      active: promptTemplates.active,
+      createdBy: promptTemplates.createdBy,
+      parentTemplateId: promptTemplates.parentTemplateId,
+    })
+    .from(promptTemplates);
+
+  if (templates.length === 0) return c.json([]);
+
+  const stats = await db
+    .select({
+      templateId: emailDrafts.templateId,
+      sent: sql<string>`count(*) FILTER (WHERE ${emailEvents.sentAt} IS NOT NULL)`,
+      opened: sql<string>`count(*) FILTER (WHERE ${emailEvents.openedAt} IS NOT NULL)`,
+      replied: sql<string>`count(*) FILTER (WHERE ${emailEvents.repliedAt} IS NOT NULL)`,
+    })
+    .from(emailDrafts)
+    .leftJoin(emailEvents, eq(emailEvents.draftId, emailDrafts.id))
+    .groupBy(emailDrafts.templateId);
+
+  const statsByTemplate = new Map(stats.map((s) => [s.templateId, s]));
+
+  return c.json(
+    templates.map((t) => {
+      const s = statsByTemplate.get(t.id);
+      const sent = Number(s?.sent ?? 0);
+      const opened = Number(s?.opened ?? 0);
+      const replied = Number(s?.replied ?? 0);
+      return {
+        id: t.id,
+        name: t.name,
+        description: t.description,
+        weight: t.weight,
+        active: t.active,
+        created_by: t.createdBy,
+        parent_template_id: t.parentTemplateId,
+        sent,
+        opened,
+        replied,
+        open_rate: sent > 0 ? Math.round((opened / sent) * 1000) / 10 : 0,
+        reply_rate: sent > 0 ? Math.round((replied / sent) * 1000) / 10 : 0,
+      };
+    }),
+  );
 });
 
 analyticsRouter.get("/export", async (c) => {
@@ -88,7 +132,7 @@ analyticsRouter.get("/export", async (c) => {
       id: emailDrafts.id,
       leadId: emailDrafts.leadId,
       campaignId: emailDrafts.campaignId,
-      persona: emailDrafts.persona,
+      templateId: emailDrafts.templateId,
       status: emailDrafts.status,
       confidenceScore: emailDrafts.confidenceScore,
       createdAt: emailDrafts.createdAt,
@@ -97,9 +141,9 @@ analyticsRouter.get("/export", async (c) => {
     .orderBy(emailDrafts.createdAt);
 
   const csv = [
-    "id,lead_id,campaign_id,persona,status,confidence_score,created_at",
+    "id,lead_id,campaign_id,template_id,status,confidence_score,created_at",
     ...rows.map((r) =>
-      [r.id, r.leadId, r.campaignId, r.persona, r.status, r.confidenceScore, r.createdAt.toISOString()].join(",")
+      [r.id, r.leadId, r.campaignId, r.templateId, r.status, r.confidenceScore, r.createdAt.toISOString()].join(",")
     ),
   ].join("\n");
 

@@ -17,6 +17,7 @@ const sizeLabel: Record<string, string> = {
 
 export default function CampaignDetails({ campaign }: Props) {
   const router = useRouter();
+  const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -75,71 +76,95 @@ export default function CampaignDetails({ campaign }: Props) {
 
   return (
     <div className="bg-white rounded-lg shadow-[0_1px_3px_rgba(27,45,91,0.08)] border border-grey-100 mb-8">
-      <div className="px-6 py-4 border-b border-grey-100 flex items-center justify-between bg-grey-50">
-        <h3 className="text-[14px] font-semibold text-primary">Campaign Details</h3>
+      <div className="px-6 py-3 flex items-center justify-between bg-grey-50 rounded-t-lg">
         <button
           type="button"
-          onClick={openEdit}
-          className="flex items-center gap-1.5 px-3 py-1.5 border border-grey-200 rounded-lg text-[13px] font-medium text-grey-700 hover:bg-white"
+          onClick={() => setExpanded((v) => !v)}
+          className="flex items-center gap-2 text-[14px] font-semibold text-primary hover:text-ocean-light"
+          aria-expanded={expanded}
         >
-          <span className="material-symbols-outlined text-[16px]">edit</span>
-          Edit
+          <span
+            className="material-symbols-outlined text-[18px] transition-transform"
+            style={{ transform: expanded ? "rotate(90deg)" : "rotate(0deg)" }}
+          >
+            chevron_right
+          </span>
+          Campaign Details
+          {!expanded && (
+            <span className="ml-1 text-[12px] font-normal text-grey-500">
+              · {campaign.vertical} · {campaign.geography.join(", ") || "—"} · {sizeLabel[campaign.company_size_target] ?? campaign.company_size_target}
+            </span>
+          )}
         </button>
+        {expanded && (
+          <button
+            type="button"
+            onClick={openEdit}
+            className="flex items-center gap-1.5 px-3 py-1.5 border border-grey-200 rounded-lg text-[13px] font-medium text-grey-700 hover:bg-white"
+          >
+            <span className="material-symbols-outlined text-[16px]">edit</span>
+            Edit
+          </button>
+        )}
       </div>
 
-      <div className="px-6 py-5 grid grid-cols-3 gap-x-8 gap-y-4 text-[13px]">
-        <div>
-          <p className="text-grey-500 mb-1">Vertical</p>
-          <p className="text-primary font-medium">{campaign.vertical}</p>
-        </div>
-        <div>
-          <p className="text-grey-500 mb-1">Geography</p>
-          <p className="text-primary font-medium">{campaign.geography.join(", ") || "—"}</p>
-        </div>
-        <div>
-          <p className="text-grey-500 mb-1">Company size</p>
-          <p className="text-primary font-medium">
-            {sizeLabel[campaign.company_size_target] ?? campaign.company_size_target}
-          </p>
-        </div>
-      </div>
-
-      <div className="px-6 pb-5 border-t border-grey-100 pt-5">
-        <p className="text-[12px] font-semibold text-grey-500 uppercase tracking-wide mb-3">
-          Drafting context
-        </p>
-        {hasContext ? (
-          <div className="grid grid-cols-1 gap-4 text-[13px]">
+      {expanded && (
+        <>
+          <div className="px-6 py-5 border-t border-grey-100 grid grid-cols-3 gap-x-8 gap-y-4 text-[13px]">
             <div>
-              <p className="text-grey-500 mb-1">Goal / value proposition</p>
-              <p className="text-primary leading-relaxed">
-                {campaign.description ?? <span className="text-grey-400 italic">Not set</span>}
-              </p>
+              <p className="text-grey-500 mb-1">Vertical</p>
+              <p className="text-primary font-medium">{campaign.vertical}</p>
             </div>
             <div>
-              <p className="text-grey-500 mb-1">Pain points</p>
-              {campaign.pain_points.length > 0 ? (
-                <ul className="list-disc pl-5 text-primary leading-relaxed space-y-0.5">
-                  {campaign.pain_points.map((p, i) => <li key={i}>{p}</li>)}
-                </ul>
-              ) : (
-                <p className="text-grey-400 italic">Not set</p>
-              )}
+              <p className="text-grey-500 mb-1">Geography</p>
+              <p className="text-primary font-medium">{campaign.geography.join(", ") || "—"}</p>
             </div>
             <div>
-              <p className="text-grey-500 mb-1">Call to action</p>
-              <p className="text-primary leading-relaxed">
-                {campaign.call_to_action ?? <span className="text-grey-400 italic">Not set</span>}
+              <p className="text-grey-500 mb-1">Company size</p>
+              <p className="text-primary font-medium">
+                {sizeLabel[campaign.company_size_target] ?? campaign.company_size_target}
               </p>
             </div>
           </div>
-        ) : (
-          <p className="text-[13px] text-grey-400 italic">
-            No drafting context set. Drafts will use generic per-persona templates until you add a goal, pain points,
-            or call to action.
-          </p>
-        )}
-      </div>
+
+          <div className="px-6 pb-5 border-t border-grey-100 pt-5">
+            <p className="text-[12px] font-semibold text-grey-500 uppercase tracking-wide mb-3">
+              Drafting context
+            </p>
+            {hasContext ? (
+              <div className="grid grid-cols-1 gap-4 text-[13px]">
+                <div>
+                  <p className="text-grey-500 mb-1">Goal / value proposition</p>
+                  <p className="text-primary leading-relaxed">
+                    {campaign.description ?? <span className="text-grey-400 italic">Not set</span>}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-grey-500 mb-1">Pain points</p>
+                  {campaign.pain_points.length > 0 ? (
+                    <ul className="list-disc pl-5 text-primary leading-relaxed space-y-0.5">
+                      {campaign.pain_points.map((p, i) => <li key={i}>{p}</li>)}
+                    </ul>
+                  ) : (
+                    <p className="text-grey-400 italic">Not set</p>
+                  )}
+                </div>
+                <div>
+                  <p className="text-grey-500 mb-1">Call to action</p>
+                  <p className="text-primary leading-relaxed">
+                    {campaign.call_to_action ?? <span className="text-grey-400 italic">Not set</span>}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <p className="text-[13px] text-grey-400 italic">
+                No drafting context set. The AI will generate generic emails using lead role only until you add a goal,
+                pain points, or call to action.
+              </p>
+            )}
+          </div>
+        </>
+      )}
 
       {editing && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
@@ -192,7 +217,7 @@ export default function CampaignDetails({ campaign }: Props) {
                   Drafting context
                 </p>
                 <p className="text-[12px] text-grey-400 mb-3">
-                  Optional — helps the AI write emails specific to this campaign rather than a generic persona template.
+                  Optional — helps the AI write emails specific to this campaign rather than a generic role-based message.
                 </p>
                 <div className="flex flex-col gap-4">
                   <label className="flex flex-col gap-1 text-[13px]">
