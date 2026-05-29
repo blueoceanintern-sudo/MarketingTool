@@ -2,6 +2,30 @@ import { Hono } from "hono";
 import { db } from "../db";
 import { sourceRegistry, suppressionList, promptTemplates, emailDrafts, normalizeVertical, normalizeGeo } from "../db/schema";
 import { eq } from "drizzle-orm";
+
+function parseCSVLine(line: string): string[] {
+  const fields: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
+      else inQuotes = !inQuotes;
+    } else if (ch === "," && !inQuotes) {
+      fields.push(current); current = "";
+    } else {
+      current += ch;
+    }
+  }
+  fields.push(current);
+  return fields;
+}
+
+function parseBool(val: string | undefined, def: boolean): boolean {
+  if (!val) return def;
+  return ["true", "1", "yes"].includes(val.toLowerCase());
+}
 import { logAudit } from "../services/audit/log";
 
 export const adminRouter = new Hono();
@@ -56,6 +80,80 @@ adminRouter.post("/registry/sources", async (c) => {
     .returning();
 
   return c.json(row, 201);
+});
+
+adminRouter.post("/registry/sources/import", async (c) => {
+  const formData = await c.req.formData();
+  const file = formData.get("file");
+
+  if (!file || typeof file === "string") {
+    return c.json({ error: "No file uploaded" }, 400);
+  }
+
+  const text = await (file as File).text();
+  const lines = text.split(/\r?\n/).filter((l) => l.trim());
+
+  if (lines.length < 2) {
+    return c.json({ error: "CSV must have a header row and at least one data row" }, 400);
+  }
+
+  const headers = parseCSVLine(lines[0]).map((h) => h.trim().toLowerCase().replace(/^"|"$/g, ""));
+  const requiredCols = ["name", "vertical", "geo", "url", "scraper_type"];
+  const missingCols = requiredCols.filter((col) => !headers.includes(col));
+  if (missingCols.length > 0) {
+    return c.json({ error: `Missing required columns: ${missingCols.join(", ")}` }, 400);
+  }
+
+  const imported: number[] = [];
+  const errors: { row: number; reason: string }[] = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const rowNum = i + 1;
+    const values = parseCSVLine(lines[i]);
+    const record: Record<string, string> = {};
+    headers.forEach((h, idx) => { record[h] = (values[idx] ?? "").trim().replace(/^"|"$/g, ""); });
+
+    const { name, vertical, geo, url, scraper_type } = record;
+    const missingFields = ["name", "vertical", "geo", "url", "scraper_type", "legal_flag", "active"].filter((f) => !record[f] && record[f] !== "0" && record[f] !== "false");
+    if (missingFields.length > 0) {
+      errors.push({ row: rowNum, reason: `Missing required fields: ${missingFields.join(", ")}` });
+      continue;
+    }
+
+    const validScraperTypes = ["crawl4ai", "cheerio", "api"];
+    if (!validScraperTypes.includes(scraper_type)) {
+      errors.push({ row: rowNum, reason: `Invalid scraper_type "${scraper_type}" — must be one of: ${validScraperTypes.join(", ")}` });
+      continue;
+    }
+
+    try {
+      const [result] = await db
+        .insert(sourceRegistry)
+        .values({
+          name,
+          vertical: normalizeVertical(vertical),
+          geo: normalizeGeo(geo),
+          url,
+          scraperType: scraper_type as "crawl4ai" | "cheerio" | "api",
+          legalFlag: parseBool(record.legal_flag, false),
+          selectors: {},
+          active: parseBool(record.active, true),
+        })
+        .onConflictDoNothing()
+        .returning();
+
+      if (result) {
+        imported.push(rowNum);
+      } else {
+        errors.push({ row: rowNum, reason: "URL already exists in registry (skipped)" });
+      }
+    } catch (err) {
+      errors.push({ row: rowNum, reason: `Insert failed: ${err instanceof Error ? err.message : String(err)}` });
+    }
+  }
+
+  const skipped = errors.filter((e) => e.reason.includes("already exists")).length;
+  return c.json({ imported: imported.length, skipped, errors }, 201);
 });
 
 adminRouter.get("/suppression", async (c) => {
