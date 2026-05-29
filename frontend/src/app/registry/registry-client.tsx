@@ -114,7 +114,7 @@ export default function RegistryClient({ initialSources }: Props) {
   }
 
   return (
-    <div className="p-10 max-w-[1600px] mx-auto">
+    <div className="p-4 sm:p-6 lg:p-10 max-w-[1600px] mx-auto">
       <div className="flex justify-between items-end mb-8">
         <div>
           <nav className="flex items-center gap-2 mb-2">
@@ -181,7 +181,7 @@ export default function RegistryClient({ initialSources }: Props) {
         </div>
       )}
 
-      <div className="grid grid-cols-4 gap-6 mb-8">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6 mb-8">
         <div className="bg-white p-5 rounded-lg border border-grey-100">
           <p className="text-[13px] text-grey-500">Total sources</p>
           <h3 className="text-[24px] font-bold font-mono mt-2">{sources.length}</h3>
@@ -202,7 +202,7 @@ export default function RegistryClient({ initialSources }: Props) {
         </div>
       </div>
 
-      <div className="bg-white rounded-lg border border-grey-100 overflow-hidden">
+      <div className="bg-white rounded-lg border border-grey-100 overflow-x-auto">
         <div className="px-5 py-4 border-b border-grey-100 bg-grey-50 flex flex-wrap gap-3 items-center justify-between">
           <div className="flex flex-wrap gap-2">
             <select

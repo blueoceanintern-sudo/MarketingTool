@@ -11,8 +11,8 @@ import "./workers";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { db } from "./db";
-import { leads, suppressionList } from "./db/schema";
-import { eq } from "drizzle-orm";
+import { leads, suppressionList, campaignLeadExclusions } from "./db/schema";
+import { and, eq } from "drizzle-orm";
 
 const app = new Hono();
 
@@ -52,23 +52,27 @@ app.get("/scrape", async (c) => {
   }
 });
 
-// One-click unsubscribe — SES links here; adds email to suppression list then redirects to confirmation page
+// One-click unsubscribe — SES links here with lead + campaign context.
+// Suppresses the lead for that campaign only and excludes them from future
+// scrape/CSV re-adds for the same campaign.
 app.get("/unsubscribe", async (c) => {
   const leadId = c.req.query("id");
-  if (!leadId) return c.text("Invalid unsubscribe link.", 400);
+  const campaignId = c.req.query("campaign");
+  if (!leadId || !campaignId) return c.text("Invalid unsubscribe link.", 400);
 
   const [lead] = await db.select().from(leads).where(eq(leads.id, leadId)).limit(1);
   if (!lead) return c.text("Unsubscribe link not recognised.", 404);
 
-  await db
-    .insert(suppressionList)
-    .values({ email: lead.email, reason: "unsubscribed" })
-    .onConflictDoNothing();
-
-  await db
-    .update(leads)
-    .set({ status: "suppressed" })
-    .where(eq(leads.id, leadId));
+  await Promise.all([
+    db
+      .insert(suppressionList)
+      .values({ email: lead.email, campaignId, reason: "unsubscribed" })
+      .onConflictDoNothing(),
+    db
+      .insert(campaignLeadExclusions)
+      .values({ leadId, campaignId, excludedBy: "unsubscribe", reason: "unsubscribed" })
+      .onConflictDoNothing(),
+  ]);
 
   const frontendUrl = process.env.FRONTEND_URL ?? "http://localhost:3000";
   return c.redirect(`${frontendUrl}/unsubscribe.html`, 302);

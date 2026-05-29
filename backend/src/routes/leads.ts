@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { db } from "../db";
-import { leads, companies, campaigns, campaignLeads, suppressionList, enrichmentRecords, emailDrafts, emailEvents, followUps } from "../db/schema";
+import { leads, companies, campaigns, campaignLeads, campaignLeadExclusions, suppressionList, enrichmentRecords, emailDrafts, emailEvents, followUps } from "../db/schema";
 import { eq, desc, and, inArray, isNull, isNotNull } from "drizzle-orm";
 import { enrichLead } from "../services/enrichment/orchestrator";
 import { logAudit } from "../services/audit/log";
@@ -124,6 +124,40 @@ leadsRouter.get("/:id/leads", async (c) => {
   return c.json(rows.map((r) => formatLead(r, campaignMap.get(r.id) ?? [])));
 });
 
+leadsRouter.get("/:id/leads/excluded", async (c) => {
+  const campaignId = c.req.param("id");
+
+  const rows = await db
+    .select({
+      leadId: campaignLeadExclusions.leadId,
+      excludedAt: campaignLeadExclusions.excludedAt,
+      excludedBy: campaignLeadExclusions.excludedBy,
+      reason: campaignLeadExclusions.reason,
+      email: leads.email,
+      firstName: leads.firstName,
+      lastName: leads.lastName,
+      role: leads.role,
+      companyName: companies.name,
+    })
+    .from(campaignLeadExclusions)
+    .innerJoin(leads, eq(campaignLeadExclusions.leadId, leads.id))
+    .innerJoin(companies, eq(leads.companyId, companies.id))
+    .where(eq(campaignLeadExclusions.campaignId, campaignId))
+    .orderBy(campaignLeadExclusions.excludedAt);
+
+  return c.json(rows.map((r) => ({
+    lead_id: r.leadId,
+    email: r.email,
+    first_name: r.firstName ?? "",
+    last_name: r.lastName ?? "",
+    role: r.role ?? "",
+    company_name: r.companyName,
+    excluded_at: r.excludedAt.toISOString(),
+    excluded_by: r.excludedBy,
+    reason: r.reason ?? null,
+  })));
+});
+
 leadsRouter.post("/:id/leads/import", async (c) => {
   const campaignId = c.req.param("id");
   const text = await c.req.text();
@@ -153,14 +187,25 @@ leadsRouter.post("/:id/leads/import", async (c) => {
     const email = row["email"] ?? "";
     if (!email) { skipped.push(`row ${i + 1}: missing email`); continue; }
 
-    // Block suppressed emails — they opted out and must not be re-collected
-    const [suppressed] = await db.select({ id: suppressionList.id }).from(suppressionList).where(eq(suppressionList.email, email)).limit(1);
+    // Block emails suppressed for this campaign — they opted out and must not be re-collected
+    const [suppressed] = await db
+      .select({ id: suppressionList.id })
+      .from(suppressionList)
+      .where(and(eq(suppressionList.email, email), eq(suppressionList.campaignId, campaignId)))
+      .limit(1);
     if (suppressed) { skipped.push(email); continue; }
 
     // If the lead already exists, link them to this campaign instead of
     // refusing the row. m:n means the same person can appear in many imports.
     const [existing] = await db.select({ id: leads.id }).from(leads).where(eq(leads.email, email)).limit(1);
     if (existing) {
+      const [excl] = await db
+        .select({ leadId: campaignLeadExclusions.leadId })
+        .from(campaignLeadExclusions)
+        .where(and(eq(campaignLeadExclusions.leadId, existing.id), eq(campaignLeadExclusions.campaignId, campaignId)))
+        .limit(1);
+      if (excl) { skipped.push(`${email}: excluded from this campaign`); continue; }
+
       const [link] = await db
         .select({ leadId: campaignLeads.leadId })
         .from(campaignLeads)
@@ -261,13 +306,26 @@ allLeadsRouter.post("/:id/campaigns", async (c) => {
     return c.json({ error: "Cannot add lead to a completed campaign" }, 400);
   }
 
-  const [existing] = await db
+  const [existingLink] = await db
     .select({ leadId: campaignLeads.leadId })
     .from(campaignLeads)
     .where(and(eq(campaignLeads.leadId, leadId), eq(campaignLeads.campaignId, body.campaign_id)))
     .limit(1);
-  if (existing) {
+  if (existingLink) {
     return c.json({ ok: true, message: "Already a member of this campaign", lead_id: leadId, campaign_id: body.campaign_id });
+  }
+
+  // If an exclusion exists, remove it — manual add is an intentional override.
+  const [excl] = await db
+    .select({ leadId: campaignLeadExclusions.leadId })
+    .from(campaignLeadExclusions)
+    .where(and(eq(campaignLeadExclusions.leadId, leadId), eq(campaignLeadExclusions.campaignId, body.campaign_id)))
+    .limit(1);
+  const overrodeExclusion = !!excl;
+  if (excl) {
+    await db
+      .delete(campaignLeadExclusions)
+      .where(and(eq(campaignLeadExclusions.leadId, leadId), eq(campaignLeadExclusions.campaignId, body.campaign_id)));
   }
 
   await db.insert(campaignLeads).values({ leadId, campaignId: body.campaign_id, source: "manual" });
@@ -281,18 +339,21 @@ allLeadsRouter.post("/:id/campaigns", async (c) => {
       c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ??
       c.req.header("x-real-ip") ??
       null,
-    metadata: { campaign_id: body.campaign_id },
+    metadata: { campaign_id: body.campaign_id, overrode_exclusion: overrodeExclusion },
   });
 
-  return c.json({ ok: true, lead_id: leadId, campaign_id: body.campaign_id }, 201);
+  return c.json({ ok: true, lead_id: leadId, campaign_id: body.campaign_id, overrode_exclusion: overrodeExclusion }, 201);
 });
 
-// Remove a lead from a specific campaign. Cascades pending_review drafts and
-// unsent follow_ups for that (lead, campaign) pair. Blocks if anything has
-// already been sent or rep-approved.
+// Remove a lead from a specific campaign. Writes a campaign_lead_exclusions row
+// so automated scrape/CSV runs cannot re-add them. Cascades pending_review
+// drafts and unsent follow_ups for that (lead, campaign) pair. Blocks if
+// anything has already been sent or rep-approved.
+// Optional query param: ?reason=<text>
 allLeadsRouter.delete("/:id/campaigns/:campaignId", async (c) => {
   const leadId = c.req.param("id");
   const campaignId = c.req.param("campaignId");
+  const reason = c.req.query("reason") ?? null;
 
   const [lead] = await db.select({ id: leads.id }).from(leads).where(eq(leads.id, leadId)).limit(1);
   if (!lead) return c.json({ error: "Lead not found" }, 404);
@@ -333,37 +394,46 @@ allLeadsRouter.delete("/:id/campaigns/:campaignId", async (c) => {
     }, 409);
   }
 
-  const pendingDrafts = await db
-    .select({ id: emailDrafts.id })
-    .from(emailDrafts)
-    .where(and(
-      eq(emailDrafts.leadId, leadId),
-      eq(emailDrafts.campaignId, campaignId),
-      eq(emailDrafts.status, "pending_review"),
-    ));
-  const pendingDraftIds = pendingDrafts.map((d) => d.id);
+  const { cascadedDrafts, deletedFollowUpsCount } = await db.transaction(async (tx) => {
+    const pendingDrafts = await tx
+      .select({ id: emailDrafts.id })
+      .from(emailDrafts)
+      .where(and(
+        eq(emailDrafts.leadId, leadId),
+        eq(emailDrafts.campaignId, campaignId),
+        eq(emailDrafts.status, "pending_review"),
+      ));
+    const pendingDraftIds = pendingDrafts.map((d) => d.id);
 
-  const deletedFollowUps = await db
-    .delete(followUps)
-    .where(and(
-      eq(followUps.leadId, leadId),
-      eq(followUps.campaignId, campaignId),
-      isNull(followUps.sentAt),
-    ))
-    .returning({ id: followUps.id });
+    const deletedFU = await tx
+      .delete(followUps)
+      .where(and(
+        eq(followUps.leadId, leadId),
+        eq(followUps.campaignId, campaignId),
+        isNull(followUps.sentAt),
+      ))
+      .returning({ id: followUps.id });
 
-  let cascadedDrafts = 0;
-  if (pendingDraftIds.length > 0) {
-    const deleted = await db
-      .delete(emailDrafts)
-      .where(inArray(emailDrafts.id, pendingDraftIds))
-      .returning({ id: emailDrafts.id });
-    cascadedDrafts = deleted.length;
-  }
+    let cascaded = 0;
+    if (pendingDraftIds.length > 0) {
+      const deleted = await tx
+        .delete(emailDrafts)
+        .where(inArray(emailDrafts.id, pendingDraftIds))
+        .returning({ id: emailDrafts.id });
+      cascaded = deleted.length;
+    }
 
-  await db
-    .delete(campaignLeads)
-    .where(and(eq(campaignLeads.leadId, leadId), eq(campaignLeads.campaignId, campaignId)));
+    await tx
+      .delete(campaignLeads)
+      .where(and(eq(campaignLeads.leadId, leadId), eq(campaignLeads.campaignId, campaignId)));
+
+    await tx
+      .insert(campaignLeadExclusions)
+      .values({ leadId, campaignId, excludedBy: "user", reason })
+      .onConflictDoNothing();
+
+    return { cascadedDrafts: cascaded, deletedFollowUpsCount: deletedFU.length };
+  });
 
   await logAudit({
     actor: "user",
@@ -376,8 +446,9 @@ allLeadsRouter.delete("/:id/campaigns/:campaignId", async (c) => {
       null,
     metadata: {
       campaign_id: campaignId,
+      reason,
       cascaded_pending_drafts: cascadedDrafts,
-      cascaded_unsent_follow_ups: deletedFollowUps.length,
+      cascaded_unsent_follow_ups: deletedFollowUpsCount,
     },
   });
 
@@ -386,7 +457,7 @@ allLeadsRouter.delete("/:id/campaigns/:campaignId", async (c) => {
     lead_id: leadId,
     campaign_id: campaignId,
     cascaded_pending_drafts: cascadedDrafts,
-    cascaded_unsent_follow_ups: deletedFollowUps.length,
+    cascaded_unsent_follow_ups: deletedFollowUpsCount,
   });
 });
 

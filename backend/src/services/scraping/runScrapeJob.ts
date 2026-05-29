@@ -1,6 +1,6 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "../../db";
-import { campaigns, campaignLeads, companies, leads, scrapeJobs, sourceRegistry, normalizeVertical, normalizeGeo } from "../../db/schema";
+import { campaigns, campaignLeads, campaignLeadExclusions, companies, leads, scrapeJobs, sourceRegistry, normalizeVertical, normalizeGeo } from "../../db/schema";
 import { scrapeWithFallback } from "../scrapers/crawl4aiScraper";
 import { scrapeWebsite } from "../scrapers/cheerioScraper";
 import { enrichLead } from "../enrichment/orchestrator";
@@ -38,6 +38,13 @@ async function persistScrapedLead(
   // link rather than inserting a duplicate lead.
   const [existing] = await db.select({ id: leads.id }).from(leads).where(eq(leads.email, email)).limit(1);
   if (existing) {
+    const [excluded] = await db
+      .select({ leadId: campaignLeadExclusions.leadId })
+      .from(campaignLeadExclusions)
+      .where(and(eq(campaignLeadExclusions.leadId, existing.id), eq(campaignLeadExclusions.campaignId, campaignId)))
+      .limit(1);
+    if (excluded) return false; // excluded from this campaign — do not re-add
+
     const [existingLink] = await db
       .select({ leadId: campaignLeads.leadId })
       .from(campaignLeads)

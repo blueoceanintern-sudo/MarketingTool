@@ -1,6 +1,6 @@
-import { and, eq, ne, notInArray } from "drizzle-orm";
+import { and, eq, notInArray } from "drizzle-orm";
 import { db } from "../../db";
-import { campaigns, campaignLeads, companies, emailDrafts, leads } from "../../db/schema";
+import { campaigns, campaignLeads, companies, emailDrafts, leads, suppressionList } from "../../db/schema";
 import { generateDraftsBatch, type CampaignContext } from "./index";
 
 function toCampaignContext(row: typeof campaigns.$inferSelect): CampaignContext {
@@ -30,22 +30,21 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
   }
 
   // Eligible = (1) member of this campaign via campaign_leads, (2) enrichment
-  // routed it to auto_queue, (3) not suppressed, (4) no existing draft yet for
-  // this (lead, campaign) pair (DB also enforces this via unique constraint).
-  const draftedRows = await db
-    .select({ leadId: emailDrafts.leadId })
-    .from(emailDrafts)
-    .where(eq(emailDrafts.campaignId, campaignId));
+  // routed it to auto_queue, (3) not suppressed for this campaign, (4) no
+  // existing draft yet for this (lead, campaign) pair.
+  const [draftedRows, suppressedRows] = await Promise.all([
+    db.select({ leadId: emailDrafts.leadId }).from(emailDrafts).where(eq(emailDrafts.campaignId, campaignId)),
+    db.select({ email: suppressionList.email }).from(suppressionList).where(eq(suppressionList.campaignId, campaignId)),
+  ]);
   const alreadyDrafted = draftedRows.map((r) => r.leadId);
+  const suppressedEmails = suppressedRows.map((r) => r.email);
 
   const conditions = [
     eq(campaignLeads.campaignId, campaignId),
     eq(leads.routing, "auto_queue"),
-    ne(leads.status, "suppressed"),
   ];
-  if (alreadyDrafted.length > 0) {
-    conditions.push(notInArray(leads.id, alreadyDrafted));
-  }
+  if (alreadyDrafted.length > 0) conditions.push(notInArray(leads.id, alreadyDrafted));
+  if (suppressedEmails.length > 0) conditions.push(notInArray(leads.email, suppressedEmails));
 
   const eligible = await db
     .select({

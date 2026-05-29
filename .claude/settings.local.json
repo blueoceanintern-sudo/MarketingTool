@@ -23,7 +23,9 @@
       "Bash(printf 'name,vertical,geo,url,scraper_type,legal_flag,active\\\\nTest Missing Bool,education,SG,https://test-missing-bool.example.com,cheerio,,\\\\n')",
       "Bash(curl -s -X POST http://localhost:3001/api/v1/registry/sources/import -F \"file=@/tmp/test_missing_bool.csv\")",
       "Bash(printf 'name,vertical,geo,url,scraper_type,legal_flag,active\\\\nTest False Bools,education,AU,https://test-false-bools.example.com,crawl4ai,false,false\\\\n')",
-      "Bash(curl -s -X POST http://localhost:3001/api/v1/registry/sources/import -F \"file=@/tmp/test_false_bools.csv\")"
+      "Bash(curl -s -X POST http://localhost:3001/api/v1/registry/sources/import -F \"file=@/tmp/test_false_bools.csv\")",
+      "Bash(git diff *)",
+      "mcp__ide__getDiagnostics"
     ]
   }
 }

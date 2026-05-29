@@ -32,7 +32,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
   const name = campaign?.name ?? "Campaign";
 
   return (
-    <div className="p-10 max-w-[1600px] mx-auto">
+    <div className="p-4 sm:p-6 lg:p-10 max-w-[1600px] mx-auto">
       {/* Page header */}
       <div className="flex justify-between items-end mb-8">
         <div>
@@ -51,7 +51,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
 
       {/* KPI grid */}
       {campaign && (
-        <div className="grid grid-cols-4 gap-6 mb-8">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6 mb-8">
           <div className="bg-white p-6 rounded-lg shadow-[0_1px_3px_rgba(27,45,91,0.08)] border border-grey-100">
             <div className="flex justify-between items-start mb-4">
               <div className="p-2 bg-ocean-wash text-primary rounded-lg">
@@ -102,6 +102,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
         {leads.length === 0 ? (
           <div className="px-6 py-12 text-center text-grey-400 text-[14px]">No leads for this campaign yet.</div>
         ) : (
+          <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-grey-50 border-b border-grey-100">
@@ -159,6 +160,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
               })}
             </tbody>
           </table>
+          </div>
         )}
 
         <div className="px-6 py-4 bg-grey-50 flex items-center justify-between border-t border-grey-100">
