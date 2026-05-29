@@ -459,6 +459,25 @@ export async function createRegistrySource(payload: {
   }
 }
 
+export interface RegistryImportResult {
+  imported: number;
+  skipped: number;
+  errors: { row: number; reason: string }[];
+}
+
+export async function importRegistrySources(file: File): Promise<{ result: RegistryImportResult | null; error?: string }> {
+  try {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${BASE}/api/v1/registry/sources/import`, { method: "POST", body: form });
+    const body = (await res.json()) as RegistryImportResult & { error?: string };
+    if (!res.ok) return { result: null, error: body.error ?? `Import failed (${res.status})` };
+    return { result: body };
+  } catch {
+    return { result: null, error: "Could not reach the API." };
+  }
+}
+
 export async function getAnalyticsOverview(): Promise<AnalyticsOverview | null> {
   return apiFetch<AnalyticsOverview>("/analytics/overview");
 }
