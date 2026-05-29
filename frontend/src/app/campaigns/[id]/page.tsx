@@ -3,6 +3,7 @@ import { getCampaign, getLeads } from "@/lib/api";
 import type { Lead } from "@/lib/api";
 import CampaignActions from "./campaign-actions";
 import CampaignDetails from "./campaign-details";
+import LeadActions from "./lead-actions";
 
 const AVATAR_COLORS = [
   "bg-primary-fixed text-on-primary-fixed",
@@ -110,6 +111,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
                 <th className="px-6 py-3 text-[14px] font-semibold text-grey-700">Email</th>
                 <th className="px-4 py-3 text-[14px] font-semibold text-grey-700 text-center">Verified</th>
                 <th className="px-6 py-3 text-[14px] font-semibold text-grey-700">Status</th>
+                <th className="px-2 py-3 text-[14px] font-semibold text-grey-700 text-right pr-6"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-grey-100">
@@ -144,6 +146,13 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
                       <span className={`px-2.5 py-0.5 rounded-full text-[13px] font-medium ${badge.className}`}>
                         {badge.label}
                       </span>
+                    </td>
+                    <td className="px-2 py-4 text-right pr-6">
+                      <LeadActions
+                        leadId={lead.id}
+                        leadName={[lead.first_name, lead.last_name].filter(Boolean).join(" ") || lead.email}
+                        currentCampaignId={id}
+                      />
                     </td>
                   </tr>
                 );

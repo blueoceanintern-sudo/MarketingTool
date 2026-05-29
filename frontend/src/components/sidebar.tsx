@@ -11,6 +11,7 @@ const navItems = [
   { href: "/replies",   label: "Replies",    icon: "reply" },
   { href: "/analytics", label: "Analytics",  icon: "analytics" },
   { href: "/registry",  label: "Source Registry", icon: "database" },
+  { href: "/templates", label: "Email Templates", icon: "auto_awesome" },
 ];
 
 export default function AppSidebar() {

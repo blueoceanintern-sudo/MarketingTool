@@ -47,10 +47,6 @@ export async function shouldQueueForReview(confidenceScore: number): Promise<boo
   return confidenceScore < 70;
 }
 
-export function pickVariant(): "control" | "experimental" {
-  return Math.random() < 0.2 ? "experimental" : "control";
-}
-
 export async function getTotalSent(): Promise<number> {
   return getTotalSentFromDB();
 }

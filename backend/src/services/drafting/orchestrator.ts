@@ -1,19 +1,7 @@
 import { and, eq, ne, notInArray } from "drizzle-orm";
 import { db } from "../../db";
-import { campaigns, companies, emailDrafts, leads } from "../../db/schema";
+import { campaigns, campaignLeads, companies, emailDrafts, leads } from "../../db/schema";
 import { generateDraftsBatch, type CampaignContext } from "./index";
-
-type Persona = "technical" | "executive" | "ops";
-
-// Cheap role-based persona heuristic. The full PRD calls for all three personas
-// per lead — that's a future change once we have variant-selection logic; for
-// now one persona per lead keeps the Batch API call linear in lead count.
-function pickPersona(role: string | null): Persona {
-  const r = (role ?? "").toLowerCase();
-  if (/\b(cto|cio|engineer|developer|tech|it|software|architect|devops)\b/.test(r)) return "technical";
-  if (/\b(ops|operations|admin|coordinator|registrar|admissions)\b/.test(r)) return "ops";
-  return "executive";
-}
 
 function toCampaignContext(row: typeof campaigns.$inferSelect): CampaignContext {
   return {
@@ -41,26 +29,22 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
     return { generated: 0, skipped_no_eligible: false, errors: [`campaign ${campaignId} not found`] };
   }
 
-  // Eligible = in this campaign, enrichment routed it to auto_queue
-  // (verified email + no risk flags + no missing fields), not suppressed,
-  // no existing draft yet.
-  //
-  // rep_review leads are excluded: enrichment flagged something a human needs
-  // to clear first. Once a rep resolves the flag and re-routes to auto_queue,
-  // the next cron tick will pick them up.
+  // Eligible = (1) member of this campaign via campaign_leads, (2) enrichment
+  // routed it to auto_queue, (3) not suppressed, (4) no existing draft yet for
+  // this (lead, campaign) pair (DB also enforces this via unique constraint).
   const draftedRows = await db
     .select({ leadId: emailDrafts.leadId })
     .from(emailDrafts)
     .where(eq(emailDrafts.campaignId, campaignId));
   const alreadyDrafted = draftedRows.map((r) => r.leadId);
 
-  const eligibilityConditions = [
-    eq(leads.campaignId, campaignId),
+  const conditions = [
+    eq(campaignLeads.campaignId, campaignId),
     eq(leads.routing, "auto_queue"),
     ne(leads.status, "suppressed"),
   ];
   if (alreadyDrafted.length > 0) {
-    eligibilityConditions.push(notInArray(leads.id, alreadyDrafted));
+    conditions.push(notInArray(leads.id, alreadyDrafted));
   }
 
   const eligible = await db
@@ -72,9 +56,10 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
       companyName: companies.name,
       industry: companies.industry,
     })
-    .from(leads)
+    .from(campaignLeads)
+    .innerJoin(leads, eq(campaignLeads.leadId, leads.id))
     .innerJoin(companies, eq(leads.companyId, companies.id))
-    .where(and(...eligibilityConditions));
+    .where(and(...conditions));
 
   if (eligible.length === 0) {
     return { generated: 0, skipped_no_eligible: true, errors: [] };
@@ -84,7 +69,6 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
   const requests = eligible.map((lead) => ({
     leadId: lead.id,
     campaignId,
-    persona: pickPersona(lead.role),
     lead: {
       firstName: lead.firstName ?? undefined,
       lastName: lead.lastName ?? undefined,
@@ -97,13 +81,11 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
 
   const results = await generateDraftsBatch(requests);
 
-  // Persist every successfully generated draft. Errors from the batch already
-  // landed in generateDraftsBatch's logs — we surface only the count delta.
   for (const draft of results) {
     await db.insert(emailDrafts).values({
       leadId: draft.leadId,
       campaignId: draft.campaignId,
-      persona: draft.persona,
+      templateId: draft.templateId,
       subject: draft.subject,
       body: draft.body,
       confidenceScore: draft.confidenceScore,

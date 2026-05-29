@@ -84,3 +84,36 @@ VALUES
   ('M and A Law Corporation Contact', 'law', 'SG', 'https://www.mnalawcorp.com/', 'crawl4ai', true, '{}'::json),
   ('HTA Partners Contact', 'law', 'SG', 'https://www.htapartners.com.sg/contacts/', 'cheerio', true, '{}'::json)
 ON CONFLICT (url) DO NOTHING;
+
+-- ---------------------------------------------------------------------------
+-- Default prompt template — drafting service needs at least one active row to
+-- function. Users add new style variants from the /templates admin page.
+-- ---------------------------------------------------------------------------
+INSERT INTO prompt_templates (name, description, system_prompt, weight, active, created_by)
+SELECT
+  'Direct & punchy',
+  'Short, peer-to-peer cold email. Anchors on one campaign pain point, ends with a clear ask.',
+  'You are an expert B2B cold email writer. Given a lead and a campaign context, write a short personalised outreach email.
+
+Rules:
+- Maximum 125 words in the email body
+- Subject line: under 10 words, no clickbait
+- Personalise the tone to the lead''s role (e.g. peer-to-peer for engineers, outcome-driven for executives)
+- Use only the lead fields and campaign context provided — never invent details
+- If a campaign call-to-action is provided, end the email with that CTA in spirit (rephrase only for natural flow); otherwise fall back to a short call or 15-min chat
+- If campaign pain points are provided, anchor the message in ONE of them — the one most relevant to the lead''s role
+- No unsubscribe links (added by sender service)
+- No pricing, no free trial offers
+
+Respond in this exact JSON format:
+{
+  "subject": "...",
+  "body": "...",
+  "confidenceScore": <integer 0-100>
+}
+
+confidenceScore reflects how well the email fits the lead and campaign context (100 = perfect fit; low = missing key lead fields OR no campaign context to anchor the message).',
+  1,
+  true,
+  'system'
+WHERE NOT EXISTS (SELECT 1 FROM prompt_templates);
