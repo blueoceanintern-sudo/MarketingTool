@@ -42,31 +42,40 @@ function extractAllEmails(text: string): string[] {
 async function crawl4aiScrape(url: string): Promise<Lead[]> {
   const baseUrl = process.env.CRAWL4AI_BASE_URL ?? "http://localhost:11235";
 
-  const res = await fetch(`${baseUrl}/crawl`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      urls: [url],
-      browser_config: {
-        type: "BrowserConfig",
-        params: {
-          user_agent: STEALTH_USER_AGENT,
-          headless: true,
-          viewport_width: 1920,
-          viewport_height: 1080,
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 45_000); // 45s max per URL
+
+  let res: Response;
+  try {
+    res = await fetch(`${baseUrl}/crawl`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        urls: [url],
+        browser_config: {
+          type: "BrowserConfig",
+          params: {
+            user_agent: STEALTH_USER_AGENT,
+            headless: true,
+            viewport_width: 1920,
+            viewport_height: 1080,
+          },
         },
-      },
-      crawler_config: {
-        type: "CrawlerRunConfig",
-        params: {
-          simulate_user: true,
-          override_navigator: true,
-          magic: true,
-          delay_before_return_html: 2.0,
+        crawler_config: {
+          type: "CrawlerRunConfig",
+          params: {
+            simulate_user: true,
+            override_navigator: true,
+            magic: true,
+            delay_before_return_html: 2.0,
+          },
         },
-      },
-    }),
-  });
+      }),
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");

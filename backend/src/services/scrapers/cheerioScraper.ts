@@ -1,5 +1,4 @@
 import * as cheerio from "cheerio";
-import fetch from "node-fetch";
 import { sourceRegistry } from "../../config/sourceRegistry";
 
 export interface Lead {
@@ -14,7 +13,14 @@ export async function scrapeWebsite(
   url: string,
   source: keyof typeof sourceRegistry = "generic"
 ): Promise<Lead[]> {
-  const response = await fetch(url);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000); // 15s max
+  let response: Response;
+  try {
+    response = await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
   if (!response.ok) throw new Error(`Failed to fetch: ${url}`);
 
   const html = await response.text();

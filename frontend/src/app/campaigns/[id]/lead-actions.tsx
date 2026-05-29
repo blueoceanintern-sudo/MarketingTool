@@ -8,11 +8,12 @@ interface Props {
   leadId: string;
   leadName: string;
   currentCampaignId: string;
+  onRemoved?: (leadId: string) => void;
 }
 
 type Mode = "add" | "remove";
 
-export default function LeadActions({ leadId, leadName, currentCampaignId }: Props) {
+export default function LeadActions({ leadId, leadName, currentCampaignId, onRemoved }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -60,7 +61,11 @@ export default function LeadActions({ leadId, leadName, currentCampaignId }: Pro
       return;
     }
     closeModal();
-    router.refresh();
+    if (mode === "remove" && onRemoved) {
+      onRemoved(leadId);
+    } else {
+      router.refresh();
+    }
   }
 
   const noTargets = campaigns !== null && campaigns.length === 0;

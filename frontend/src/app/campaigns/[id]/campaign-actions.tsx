@@ -56,7 +56,7 @@ export default function CampaignActions({ campaignId, status }: Props) {
         pollRef.current = null;
         setScraping(false);
         const diff = newCount - beforeCount;
-        setMessage(diff > 0 ? `Done — ${diff} new lead${diff !== 1 ? "s" : ""} added.` : "Scrape complete — no new leads found.");
+        setMessage("Done");
         router.refresh();
       }
     }, 3000);
