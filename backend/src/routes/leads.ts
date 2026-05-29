@@ -1,10 +1,11 @@
 import { Hono } from "hono";
 import { db } from "../db";
-import { leads, companies, campaigns, suppressionList, enrichmentRecords } from "../db/schema";
-import { eq, desc } from "drizzle-orm";
+import { leads, companies, campaigns, campaignLeads, suppressionList, enrichmentRecords, emailDrafts, emailEvents, followUps } from "../db/schema";
+import { eq, desc, and, inArray, isNull, isNotNull } from "drizzle-orm";
 import { enrichLead } from "../services/enrichment/orchestrator";
+import { logAudit } from "../services/audit/log";
 
-function formatLead(row: {
+interface LeadRow {
   id: string;
   firstName: string | null;
   lastName: string | null;
@@ -17,11 +18,11 @@ function formatLead(row: {
   routing: string | null;
   enrichedAt: Date | null;
   scraperUsed: string | null;
-  campaignId: string | null;
   createdAt: Date;
   companyName: string;
-  campaignName: string | null;
-}) {
+}
+
+function formatLead(row: LeadRow, campaignsForLead: { id: string; name: string }[]) {
   return {
     id: row.id,
     first_name: row.firstName ?? "",
@@ -36,10 +37,29 @@ function formatLead(row: {
     scraper_used: row.scraperUsed,
     status: row.status,
     company_name: row.companyName,
-    campaign_id: row.campaignId ?? undefined,
-    campaign_name: row.campaignName ?? undefined,
+    campaigns: campaignsForLead,
     created_at: row.createdAt.toISOString(),
   };
+}
+
+async function attachCampaignsToLeads(leadIds: string[]): Promise<Map<string, { id: string; name: string }[]>> {
+  const map = new Map<string, { id: string; name: string }[]>();
+  if (leadIds.length === 0) return map;
+  const rows = await db
+    .select({
+      leadId: campaignLeads.leadId,
+      id: campaigns.id,
+      name: campaigns.name,
+    })
+    .from(campaignLeads)
+    .innerJoin(campaigns, eq(campaignLeads.campaignId, campaigns.id))
+    .where(inArray(campaignLeads.leadId, leadIds));
+  for (const row of rows) {
+    const bucket = map.get(row.leadId) ?? [];
+    bucket.push({ id: row.id, name: row.name });
+    map.set(row.leadId, bucket);
+  }
+  return map;
 }
 
 // Mounted at /api/v1/leads — all leads, no campaign filter
@@ -60,17 +80,15 @@ allLeadsRouter.get("/", async (c) => {
       routing: leads.routing,
       enrichedAt: leads.enrichedAt,
       scraperUsed: leads.scraperUsed,
-      campaignId: leads.campaignId,
       createdAt: leads.createdAt,
       companyName: companies.name,
-      campaignName: campaigns.name,
     })
     .from(leads)
     .innerJoin(companies, eq(leads.companyId, companies.id))
-    .leftJoin(campaigns, eq(leads.campaignId, campaigns.id))
     .orderBy(leads.createdAt);
 
-  return c.json(rows.map(formatLead));
+  const campaignMap = await attachCampaignsToLeads(rows.map((r) => r.id));
+  return c.json(rows.map((r) => formatLead(r, campaignMap.get(r.id) ?? [])));
 });
 
 // Mounted at /api/v1/campaigns — campaign-scoped lead endpoints
@@ -93,18 +111,17 @@ leadsRouter.get("/:id/leads", async (c) => {
       routing: leads.routing,
       enrichedAt: leads.enrichedAt,
       scraperUsed: leads.scraperUsed,
-      campaignId: leads.campaignId,
       createdAt: leads.createdAt,
       companyName: companies.name,
-      campaignName: campaigns.name,
     })
-    .from(leads)
+    .from(campaignLeads)
+    .innerJoin(leads, eq(campaignLeads.leadId, leads.id))
     .innerJoin(companies, eq(leads.companyId, companies.id))
-    .leftJoin(campaigns, eq(leads.campaignId, campaigns.id))
-    .where(eq(leads.campaignId, campaignId))
+    .where(eq(campaignLeads.campaignId, campaignId))
     .orderBy(leads.createdAt);
 
-  return c.json(rows.map(formatLead));
+  const campaignMap = await attachCampaignsToLeads(rows.map((r) => r.id));
+  return c.json(rows.map((r) => formatLead(r, campaignMap.get(r.id) ?? [])));
 });
 
 leadsRouter.post("/:id/leads/import", async (c) => {
@@ -124,6 +141,7 @@ leadsRouter.post("/:id/leads/import", async (c) => {
   }
 
   const imported: string[] = [];
+  const linkedExisting: string[] = [];
   const skipped: string[] = [];
   const enrichmentQueue: string[] = [];
 
@@ -139,9 +157,23 @@ leadsRouter.post("/:id/leads/import", async (c) => {
     const [suppressed] = await db.select({ id: suppressionList.id }).from(suppressionList).where(eq(suppressionList.email, email)).limit(1);
     if (suppressed) { skipped.push(email); continue; }
 
-    // Check for duplicate email
+    // If the lead already exists, link them to this campaign instead of
+    // refusing the row. m:n means the same person can appear in many imports.
     const [existing] = await db.select({ id: leads.id }).from(leads).where(eq(leads.email, email)).limit(1);
-    if (existing) { skipped.push(email); continue; }
+    if (existing) {
+      const [link] = await db
+        .select({ leadId: campaignLeads.leadId })
+        .from(campaignLeads)
+        .where(and(eq(campaignLeads.leadId, existing.id), eq(campaignLeads.campaignId, campaignId)))
+        .limit(1);
+      if (!link) {
+        await db.insert(campaignLeads).values({ leadId: existing.id, campaignId, source: "csv" });
+        linkedExisting.push(email);
+      } else {
+        skipped.push(email);
+      }
+      continue;
+    }
 
     // Upsert company
     const companyName = row["company_name"] ?? "";
@@ -170,7 +202,6 @@ leadsRouter.post("/:id/leads/import", async (c) => {
 
     const [lead] = await db.insert(leads).values({
       companyId: company.id,
-      campaignId,
       firstName,
       lastName,
       email,
@@ -180,8 +211,11 @@ leadsRouter.post("/:id/leads/import", async (c) => {
       status: "new",
     }).returning();
 
-    imported.push(email);
-    if (lead) enrichmentQueue.push(lead.id);
+    if (lead) {
+      await db.insert(campaignLeads).values({ leadId: lead.id, campaignId, source: "csv" });
+      imported.push(email);
+      enrichmentQueue.push(lead.id);
+    }
   }
 
   // Enrichment runs async — orchestrator owns pipeline_flags + routing.
@@ -193,9 +227,167 @@ leadsRouter.post("/:id/leads/import", async (c) => {
   }
 
   return c.json(
-    { imported: imported.length, skipped: skipped.length, enrichment_queued: enrichmentQueue.length },
+    {
+      imported: imported.length,
+      linked_existing: linkedExisting.length,
+      skipped: skipped.length,
+      enrichment_queued: enrichmentQueue.length,
+    },
     201,
   );
+});
+
+// ---------------------------------------------------------------------------
+// Membership endpoints — replaces the old PATCH /:id/campaign route. With m:n
+// "move" is no longer a primitive; the rep adds and removes campaigns directly.
+// ---------------------------------------------------------------------------
+
+// Add a lead to a campaign
+allLeadsRouter.post("/:id/campaigns", async (c) => {
+  const leadId = c.req.param("id");
+  const [lead] = await db.select({ id: leads.id }).from(leads).where(eq(leads.id, leadId)).limit(1);
+  if (!lead) return c.json({ error: "Lead not found" }, 404);
+
+  const body = await c.req.json<{ campaign_id?: string }>();
+  if (!body.campaign_id) return c.json({ error: "campaign_id is required" }, 400);
+
+  const [target] = await db
+    .select({ id: campaigns.id, status: campaigns.status })
+    .from(campaigns)
+    .where(eq(campaigns.id, body.campaign_id))
+    .limit(1);
+  if (!target) return c.json({ error: "Destination campaign not found" }, 400);
+  if (target.status === "complete") {
+    return c.json({ error: "Cannot add lead to a completed campaign" }, 400);
+  }
+
+  const [existing] = await db
+    .select({ leadId: campaignLeads.leadId })
+    .from(campaignLeads)
+    .where(and(eq(campaignLeads.leadId, leadId), eq(campaignLeads.campaignId, body.campaign_id)))
+    .limit(1);
+  if (existing) {
+    return c.json({ ok: true, message: "Already a member of this campaign", lead_id: leadId, campaign_id: body.campaign_id });
+  }
+
+  await db.insert(campaignLeads).values({ leadId, campaignId: body.campaign_id, source: "manual" });
+
+  await logAudit({
+    actor: "user",
+    action: "lead.add_to_campaign",
+    targetId: leadId,
+    targetType: "lead",
+    ipAddress:
+      c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ??
+      c.req.header("x-real-ip") ??
+      null,
+    metadata: { campaign_id: body.campaign_id },
+  });
+
+  return c.json({ ok: true, lead_id: leadId, campaign_id: body.campaign_id }, 201);
+});
+
+// Remove a lead from a specific campaign. Cascades pending_review drafts and
+// unsent follow_ups for that (lead, campaign) pair. Blocks if anything has
+// already been sent or rep-approved.
+allLeadsRouter.delete("/:id/campaigns/:campaignId", async (c) => {
+  const leadId = c.req.param("id");
+  const campaignId = c.req.param("campaignId");
+
+  const [lead] = await db.select({ id: leads.id }).from(leads).where(eq(leads.id, leadId)).limit(1);
+  if (!lead) return c.json({ error: "Lead not found" }, 404);
+
+  const [membership] = await db
+    .select({ leadId: campaignLeads.leadId })
+    .from(campaignLeads)
+    .where(and(eq(campaignLeads.leadId, leadId), eq(campaignLeads.campaignId, campaignId)))
+    .limit(1);
+  if (!membership) return c.json({ error: "Lead is not in this campaign" }, 404);
+
+  const sentRows = await db
+    .select({ id: emailEvents.id })
+    .from(emailEvents)
+    .innerJoin(emailDrafts, eq(emailEvents.draftId, emailDrafts.id))
+    .where(and(
+      eq(emailDrafts.leadId, leadId),
+      eq(emailDrafts.campaignId, campaignId),
+      isNotNull(emailEvents.sentAt),
+    ));
+  if (sentRows.length > 0) {
+    return c.json({
+      error: `Cannot remove: lead has ${sentRows.length} sent email(s) under this campaign. Sent contact is permanent history.`,
+    }, 409);
+  }
+
+  const lockedDrafts = await db
+    .select({ id: emailDrafts.id })
+    .from(emailDrafts)
+    .where(and(
+      eq(emailDrafts.leadId, leadId),
+      eq(emailDrafts.campaignId, campaignId),
+      inArray(emailDrafts.status, ["approved", "scheduled"]),
+    ));
+  if (lockedDrafts.length > 0) {
+    return c.json({
+      error: `Cannot remove: ${lockedDrafts.length} approved/scheduled draft(s) exist for this lead. Reject them first.`,
+    }, 409);
+  }
+
+  const pendingDrafts = await db
+    .select({ id: emailDrafts.id })
+    .from(emailDrafts)
+    .where(and(
+      eq(emailDrafts.leadId, leadId),
+      eq(emailDrafts.campaignId, campaignId),
+      eq(emailDrafts.status, "pending_review"),
+    ));
+  const pendingDraftIds = pendingDrafts.map((d) => d.id);
+
+  const deletedFollowUps = await db
+    .delete(followUps)
+    .where(and(
+      eq(followUps.leadId, leadId),
+      eq(followUps.campaignId, campaignId),
+      isNull(followUps.sentAt),
+    ))
+    .returning({ id: followUps.id });
+
+  let cascadedDrafts = 0;
+  if (pendingDraftIds.length > 0) {
+    const deleted = await db
+      .delete(emailDrafts)
+      .where(inArray(emailDrafts.id, pendingDraftIds))
+      .returning({ id: emailDrafts.id });
+    cascadedDrafts = deleted.length;
+  }
+
+  await db
+    .delete(campaignLeads)
+    .where(and(eq(campaignLeads.leadId, leadId), eq(campaignLeads.campaignId, campaignId)));
+
+  await logAudit({
+    actor: "user",
+    action: "lead.remove_from_campaign",
+    targetId: leadId,
+    targetType: "lead",
+    ipAddress:
+      c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ??
+      c.req.header("x-real-ip") ??
+      null,
+    metadata: {
+      campaign_id: campaignId,
+      cascaded_pending_drafts: cascadedDrafts,
+      cascaded_unsent_follow_ups: deletedFollowUps.length,
+    },
+  });
+
+  return c.json({
+    ok: true,
+    lead_id: leadId,
+    campaign_id: campaignId,
+    cascaded_pending_drafts: cascadedDrafts,
+    cascaded_unsent_follow_ups: deletedFollowUps.length,
+  });
 });
 
 allLeadsRouter.get("/:id/enrichment", async (c) => {

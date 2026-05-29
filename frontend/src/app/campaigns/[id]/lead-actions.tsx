@@ -1,0 +1,165 @@
+"use client";
+
+import { useRouter } from "next/navigation";
+import { useEffect, useState, type SubmitEvent } from "react";
+import { addLeadToCampaign, getCampaigns, removeLeadFromCampaign, type Campaign } from "@/lib/api";
+
+interface Props {
+  leadId: string;
+  leadName: string;
+  currentCampaignId: string;
+}
+
+type Mode = "add" | "remove";
+
+export default function LeadActions({ leadId, leadName, currentCampaignId }: Props) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [mode, setMode] = useState<Mode>("add");
+  const [targetCampaignId, setTargetCampaignId] = useState<string>("");
+  const [campaigns, setCampaigns] = useState<Campaign[] | null>(null);
+
+  useEffect(() => {
+    if (!open || campaigns !== null) return;
+    void getCampaigns().then((list) => {
+      // For "add", exclude the current campaign + completed campaigns
+      const eligible = list.filter((c) => c.id !== currentCampaignId && c.status !== "complete");
+      setCampaigns(eligible);
+      if (eligible[0]) setTargetCampaignId(eligible[0].id);
+    });
+  }, [open, campaigns, currentCampaignId]);
+
+  function closeModal() {
+    setOpen(false);
+    setError(null);
+    setMode("add");
+  }
+
+  async function handleSubmit(e: SubmitEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setSubmitting(true);
+    setError(null);
+    let result: { ok: boolean; error?: string };
+    if (mode === "add") {
+      if (!targetCampaignId) {
+        setError("Pick a campaign to add the lead to.");
+        setSubmitting(false);
+        return;
+      }
+      result = await addLeadToCampaign(leadId, targetCampaignId);
+    } else {
+      result = await removeLeadFromCampaign(leadId, currentCampaignId);
+    }
+    setSubmitting(false);
+    if (!result.ok) {
+      setError(result.error ?? "Update failed");
+      return;
+    }
+    closeModal();
+    router.refresh();
+  }
+
+  const noTargets = campaigns !== null && campaigns.length === 0;
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setOpen(true); }}
+        className="flex items-center gap-1 px-2 py-1 text-[12px] text-grey-500 hover:text-primary hover:bg-grey-50 rounded"
+        aria-label="Manage lead"
+      >
+        <span className="material-symbols-outlined text-[16px]">more_horiz</span>
+      </button>
+
+      {open && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) closeModal(); }}
+        >
+          <div className="bg-white rounded-lg w-full max-w-md p-6 text-left">
+            <h3 className="text-[18px] font-bold mb-1">Manage lead</h3>
+            <p className="text-[12px] text-grey-500 mb-4 truncate">{leadName}</p>
+
+            <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+              <label className="flex items-start gap-3 cursor-pointer p-3 border border-grey-200 rounded-lg hover:bg-grey-50">
+                <input
+                  type="radio"
+                  name="mode"
+                  value="add"
+                  checked={mode === "add"}
+                  onChange={() => setMode("add")}
+                  className="mt-1"
+                />
+                <div className="flex-1">
+                  <p className="text-[13px] font-medium">Add to another campaign</p>
+                  <p className="text-[12px] text-grey-500 mt-0.5">
+                    The lead stays in this campaign and is also added to the one you pick. A separate draft will generate for the new campaign on the next cron tick.
+                  </p>
+                  {mode === "add" && (
+                    <select
+                      value={targetCampaignId}
+                      onChange={(e) => setTargetCampaignId(e.target.value)}
+                      disabled={campaigns === null || noTargets}
+                      className="mt-2 w-full border border-grey-200 rounded-lg px-3 py-2 text-[13px] bg-white"
+                    >
+                      {campaigns === null && <option>Loading…</option>}
+                      {noTargets && <option>No other eligible campaigns</option>}
+                      {campaigns?.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name} ({c.status})
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              </label>
+
+              <label className="flex items-start gap-3 cursor-pointer p-3 border border-grey-200 rounded-lg hover:bg-grey-50">
+                <input
+                  type="radio"
+                  name="mode"
+                  value="remove"
+                  checked={mode === "remove"}
+                  onChange={() => setMode("remove")}
+                  className="mt-1"
+                />
+                <div className="flex-1">
+                  <p className="text-[13px] font-medium">Remove from this campaign</p>
+                  <p className="text-[12px] text-grey-500 mt-0.5">
+                    The lead is unlinked from this campaign only. Other campaign memberships and the lead record itself stay intact. Pending drafts for this campaign are deleted.
+                  </p>
+                </div>
+              </label>
+
+              {error && (
+                <p className="text-danger text-[13px] border border-danger-bg bg-danger-bg/30 px-3 py-2 rounded-lg">
+                  {error}
+                </p>
+              )}
+
+              <div className="flex gap-3 justify-end">
+                <button
+                  type="button"
+                  onClick={closeModal}
+                  className="px-4 py-2 border border-grey-200 rounded-lg text-[13px]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitting || (mode === "add" && (noTargets || campaigns === null))}
+                  className="px-6 py-2 bg-primary text-white rounded-lg text-[13px] font-semibold disabled:opacity-60"
+                >
+                  {submitting ? "Applying…" : "Apply"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}

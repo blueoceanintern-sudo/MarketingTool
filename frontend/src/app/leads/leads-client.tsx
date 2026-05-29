@@ -49,14 +49,17 @@ export default function LeadsClient({ initialLeads }: Props) {
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
 
   const campaigns = useMemo(() => {
-    const names = new Set(initialLeads.map((l) => l.campaign_name).filter(Boolean) as string[]);
+    const names = new Set<string>();
+    for (const lead of initialLeads) {
+      for (const c of lead.campaigns) names.add(c.name);
+    }
     return Array.from(names).sort();
   }, [initialLeads]);
 
   const filtered = useMemo(() => {
     return initialLeads.filter((lead) => {
       if (statusFilter !== "all" && lead.status !== statusFilter) return false;
-      if (campaignFilter !== "all" && lead.campaign_name !== campaignFilter) return false;
+      if (campaignFilter !== "all" && !lead.campaigns.some((c) => c.name === campaignFilter)) return false;
       if (emailStatusFilter !== "all" && lead.email_status !== emailStatusFilter) return false;
       if (routingFilter !== "all" && lead.routing !== routingFilter) return false;
       return true;
@@ -200,7 +203,22 @@ export default function LeadsClient({ initialLeads }: Props) {
                     <td className="px-4 py-3 text-[12px] text-grey-500">
                       {lead.enrichment_source ? sourceLabel[lead.enrichment_source] : "—"}
                     </td>
-                    <td className="px-4 py-3 text-[12px] text-grey-500">{lead.campaign_name ?? "—"}</td>
+                    <td className="px-4 py-3 text-[12px] text-grey-500">
+                      {lead.campaigns.length === 0 ? (
+                        "—"
+                      ) : (
+                        <div className="flex flex-wrap gap-1">
+                          {lead.campaigns.map((c) => (
+                            <span
+                              key={c.id}
+                              className="inline-flex items-center px-2 py-0.5 rounded-full bg-ocean-wash text-primary text-[11px] font-medium"
+                            >
+                              {c.name}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       <span className={`px-2 py-0.5 text-xs font-bold rounded-full ${badge.className}`}>
                         {badge.label}

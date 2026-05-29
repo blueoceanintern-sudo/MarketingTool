@@ -26,10 +26,8 @@ Staff operate the system, and switching industries only requires adding a row to
 ### Goals (v1)
 
 - Scrape leads from any industry
-- Generate three persona-tuned email drafts per lead:
-  - Technical
-  - Executive
-  - Ops
+- A lead can belong to many campaigns (m:n via `campaign_leads`); each (lead, campaign) pair gets one personalised email draft tuned to the campaign's goal + the lead's role
+- Drafts are generated using one of N admin-managed prompt templates (style variants), picked by weighted-random; engagement is tracked per template so reps can compare which styles land best
 - Automatically route replies:
   - Positive → book demo
   - No reply → follow-up
@@ -67,7 +65,7 @@ Staff operate the system, and switching industries only requires adding a row to
    ↓
 2. Enrich
    ↓
-3. AI Drafts (3 personas / lead)
+3. AI Drafts (1 per lead per campaign; prompt template picked by weight)
    ↓
 3.1 Confidence Score
    ↓
@@ -115,12 +113,12 @@ If any condition below is triggered:
 
 ### Stage 2 — Draft Quality Score
 
-Each persona draft is scored out of 100.
+Each draft is scored out of 100.
 
 | Factor | Description | Weight |
 |---|---|---|
 | Lead Data Completeness | Role, company size, industry, etc. | 25% |
-| Persona Alignment | Technical vs Executive vs Ops alignment | 25% |
+| Role Alignment | Email tone matches the lead's role (peer-to-peer for engineers, outcome-driven for execs, etc.) | 25% |
 | Personalisation Quality | Specificity and relevance | 25% |
 | Length Compliance | Under 125 words | 25% |
 

@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { db } from "../db";
-import { campaigns, leads, emailDrafts, emailEvents, scrapeJobs, normalizeVertical, normalizeGeo } from "../db/schema";
+import { campaigns, campaignLeads, emailDrafts, emailEvents, scrapeJobs, normalizeVertical, normalizeGeo } from "../db/schema";
 import { eq, and, isNotNull, count } from "drizzle-orm";
 import { runScrapeJob } from "../services/scraping/runScrapeJob";
 import { generateDraftsForCampaign } from "../services/drafting/orchestrator";
@@ -10,8 +10,8 @@ type CampaignStatus = "draft" | "active" | "paused" | "complete";
 async function computeStats(campaignId: string) {
   const [leadsRow] = await db
     .select({ total: count() })
-    .from(leads)
-    .where(eq(leads.campaignId, campaignId));
+    .from(campaignLeads)
+    .where(eq(campaignLeads.campaignId, campaignId));
 
   const [pendingRow] = await db
     .select({ total: count() })
@@ -252,10 +252,17 @@ campaignsRouter.post("/:id/drafts/generate", async (c) => {
     .limit(1);
   if (!campaign) return c.json({ error: "Campaign not found" }, 404);
 
+  // Match the cron's gate — drafting only runs for active campaigns. Keeps
+  // the API in sync with the frontend button (which disables on draft/complete)
+  // and stops direct API calls from bypassing it.
+  if (campaign.status !== "active") {
+    return c.json({ error: `Cannot generate drafts: campaign is ${campaign.status}. Activate it first.` }, 400);
+  }
+
   // Fire-and-forget — Batch API jobs poll for several seconds. The campaign
   // pulls its description / pain_points / call_to_action straight from the
   // row inside the orchestrator, so emails are anchored on this campaign's
-  // goal rather than a generic per-persona template.
+  // goal rather than a generic role-based message.
   void generateDraftsForCampaign(campaign.id)
     .then((result) => {
       console.log(

@@ -53,8 +53,7 @@ export interface Lead {
   scraper_used: ScraperType | null;
   status: LeadStatus;
   company_name: string;
-  campaign_id?: string;
-  campaign_name?: string;
+  campaigns: { id: string; name: string }[];
   created_at: string;
 }
 
@@ -96,12 +95,40 @@ export interface Draft {
   lead_role: string;
   campaign_id: string;
   campaign_name: string;
-  persona: "technical" | "executive" | "ops";
+  template_id: string;
   subject: string;
   body: string;
   confidence_score: number;
   status: DraftStatus;
   created_at: string;
+}
+
+export interface PromptTemplate {
+  id: string;
+  name: string;
+  description: string | null;
+  system_prompt: string;
+  weight: number;
+  active: boolean;
+  parent_template_id: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TemplateEngagement {
+  id: string;
+  name: string;
+  description: string | null;
+  weight: number;
+  active: boolean;
+  created_by: string;
+  parent_template_id: string | null;
+  sent: number;
+  opened: number;
+  replied: number;
+  open_rate: number;
+  reply_rate: number;
 }
 
 export interface Reply {
@@ -279,6 +306,113 @@ export async function getLeads(campaignId?: string): Promise<Lead[]> {
 
 export async function getLeadEnrichment(leadId: string): Promise<EnrichmentRecord | null> {
   return apiFetch<EnrichmentRecord>(`/leads/${leadId}/enrichment`);
+}
+
+export async function addLeadToCampaign(
+  leadId: string,
+  campaignId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch(`${BASE}/api/v1/leads/${leadId}/campaigns`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ campaign_id: campaignId }),
+    });
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    if (!res.ok) return { ok: false, error: body.error ?? `Add failed (${res.status})` };
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "Could not reach the API." };
+  }
+}
+
+export async function removeLeadFromCampaign(
+  leadId: string,
+  campaignId: string,
+): Promise<{ ok: boolean; error?: string; cascaded_pending_drafts?: number; cascaded_unsent_follow_ups?: number }> {
+  try {
+    const res = await fetch(`${BASE}/api/v1/leads/${leadId}/campaigns/${campaignId}`, {
+      method: "DELETE",
+    });
+    const body = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      cascaded_pending_drafts?: number;
+      cascaded_unsent_follow_ups?: number;
+    };
+    if (!res.ok) return { ok: false, error: body.error ?? `Remove failed (${res.status})` };
+    return {
+      ok: true,
+      cascaded_pending_drafts: body.cascaded_pending_drafts,
+      cascaded_unsent_follow_ups: body.cascaded_unsent_follow_ups,
+    };
+  } catch {
+    return { ok: false, error: "Could not reach the API." };
+  }
+}
+
+export async function getPromptTemplates(): Promise<PromptTemplate[]> {
+  return (await apiFetch<PromptTemplate[]>("/templates")) ?? [];
+}
+
+export async function createPromptTemplate(payload: {
+  name: string;
+  description?: string | null;
+  system_prompt: string;
+  weight?: number;
+  active?: boolean;
+  parent_template_id?: string | null;
+}): Promise<{ template: PromptTemplate | null; error?: string }> {
+  try {
+    const res = await fetch(`${BASE}/api/v1/templates`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return { template: null, error: body.error ?? `Create failed (${res.status})` };
+    }
+    return { template: (await res.json()) as PromptTemplate };
+  } catch {
+    return { template: null, error: "Could not reach the API." };
+  }
+}
+
+export async function updatePromptTemplate(
+  id: string,
+  payload: { name?: string; description?: string | null; weight?: number; active?: boolean },
+): Promise<{ template: PromptTemplate | null; error?: string }> {
+  try {
+    const res = await fetch(`${BASE}/api/v1/templates/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return { template: null, error: body.error ?? `Update failed (${res.status})` };
+    }
+    return { template: (await res.json()) as PromptTemplate };
+  } catch {
+    return { template: null, error: "Could not reach the API." };
+  }
+}
+
+export async function deletePromptTemplate(id: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch(`${BASE}/api/v1/templates/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return { ok: false, error: body.error ?? `Delete failed (${res.status})` };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "Could not reach the API." };
+  }
+}
+
+export async function getTemplateEngagement(): Promise<TemplateEngagement[]> {
+  return (await apiFetch<TemplateEngagement[]>("/analytics/templates")) ?? [];
 }
 
 export async function getDraftQueue(): Promise<Draft[]> {

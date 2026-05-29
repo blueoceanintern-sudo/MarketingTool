@@ -3,7 +3,6 @@ import { db } from "../../db";
 import {
   leads,
   companies,
-  campaigns,
   emailEvents,
   riskFlags,
   suppressionList,
@@ -78,10 +77,13 @@ export async function enrichLead(leadId: string): Promise<EnrichmentRecord> {
 }
 
 async function buildInput(leadId: string): Promise<EnrichmentInput> {
+  // With lead↔campaign m:n, a lead can belong to many campaigns with
+  // different geos. Market is resolved from company.location only —
+  // company.location is already set by scrape/CSV import from the
+  // originating campaign's geo, so the signal is equivalent.
   const [row] = await db
     .select({
       leadId: leads.id,
-      campaignId: leads.campaignId,
       firstName: leads.firstName,
       lastName: leads.lastName,
       email: leads.email,
@@ -89,21 +91,21 @@ async function buildInput(leadId: string): Promise<EnrichmentInput> {
       companyName: companies.name,
       industry: companies.industry,
       location: companies.location,
-      campaignGeography: campaigns.geography,
     })
     .from(leads)
     .innerJoin(companies, eq(leads.companyId, companies.id))
-    .leftJoin(campaigns, eq(leads.campaignId, campaigns.id))
     .where(eq(leads.id, leadId))
     .limit(1);
 
   if (!row) throw new Error(`Lead not found: ${leadId}`);
 
-  const market = resolveMarket(row.campaignGeography, row.location);
+  const market = resolveMarket(null, row.location);
 
   return {
     leadId: row.leadId,
-    campaignId: row.campaignId,
+    // Lead↔campaign is m:n; enrichment is per-lead, not per-campaign. The
+    // enrichment_records.campaign_id column stays nullable for this reason.
+    campaignId: null,
     market,
     seed: {
       firstName: row.firstName,
