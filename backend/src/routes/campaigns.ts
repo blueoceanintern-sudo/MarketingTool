@@ -1,9 +1,10 @@
 import { Hono } from "hono";
 import { db } from "../db";
-import { campaigns, campaignLeads, emailDrafts, emailEvents, scrapeJobs, normalizeVertical, normalizeGeo } from "../db/schema";
+import { campaigns, campaignLeads, emailDrafts, emailEvents, scrapeJobs, sourceRegistry, normalizeVertical, normalizeGeo } from "../db/schema";
 import { eq, and, isNotNull, count } from "drizzle-orm";
 import { runScrapeJob } from "../services/scraping/runScrapeJob";
 import { generateDraftsForCampaign } from "../services/drafting/orchestrator";
+import { discoverSources, getDirectoryConfig } from "../services/sourceRegistry";
 
 type CampaignStatus = "draft" | "active" | "paused" | "complete";
 
@@ -118,8 +119,91 @@ campaignsRouter.post("/", async (c) => {
     })
     .returning();
 
-  return c.json(formatCampaign(row!, await computeStats(row!.id)), 201);
+  const discovery = await maybeAutoDiscover(row!.id, row!.vertical, row!.geography);
+
+  return c.json({ ...formatCampaign(row!, await computeStats(row!.id)), discovery }, 201);
 });
+
+// Auto-discovery contract returned to the client on campaign create. The UI
+// uses `status` to decide which toast (or none) to show.
+type DiscoveryStatus =
+  | { status: "already_seeded"; message: string }
+  | { status: "triggered"; message: string; domains: string[] }
+  | { status: "skipped_no_config"; message: string };
+
+async function maybeAutoDiscover(
+  campaignId: string,
+  verticalNormalized: string,
+  geographyRaw: string,
+): Promise<DiscoveryStatus> {
+  // Campaign geography is a comma-separated list — trigger discovery for
+  // every geo independently so an SG+AU campaign auto-fills both pools.
+  const geos = geographyRaw.split(",").map((g) => g.trim()).filter(Boolean);
+  if (geos.length === 0) {
+    return { status: "skipped_no_config", message: "Campaign has no geography to discover sources for." };
+  }
+
+  type PerGeoOutcome = {
+    geo: string;
+    status: "triggered" | "already_seeded" | "skipped_no_config";
+    domains: string[];
+  };
+  const outcomes: PerGeoOutcome[] = [];
+
+  for (const geo of geos) {
+    const [existing] = await db
+      .select({ id: sourceRegistry.id })
+      .from(sourceRegistry)
+      .where(and(eq(sourceRegistry.vertical, verticalNormalized), eq(sourceRegistry.geo, geo)))
+      .limit(1);
+    if (existing) {
+      outcomes.push({ geo, status: "already_seeded", domains: [] });
+      continue;
+    }
+
+    const config = getDirectoryConfig(verticalNormalized, geo);
+    if (!config) {
+      outcomes.push({ geo, status: "skipped_no_config", domains: [] });
+      continue;
+    }
+
+    // Fire-and-forget — Tavily + HEAD checks take ~10–30s per geo, run
+    // independently so one slow domain doesn't block the others.
+    void discoverSources(verticalNormalized, geo, campaignId).catch((err) => {
+      console.error(`[discovery] ${verticalNormalized}:${geo} failed:`, err);
+    });
+    outcomes.push({ geo, status: "triggered", domains: config.domains });
+  }
+
+  // Aggregate to a single DiscoveryStatus. Priority: triggered > skipped > seeded.
+  // The toast reads this; we mention skipped geos inside the triggered message
+  // so the rep sees partial coverage without two competing toasts.
+  const triggered = outcomes.filter((o) => o.status === "triggered");
+  const skipped = outcomes.filter((o) => o.status === "skipped_no_config");
+
+  if (triggered.length > 0) {
+    const triggeredGeos = triggered.map((o) => o.geo).join(", ");
+    const allDomains = Array.from(new Set(triggered.flatMap((o) => o.domains)));
+    let message = `Discovering sources for ${verticalNormalized} in ${triggeredGeos}. New leads available shortly.`;
+    if (skipped.length > 0) {
+      message += ` Skipped ${skipped.map((o) => o.geo).join(", ")} (no directory config).`;
+    }
+    return { status: "triggered", message, domains: allDomains };
+  }
+
+  if (skipped.length > 0) {
+    const skippedGeos = skipped.map((o) => o.geo).join(", ");
+    return {
+      status: "skipped_no_config",
+      message: `No directory config for ${verticalNormalized} in ${skippedGeos}. Add sources manually from Source Registry.`,
+    };
+  }
+
+  return {
+    status: "already_seeded",
+    message: `Source pool already exists for ${verticalNormalized} in ${geos.join(", ")}.`,
+  };
+}
 
 campaignsRouter.patch("/:id", async (c) => {
   const [row] = await db

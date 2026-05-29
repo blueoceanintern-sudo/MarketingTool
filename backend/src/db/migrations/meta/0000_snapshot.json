@@ -1,5 +1,5 @@
 {
-  "id": "b629b5aa-1631-4952-b140-d3639e088cb8",
+  "id": "fe6f4d79-b5dc-4540-851b-f9a17f6f4311",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -1379,6 +1379,12 @@
           "notNull": true,
           "default": true
         },
+        "generated_by": {
+          "name": "generated_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp",
@@ -1395,7 +1401,21 @@
         }
       },
       "indexes": {},
-      "foreignKeys": {},
+      "foreignKeys": {
+        "source_registry_generated_by_campaigns_id_fk": {
+          "name": "source_registry_generated_by_campaigns_id_fk",
+          "tableFrom": "source_registry",
+          "tableTo": "campaigns",
+          "columnsFrom": [
+            "generated_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "source_registry_url_unique": {

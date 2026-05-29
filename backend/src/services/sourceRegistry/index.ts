@@ -2,7 +2,7 @@ import { lookup } from "node:dns/promises";
 import { db } from "../../db";
 import { sourceRegistry, normalizeVertical, normalizeGeo } from "../../db/schema";
 
-interface DirectoryConfig {
+export interface DirectoryConfig {
   query: string;
   domains: string[];
 }
@@ -10,7 +10,7 @@ interface DirectoryConfig {
 // Add a new entry here when onboarding a new vertical or market.
 // domains → passed to Tavily as include_domains (restricts results to those sites).
 // query  → search terms used within those domains.
-const DIRECTORY_CONFIGS: Record<string, DirectoryConfig> = {
+export const DIRECTORY_CONFIGS: Record<string, DirectoryConfig> = {
   "education:SG": {
     query: "Singapore school contact principal",
     domains: ["moe.edu.sg", "cpe.gov.sg"],
@@ -24,6 +24,19 @@ const DIRECTORY_CONFIGS: Record<string, DirectoryConfig> = {
     domains: ["nces.ed.gov", "ed.gov"],
   },
 };
+
+// Whether (vertical, geo) has a Tavily directory config. Callers use this to
+// distinguish "discovery skipped because no config" from "discovery ran and
+// found nothing." Routes can also expose this so UIs can show coverage.
+export function hasDirectoryConfig(vertical: string, geo: string): boolean {
+  const key = `${normalizeVertical(vertical)}:${resolveGeo(geo)}`;
+  return key in DIRECTORY_CONFIGS;
+}
+
+export function getDirectoryConfig(vertical: string, geo: string): DirectoryConfig | null {
+  const key = `${normalizeVertical(vertical)}:${resolveGeo(geo)}`;
+  return DIRECTORY_CONFIGS[key] ?? null;
+}
 
 const PRIVATE_IP_RE =
   /^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.|::1$|0\.0\.0\.0)/;
@@ -98,7 +111,7 @@ function resolveGeo(geo: string): string {
 export async function discoverSources(
   vertical: string,
   geo: string,
-  campaignId: string,
+  campaignId: string | null,
 ): Promise<number> {
   const key = `${normalizeVertical(vertical)}:${resolveGeo(geo)}`;
   const config = DIRECTORY_CONFIGS[key];
