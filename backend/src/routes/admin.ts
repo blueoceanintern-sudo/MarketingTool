@@ -157,32 +157,38 @@ adminRouter.post("/registry/sources/import", async (c) => {
 });
 
 adminRouter.get("/suppression", async (c) => {
-  const rows = await db.select().from(suppressionList).orderBy(suppressionList.addedAt);
+  const campaignId = c.req.query("campaign_id");
+  const rows = await db
+    .select()
+    .from(suppressionList)
+    .where(campaignId ? eq(suppressionList.campaignId, campaignId) : undefined)
+    .orderBy(suppressionList.addedAt);
   return c.json(rows.map((r) => ({
     id: r.id,
     email: r.email,
+    campaign_id: r.campaignId,
     reason: r.reason,
     added_at: r.addedAt.toISOString(),
   })));
 });
 
 adminRouter.post("/suppression", async (c) => {
-  const body = await c.req.json<{ email?: string; reason?: string }>();
+  const body = await c.req.json<{ email?: string; campaign_id?: string; reason?: string }>();
 
-  if (!body.email || !body.reason) {
-    return c.json({ error: "email and reason are required" }, 400);
+  if (!body.email || !body.campaign_id || !body.reason) {
+    return c.json({ error: "email, campaign_id, and reason are required" }, 400);
   }
 
-  const reason = body.reason as "unsubscribed" | "spam_complaint" | "hostile" | "manual";
+  const reason = body.reason as "unsubscribed" | "manual";
 
   const [row] = await db
     .insert(suppressionList)
-    .values({ email: body.email, reason })
+    .values({ email: body.email, campaignId: body.campaign_id, reason })
     .onConflictDoNothing()
     .returning();
 
-  if (!row) return c.json({ message: "Email already suppressed" }, 200);
-  return c.json({ id: row.id, email: row.email, reason: row.reason, added_at: row.addedAt.toISOString() }, 201);
+  if (!row) return c.json({ message: "Email already suppressed for this campaign" }, 200);
+  return c.json({ id: row.id, email: row.email, campaign_id: row.campaignId, reason: row.reason, added_at: row.addedAt.toISOString() }, 201);
 });
 
 // ---------------------------------------------------------------------------

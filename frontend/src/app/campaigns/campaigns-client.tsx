@@ -108,7 +108,7 @@ export default function CampaignsClient({ initialCampaigns }: Props) {
   }
 
   return (
-    <div className="p-10 max-w-[1600px] mx-auto">
+    <div className="p-4 sm:p-6 lg:p-10 max-w-[1600px] mx-auto">
       <div className="flex justify-between items-end mb-8">
         <div>
           <h2 className="text-[20px] font-bold text-primary">Campaigns</h2>
@@ -124,7 +124,7 @@ export default function CampaignsClient({ initialCampaigns }: Props) {
         </button>
       </div>
 
-      <div className="grid grid-cols-4 gap-6 mb-8">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6 mb-8">
         <div className="bg-white p-5 rounded-lg border border-grey-100">
           <p className="text-[13px] text-grey-500">Active Leads</p>
           <h3 className="text-[24px] font-bold font-mono mt-2">{totalLeads.toLocaleString()}</h3>
@@ -168,6 +168,7 @@ export default function CampaignsClient({ initialCampaigns }: Props) {
             {campaigns.length === 0 ? "No campaigns yet." : "No campaigns match this filter."}
           </p>
         ) : (
+          <div className="overflow-x-auto">
           <table className="w-full border-collapse">
             <thead className="bg-grey-50">
               <tr className="text-left border-b border-grey-100">
@@ -203,6 +204,7 @@ export default function CampaignsClient({ initialCampaigns }: Props) {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 

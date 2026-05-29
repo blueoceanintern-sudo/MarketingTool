@@ -72,7 +72,7 @@ export default function LeadsClient({ initialLeads }: Props) {
 
   if (initialLeads.length === 0) {
     return (
-      <div className="p-10 max-w-[1600px] mx-auto">
+      <div className="p-4 sm:p-6 lg:p-10 max-w-[1600px] mx-auto">
         <h1 className="text-[20px] font-bold text-primary">All Leads</h1>
         <p className="mt-8 text-center text-grey-400 text-[14px]">
           No leads yet. Run a campaign scrape or import a CSV to add leads.
@@ -82,13 +82,13 @@ export default function LeadsClient({ initialLeads }: Props) {
   }
 
   return (
-    <div className="p-10 max-w-[1600px] mx-auto">
+    <div className="p-4 sm:p-6 lg:p-10 max-w-[1600px] mx-auto">
       <div className="mb-8">
         <h1 className="text-[20px] font-bold text-primary">All Leads</h1>
         <p className="text-[13px] text-grey-500 mt-1">{initialLeads.length} leads total</p>
       </div>
 
-      <div className="grid grid-cols-4 gap-6 mb-8">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6 mb-8">
         <div className="bg-white p-5 rounded-lg border border-grey-100">
           <p className="text-[13px] text-grey-500">Showing</p>
           <h3 className="text-[28px] font-bold font-mono mt-2">{filtered.length}</h3>
@@ -157,6 +157,7 @@ export default function LeadsClient({ initialLeads }: Props) {
         {filtered.length === 0 ? (
           <p className="px-6 py-12 text-center text-grey-400">No leads match these filters.</p>
         ) : (
+          <div className="overflow-x-auto">
           <table className="w-full border-collapse">
             <thead className="bg-grey-50 border-b border-grey-100">
               <tr className="text-left">
@@ -229,6 +230,7 @@ export default function LeadsClient({ initialLeads }: Props) {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 

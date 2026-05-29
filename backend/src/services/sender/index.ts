@@ -2,12 +2,14 @@ import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
 import { db } from "../../db";
 import { suppressionList, emailDrafts, emailEvents, campaigns, leads } from "../../db/schema";
 import { eq, and, isNotNull, count, gte } from "drizzle-orm";
+
 import { buildEmailHtml } from "../../templates/outreachEmail";
 
 interface SendPayload {
   draftId: string;
   toEmail: string;
   leadId: string;
+  campaignId: string;
   isVerified: boolean;
   hasRiskFlags: boolean;
 }
@@ -71,12 +73,12 @@ function getSesClient(): SESClient {
 }
 
 export async function sendDraft(payload: SendPayload): Promise<SendResult> {
-  const { draftId, toEmail, leadId, isVerified, hasRiskFlags } = payload;
+  const { draftId, toEmail, leadId, campaignId, isVerified, hasRiskFlags } = payload;
 
   const [suppressed] = await db
     .select({ id: suppressionList.id })
     .from(suppressionList)
-    .where(eq(suppressionList.email, toEmail))
+    .where(and(eq(suppressionList.email, toEmail), eq(suppressionList.campaignId, campaignId)))
     .limit(1);
   if (suppressed) return { draftId, status: "blocked", reason: "suppression_list" };
 
@@ -125,9 +127,9 @@ export async function sendDraft(payload: SendPayload): Promise<SendResult> {
   if (!fromAddress) throw new Error("AWS_SES_FROM_ADDRESS is required");
 
   const apiBase = getApiBase();
-  const unsubscribeUrl = `${apiBase}/unsubscribe?id=${leadId}`;
+  const unsubscribeUrl = `${apiBase}/unsubscribe?id=${leadId}&campaign=${campaignId}`;
   const textBody = `${draft.body}\n\nTo unsubscribe: ${unsubscribeUrl}`;
-  const htmlBody = buildEmailHtml(draft.body, leadId, apiBase);
+  const htmlBody = buildEmailHtml(draft.body, leadId, apiBase, campaignId);
 
   const command = new SendEmailCommand({
     Source: fromAddress,

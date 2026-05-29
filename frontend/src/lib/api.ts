@@ -329,9 +329,12 @@ export async function addLeadToCampaign(
 export async function removeLeadFromCampaign(
   leadId: string,
   campaignId: string,
+  reason?: string,
 ): Promise<{ ok: boolean; error?: string; cascaded_pending_drafts?: number; cascaded_unsent_follow_ups?: number }> {
   try {
-    const res = await fetch(`${BASE}/api/v1/leads/${leadId}/campaigns/${campaignId}`, {
+    const url = new URL(`${BASE}/api/v1/leads/${leadId}/campaigns/${campaignId}`);
+    if (reason) url.searchParams.set("reason", reason);
+    const res = await fetch(url.toString(), {
       method: "DELETE",
     });
     const body = (await res.json().catch(() => ({}))) as {

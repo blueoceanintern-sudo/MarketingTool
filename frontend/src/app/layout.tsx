@@ -31,9 +31,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=block"
         />
       </head>
-      <body className="bg-background text-foreground antialiased min-w-[1280px]">
+      <body className="bg-background text-foreground antialiased">
         <AppSidebar />
-        <header className="fixed top-0 right-0 left-[220px] h-16 bg-white border-b border-grey-100 z-40 flex items-center justify-between px-10">
+        <header className="fixed top-0 right-0 left-[220px] h-16 bg-white border-b border-grey-100 z-40 flex items-center justify-between px-4 sm:px-6 lg:px-10">
           <div className="flex items-center bg-grey-50 border border-grey-100 rounded-lg px-3 py-1.5 w-80 gap-2">
             <span className="material-symbols-outlined text-grey-500 text-[20px]">
               search
