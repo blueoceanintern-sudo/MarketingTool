@@ -188,6 +188,7 @@ CREATE TABLE "source_registry" (
 	"legal_flag" boolean DEFAULT false NOT NULL,
 	"selectors" json,
 	"active" boolean DEFAULT true NOT NULL,
+	"generated_by" uuid,
 	"created_at" timestamp DEFAULT now() NOT NULL,
 	"updated_at" timestamp DEFAULT now() NOT NULL,
 	CONSTRAINT "source_registry_url_unique" UNIQUE("url")
@@ -220,6 +221,7 @@ ALTER TABLE "leads" ADD CONSTRAINT "leads_company_id_companies_id_fk" FOREIGN KE
 ALTER TABLE "replies" ADD CONSTRAINT "replies_email_event_id_email_events_id_fk" FOREIGN KEY ("email_event_id") REFERENCES "public"."email_events"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "risk_flags" ADD CONSTRAINT "risk_flags_lead_id_leads_id_fk" FOREIGN KEY ("lead_id") REFERENCES "public"."leads"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "scrape_jobs" ADD CONSTRAINT "scrape_jobs_campaign_id_campaigns_id_fk" FOREIGN KEY ("campaign_id") REFERENCES "public"."campaigns"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "source_registry" ADD CONSTRAINT "source_registry_generated_by_campaigns_id_fk" FOREIGN KEY ("generated_by") REFERENCES "public"."campaigns"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "campaign_leads_campaign_id_idx" ON "campaign_leads" USING btree ("campaign_id");--> statement-breakpoint
 CREATE INDEX "email_drafts_body_embedding_idx" ON "email_drafts" USING hnsw ("body_embedding" vector_cosine_ops);--> statement-breakpoint
 CREATE INDEX "enrichment_records_lead_enriched_at_idx" ON "enrichment_records" USING btree ("lead_id","enriched_at" DESC NULLS LAST);

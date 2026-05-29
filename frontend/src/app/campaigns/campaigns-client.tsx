@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, type SubmitEvent } from "react";
+import { toast } from "sonner";
 import { createCampaign, type Campaign, type CampaignStatus } from "@/lib/api";
 
 const statusConfig: Record<CampaignStatus, { label: string; className: string }> = {
@@ -86,7 +87,7 @@ export default function CampaignsClient({ initialCampaigns }: Props) {
       .split("\n")
       .map((p) => p.trim())
       .filter(Boolean);
-    const { campaign, error } = await createCampaign({
+    const { campaign, discovery, error } = await createCampaign({
       name: form.name.trim(),
       vertical: form.vertical.trim(),
       geography: form.geography.split(",").map((g) => g.trim().toUpperCase()).filter(Boolean),
@@ -104,6 +105,23 @@ export default function CampaignsClient({ initialCampaigns }: Props) {
     setCampaigns((prev) => [campaign, ...prev]);
     setShowModal(false);
     resetForm();
+
+    // Surface auto-discovery outcome. already_seeded is the silent case
+    // (source pool already exists) — no toast needed there.
+    if (discovery?.status === "triggered") {
+      toast.info(discovery.message, {
+        description: discovery.domains.length
+          ? `Searching: ${discovery.domains.join(", ")}`
+          : undefined,
+        duration: 8000,
+      });
+    } else if (discovery?.status === "skipped_no_config") {
+      toast.warning(discovery.message, {
+        action: { label: "Open Registry", onClick: () => router.push("/registry") },
+        duration: 10000,
+      });
+    }
+
     router.push(`/campaigns/${campaign.id}`);
   }
 
