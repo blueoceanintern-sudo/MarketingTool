@@ -1,7 +1,7 @@
 import cron from "node-cron";
 import { db } from "../db";
-import { followUps, leads, emailEvents, riskFlags, scrapeJobs, campaigns, templatePerformance, replies } from "../db/schema";
-import { eq, and, isNull, lte, isNotNull, lt, desc, or, inArray } from "drizzle-orm";
+import { followUps, leads, emailEvents, riskFlags, scrapeJobs, campaigns, replies } from "../db/schema";
+import { eq, and, isNull, lte, isNotNull, lt, or, inArray } from "drizzle-orm";
 import { sendDraft, getTotalSent } from "../services/sender";
 import { runScrapeJob } from "../services/scraping/runScrapeJob";
 import { enrichLead } from "../services/enrichment/orchestrator";
@@ -172,27 +172,6 @@ cron.schedule("0 3 * * *", async () => {
   }
 
   console.log(`[enrichment-retry] done: ${JSON.stringify(counts)}`);
-});
-
-// ---------------------------------------------------------------------------
-// template-improver  — Sunday midnight
-// ---------------------------------------------------------------------------
-cron.schedule("0 0 * * 0", async () => {
-  console.log("[template-improver] running");
-
-  const rows = await db
-    .select()
-    .from(templatePerformance)
-    .orderBy(desc(templatePerformance.replyRate));
-
-  for (const row of rows) {
-    console.log(
-      `[template-improver] campaign=${row.campaignId} persona=${row.persona} ` +
-      `openRate=${row.openRate} replyRate=${row.replyRate}`
-    );
-  }
-
-  console.log(`[template-improver] reviewed ${rows.length} template entries`);
 });
 
 // ---------------------------------------------------------------------------

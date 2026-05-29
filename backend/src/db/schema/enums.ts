@@ -3,7 +3,6 @@ import { pgEnum } from "drizzle-orm/pg-core";
 export const companySizeEnum = pgEnum("company_size", ["small", "medium", "large", "enterprise"]);
 export const leadStatusEnum = pgEnum("lead_status", ["new", "contacted", "replied", "converted", "suppressed"]);
 export const campaignStatusEnum = pgEnum("campaign_status", ["draft", "active", "paused", "complete"]);
-export const personaEnum = pgEnum("persona", ["technical", "executive", "ops"]);
 export const draftStatusEnum = pgEnum("draft_status", ["pending_review", "approved", "rejected", "scheduled", "sent"]);
 export const sentimentEnum = pgEnum("sentiment", ["positive", "negative", "neutral"]);
 export const flagTypeEnum = pgEnum("flag_type", ["duplicate", "unverified_email", "missing_field", "legal_keyword", "hostile_interaction", "regulated_entity"]);

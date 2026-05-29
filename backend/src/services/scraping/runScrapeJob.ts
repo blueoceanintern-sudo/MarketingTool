@@ -1,6 +1,6 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "../../db";
-import { campaigns, companies, leads, scrapeJobs, sourceRegistry, normalizeVertical, normalizeGeo } from "../../db/schema";
+import { campaigns, campaignLeads, companies, leads, scrapeJobs, sourceRegistry, normalizeVertical, normalizeGeo } from "../../db/schema";
 import { scrapeWithFallback } from "../scrapers/crawl4aiScraper";
 import { scrapeWebsite } from "../scrapers/cheerioScraper";
 import { enrichLead } from "../enrichment/orchestrator";
@@ -32,8 +32,21 @@ async function persistScrapedLead(
   if (!scraped.email) return false;
 
   const email = scraped.email.trim().toLowerCase();
+
+  // Reuse the existing lead row if we've seen this email before — m:n means
+  // the same person can be in multiple campaigns. We add a campaign_leads
+  // link rather than inserting a duplicate lead.
   const [existing] = await db.select({ id: leads.id }).from(leads).where(eq(leads.email, email)).limit(1);
-  if (existing) return false;
+  if (existing) {
+    const [existingLink] = await db
+      .select({ leadId: campaignLeads.leadId })
+      .from(campaignLeads)
+      .where(and(eq(campaignLeads.leadId, existing.id), eq(campaignLeads.campaignId, campaignId)))
+      .limit(1);
+    if (existingLink) return false; // already a member of this campaign
+    await db.insert(campaignLeads).values({ leadId: existing.id, campaignId, source: "scrape" });
+    return true;
+  }
 
   const companyName = scraped.company?.trim() || new URL(scraped.website).hostname;
 
@@ -56,7 +69,6 @@ async function persistScrapedLead(
   // the status if a downstream provider verifies them.
   const [lead] = await db.insert(leads).values({
     companyId: company.id,
-    campaignId,
     email,
     firstName: null,
     lastName: null,
@@ -68,6 +80,7 @@ async function persistScrapedLead(
   }).returning();
 
   if (lead) {
+    await db.insert(campaignLeads).values({ leadId: lead.id, campaignId, source: "scrape" });
     void enrichLead(lead.id).catch((err) => {
       console.error(`[scrape] enrichment failed for ${lead.id}:`, err);
     });

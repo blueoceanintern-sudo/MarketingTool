@@ -1,9 +1,8 @@
-import { pgTable, uuid, text, boolean, integer, real, timestamp, json, jsonb, vector, index, unique } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, boolean, integer, real, timestamp, json, jsonb, vector, index, unique, primaryKey } from "drizzle-orm/pg-core";
 import {
   companySizeEnum,
   leadStatusEnum,
   campaignStatusEnum,
-  personaEnum,
   draftStatusEnum,
   sentimentEnum,
   flagTypeEnum,
@@ -50,7 +49,6 @@ export const campaigns = pgTable("campaigns", {
 export const leads = pgTable("leads", {
   id: uuid("id").primaryKey().defaultRandom(),
   companyId: uuid("company_id").references(() => companies.id).notNull(),
-  campaignId: uuid("campaign_id").references(() => campaigns.id),
   firstName: text("first_name"),
   lastName: text("last_name"),
   email: text("email").unique().notNull(),
@@ -67,11 +65,43 @@ export const leads = pgTable("leads", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+// Junction: a lead can belong to many campaigns; a campaign has many leads.
+// Replaces the old leads.campaign_id FK so the same person can be approached
+// from multiple angles (e.g. an admissions director in both "Admissions
+// automation" and "Parent comms revamp" campaigns).
+export const campaignLeads = pgTable("campaign_leads", {
+  leadId: uuid("lead_id").references(() => leads.id, { onDelete: "cascade" }).notNull(),
+  campaignId: uuid("campaign_id").references(() => campaigns.id, { onDelete: "cascade" }).notNull(),
+  addedAt: timestamp("added_at").defaultNow().notNull(),
+  source: text("source"),
+}, (t) => [
+  primaryKey({ columns: [t.leadId, t.campaignId] }),
+  index("campaign_leads_campaign_id_idx").on(t.campaignId),
+]);
+
+// A prompt-style variant the drafting service can use. Each generated draft
+// records which template produced it so engagement can be compared across
+// styles. system_prompt is treated as immutable at the application layer
+// (no PATCH endpoint touches it) — to iterate, the user creates a new row,
+// optionally with parent_template_id pointing at the one it was derived from.
+export const promptTemplates = pgTable("prompt_templates", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  description: text("description"),
+  systemPrompt: text("system_prompt").notNull(),
+  weight: integer("weight").default(1).notNull(),
+  active: boolean("active").default(true).notNull(),
+  parentTemplateId: uuid("parent_template_id"),
+  createdBy: text("created_by").default("user").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
 export const emailDrafts = pgTable("email_drafts", {
   id: uuid("id").primaryKey().defaultRandom(),
   leadId: uuid("lead_id").references(() => leads.id).notNull(),
   campaignId: uuid("campaign_id").references(() => campaigns.id).notNull(),
-  persona: personaEnum("persona").notNull(),
+  templateId: uuid("template_id").references(() => promptTemplates.id).notNull(),
   subject: text("subject").notNull(),
   body: text("body").notNull(),
   confidenceScore: real("confidence_score").notNull(),
@@ -81,6 +111,8 @@ export const emailDrafts = pgTable("email_drafts", {
   bodyEmbedding: vector("body_embedding", { dimensions: 1536 }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (t) => [
+  // One draft per (lead, campaign) — replaces the old (lead, campaign, persona) shape
+  unique("email_drafts_lead_campaign_unique").on(t.leadId, t.campaignId),
   index("email_drafts_body_embedding_idx").using("hnsw", t.bodyEmbedding.op("vector_cosine_ops")),
 ]);
 
@@ -139,17 +171,6 @@ export const riskFlags = pgTable("risk_flags", {
   flagType: flagTypeEnum("flag_type").notNull(),
   flaggedAt: timestamp("flagged_at").defaultNow().notNull(),
 });
-
-export const templatePerformance = pgTable("template_performance", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  campaignId: uuid("campaign_id").references(() => campaigns.id).notNull(),
-  persona: personaEnum("persona").notNull(),
-  openRate: real("open_rate").default(0).notNull(),
-  replyRate: real("reply_rate").default(0).notNull(),
-  lastCalculatedAt: timestamp("last_calculated_at").defaultNow().notNull(),
-}, (t) => [
-  unique("tp_campaign_persona_unique").on(t.campaignId, t.persona),
-]);
 
 export const suppressionList = pgTable("suppression_list", {
   id: uuid("id").primaryKey().defaultRandom(),

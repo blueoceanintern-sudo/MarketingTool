@@ -7,7 +7,7 @@ function formatDraft(row: {
   id: string;
   leadId: string;
   campaignId: string;
-  persona: string;
+  templateId: string;
   subject: string;
   body: string;
   confidenceScore: number;
@@ -25,7 +25,7 @@ function formatDraft(row: {
     lead_role: row.leadRole ?? "",
     campaign_id: row.campaignId,
     campaign_name: row.campaignName,
-    persona: row.persona,
+    template_id: row.templateId,
     subject: row.subject,
     body: row.body,
     confidence_score: row.confidenceScore,
@@ -40,7 +40,7 @@ async function getDraftWithJoins(draftId: string) {
       id: emailDrafts.id,
       leadId: emailDrafts.leadId,
       campaignId: emailDrafts.campaignId,
-      persona: emailDrafts.persona,
+      templateId: emailDrafts.templateId,
       subject: emailDrafts.subject,
       body: emailDrafts.body,
       confidenceScore: emailDrafts.confidenceScore,
@@ -67,7 +67,7 @@ draftsRouter.get("/queue", async (c) => {
       id: emailDrafts.id,
       leadId: emailDrafts.leadId,
       campaignId: emailDrafts.campaignId,
-      persona: emailDrafts.persona,
+      templateId: emailDrafts.templateId,
       subject: emailDrafts.subject,
       body: emailDrafts.body,
       confidenceScore: emailDrafts.confidenceScore,

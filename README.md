@@ -1,6 +1,6 @@
 # Automated Marketing Tool — BlueOcean
 
-Internal B2B outreach pipeline: scrapes leads → enriches via Snov.io → AI drafts emails (3 personas via Claude Haiku) → rep reviews/approves → sends via AWS SES → agent monitors replies → routes through decision tree. Target markets: Singapore, Australia, US.
+Internal B2B outreach pipeline: scrapes leads → enriches via Snov.io → AI drafts emails (one per lead per campaign via Claude Haiku, picking from admin-managed prompt templates) → rep reviews/approves → sends via AWS SES → agent monitors replies → routes through decision tree. Target markets: Singapore, Australia, US.
 
 ---
 
@@ -15,7 +15,7 @@ This internal tool automates the entire B2B outreach pipeline. Staff operate it 
 ### Key Features
 - **Lead Scraping** — Source leads from industry directories, government registries (ACRA, ASIC, SEC EDGAR), and public company data
 - **Lead Enrichment** — Auto-enrich contact data via Snov.io API (Apollo.io fallback)
-- **AI Email Drafting** — 3 persona-tuned email variants per lead (Technical, Executive, Operations) with confidence scoring via Claude Haiku Batch API
+- **AI Email Drafting** — One personalised email per (lead, campaign) pair via Claude Haiku Batch API. Each draft is generated using one of N admin-managed prompt templates (style variants), picked by weighted-random; engagement is tracked per template so reps can compare which styles land best. Confidence score included in the same generation call
 - **Human Review Queue** — Rep-controlled approval for the first 500 emails; auto-send thereafter for high-confidence drafts (score ≥ 70)
 - **Reply Automation** — Sentiment-based routing: positive → demo booking, no reply → follow-ups, negative → suppress
 - **Analytics Dashboard** — Open rates, reply rates, demo bookings, CAC — filterable by market and vertical
