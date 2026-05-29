@@ -4,6 +4,8 @@ import { suppressionList, emailDrafts, emailEvents, campaigns, leads } from "../
 import { eq, and, isNotNull, count, gte } from "drizzle-orm";
 import { buildEmailHtml } from "../../templates/outreachEmail";
 
+const MAX_EMAILS_PER_LEAD_PER_WEEK = 2;
+
 interface SendPayload {
   draftId: string;
   toEmail: string;
@@ -21,6 +23,15 @@ interface SendResult {
 
 async function getTotalSentFromDB(): Promise<number> {
   const [row] = await db.select({ total: count() }).from(emailEvents).where(isNotNull(emailEvents.sentAt));
+  return Number(row?.total ?? 0);
+}
+
+async function getWeeklyCountForLead(leadId: string): Promise<number> {
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const [row] = await db
+    .select({ total: count() })
+    .from(emailEvents)
+    .where(and(eq(emailEvents.leadId, leadId), isNotNull(emailEvents.sentAt), gte(emailEvents.sentAt, sevenDaysAgo)));
   return Number(row?.total ?? 0);
 }
 
@@ -80,14 +91,9 @@ export async function sendDraft(payload: SendPayload): Promise<SendResult> {
     .limit(1);
   if (suppressed) return { draftId, status: "blocked", reason: "suppression_list" };
 
-  const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
-  const [lead] = await db
-    .select({ lastContactedAt: leads.lastContactedAt })
-    .from(leads)
-    .where(eq(leads.id, leadId))
-    .limit(1);
-  if (lead?.lastContactedAt && lead.lastContactedAt > ninetyDaysAgo) {
-    return { draftId, status: "blocked", reason: "90_day_rule" };
+  const weeklyCount = await getWeeklyCountForLead(leadId);
+  if (weeklyCount >= MAX_EMAILS_PER_LEAD_PER_WEEK) {
+    return { draftId, status: "blocked", reason: "weekly_cap_reached" };
   }
 
   if (hasRiskFlags) return { draftId, status: "blocked", reason: "risk_flags" };
