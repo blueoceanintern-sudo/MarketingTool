@@ -3,7 +3,6 @@ import { db } from "../../db";
 import { campaigns, campaignLeads, campaignLeadExclusions, companies, leads, scrapeJobs, sourceRegistry, normalizeVertical, normalizeGeo } from "../../db/schema";
 import { scrapeWithFallback } from "../scrapers/crawl4aiScraper";
 import { scrapeWebsite } from "../scrapers/cheerioScraper";
-import { enrichLead } from "../enrichment/orchestrator";
 
 function parseGeographies(geography: string): string[] {
   return geography
@@ -88,9 +87,6 @@ async function persistScrapedLead(
 
   if (lead) {
     await db.insert(campaignLeads).values({ leadId: lead.id, campaignId, source: "scrape" });
-    void enrichLead(lead.id).catch((err) => {
-      console.error(`[scrape] enrichment failed for ${lead.id}:`, err);
-    });
   }
 
   return true;
