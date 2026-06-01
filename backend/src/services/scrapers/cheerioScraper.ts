@@ -1,5 +1,6 @@
 import * as cheerio from "cheerio";
 import { sourceRegistry } from "../../config/sourceRegistry";
+import { isValidLeadEmail } from "./emailFilter";
 
 export interface Lead {
   company?: string;
@@ -35,13 +36,16 @@ export async function scrapeWebsite(
   $('a[href^="mailto:"]').each((_, el) => {
     const href = $(el).attr("href") ?? "";
     const candidate = href.replace(/^mailto:/i, "").split("?")[0]?.trim().toLowerCase();
-    if (candidate && candidate.includes("@")) emails.add(candidate);
+    if (candidate && candidate.includes("@") && isValidLeadEmail(candidate)) {
+      emails.add(candidate);
+    }
   });
 
   // 2) plain-text email patterns anywhere in the body
   const bodyText = $("body").text();
   for (const match of bodyText.matchAll(EMAIL_REGEX)) {
-    emails.add(match[0].toLowerCase());
+    const candidate = match[0].toLowerCase();
+    if (isValidLeadEmail(candidate)) emails.add(candidate);
   }
 
   return Array.from(emails).map((email) => ({ company, email, website: url }));

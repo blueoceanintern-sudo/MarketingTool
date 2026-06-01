@@ -4,6 +4,7 @@ import { leads, companies, campaigns, campaignLeads, campaignLeadExclusions, sup
 import { eq, desc, and, inArray, isNull, isNotNull } from "drizzle-orm";
 import { enrichLead } from "../services/enrichment/orchestrator";
 import { logAudit } from "../services/audit/log";
+import { isValidLeadEmail } from "../services/scrapers/emailFilter";
 
 interface LeadRow {
   id: string;
@@ -186,6 +187,7 @@ leadsRouter.post("/:id/leads/import", async (c) => {
 
     const email = row["email"] ?? "";
     if (!email) { skipped.push(`row ${i + 1}: missing email`); continue; }
+    if (!isValidLeadEmail(email)) { skipped.push(`${email}: rejected by email filter`); continue; }
 
     // Block emails suppressed for this campaign — they opted out and must not be re-collected
     const [suppressed] = await db
