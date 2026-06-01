@@ -26,6 +26,16 @@ async function getTotalSentFromDB(): Promise<number> {
   return Number(row?.total ?? 0);
 }
 
+async function wasContactedInLast90Days(leadId: string): Promise<boolean> {
+  const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+  const [row] = await db
+    .select({ id: emailEvents.id })
+    .from(emailEvents)
+    .where(and(eq(emailEvents.leadId, leadId), isNotNull(emailEvents.sentAt), gte(emailEvents.sentAt, ninetyDaysAgo)))
+    .limit(1);
+  return Boolean(row);
+}
+
 async function getWeeklyCountForLead(leadId: string): Promise<number> {
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const [row] = await db
@@ -91,6 +101,9 @@ export async function sendDraft(payload: SendPayload): Promise<SendResult> {
     .limit(1);
   if (suppressed) return { draftId, status: "blocked", reason: "suppression_list" };
 
+  const recentlyContacted = await wasContactedInLast90Days(leadId);
+  if (recentlyContacted) return { draftId, status: "blocked", reason: "recontact_90_day_gate" };
+
   const weeklyCount = await getWeeklyCountForLead(leadId);
   if (weeklyCount >= MAX_EMAILS_PER_LEAD_PER_WEEK) {
     return { draftId, status: "blocked", reason: "weekly_cap_reached" };
@@ -149,13 +162,99 @@ export async function sendDraft(payload: SendPayload): Promise<SendResult> {
 
   const response = await getSesClient().send(command);
   const messageId = response.MessageId;
+  // Store as full Message-ID header format so In-Reply-To matching works directly.
+  const sesMessageId = messageId ? `<${messageId}@email.amazonses.com>` : null;
 
   const now = new Date();
   await Promise.all([
-    db.insert(emailEvents).values({ draftId, leadId, sentAt: now }),
+    db.insert(emailEvents).values({ draftId, leadId, sesMessageId, sentAt: now }),
     db.update(emailDrafts).set({ status: "sent" }).where(eq(emailDrafts.id, draftId)),
     db.update(leads).set({ lastContactedAt: now }).where(eq(leads.id, leadId)),
   ]);
 
   return { draftId, status: "sent", messageId };
+}
+
+interface FollowUpPayload {
+  followUpId: string;
+  // Original campaign draft — used as email_events.draft_id FK for analytics lineage.
+  originalDraftId: string;
+  subject: string;
+  body: string;
+  toEmail: string;
+  leadId: string;
+  campaignId: string;
+  isVerified: boolean;
+  hasRiskFlags: boolean;
+}
+
+// Sends a follow-up email. Same hard gates as sendDraft except:
+// - No 90-day recontact gate (follow-ups are intentionally within an active sequence)
+// - No draft status check (content comes from follow_ups, not email_drafts)
+// - Campaign active check still applies
+export async function sendFollowUpEmail(payload: FollowUpPayload): Promise<SendResult> {
+  const { originalDraftId, subject, body, toEmail, leadId, campaignId, isVerified, hasRiskFlags } = payload;
+
+  const [suppressed] = await db
+    .select({ id: suppressionList.id })
+    .from(suppressionList)
+    .where(eq(suppressionList.email, toEmail))
+    .limit(1);
+  if (suppressed) return { draftId: originalDraftId, status: "blocked", reason: "suppression_list" };
+
+  const weeklyCount = await getWeeklyCountForLead(leadId);
+  if (weeklyCount >= MAX_EMAILS_PER_LEAD_PER_WEEK) {
+    return { draftId: originalDraftId, status: "blocked", reason: "weekly_cap_reached" };
+  }
+
+  if (hasRiskFlags) return { draftId: originalDraftId, status: "blocked", reason: "risk_flags" };
+
+  if (!isVerified) return { draftId: originalDraftId, status: "blocked", reason: "unverified_email" };
+
+  const [totalSent, todayCount] = await Promise.all([getTotalSentFromDB(), getTodayCountFromDB()]);
+  if (todayCount >= getDailyCap(totalSent)) {
+    return { draftId: originalDraftId, status: "queued", reason: "daily_cap_reached" };
+  }
+
+  const [campaign] = await db
+    .select({ status: campaigns.status })
+    .from(campaigns)
+    .where(eq(campaigns.id, campaignId))
+    .limit(1);
+  if (!campaign) return { draftId: originalDraftId, status: "blocked", reason: "campaign_not_found" };
+  if (campaign.status !== "active") {
+    return { draftId: originalDraftId, status: "blocked", reason: `campaign_status_${campaign.status}` };
+  }
+
+  const fromAddress = process.env.AWS_SES_FROM_ADDRESS;
+  if (!fromAddress) throw new Error("AWS_SES_FROM_ADDRESS is required");
+
+  const apiBase = getApiBase();
+  const unsubscribeUrl = `${apiBase}/unsubscribe?id=${leadId}`;
+  const textBody = `${body}\n\nTo unsubscribe: ${unsubscribeUrl}`;
+  const htmlBody = buildEmailHtml(body, leadId, apiBase);
+
+  const command = new SendEmailCommand({
+    Source: fromAddress,
+    Destination: { ToAddresses: [toEmail] },
+    Message: {
+      Subject: { Data: subject, Charset: "UTF-8" },
+      Body: {
+        Text: { Data: textBody, Charset: "UTF-8" },
+        Html: { Data: htmlBody, Charset: "UTF-8" },
+      },
+    },
+  });
+
+  const response = await getSesClient().send(command);
+  const messageId = response.MessageId;
+  const sesMessageId = messageId ? `<${messageId}@email.amazonses.com>` : null;
+
+  const now = new Date();
+  await Promise.all([
+    db.insert(emailEvents).values({ draftId: originalDraftId, leadId, sesMessageId, sentAt: now }),
+    db.update(leads).set({ lastContactedAt: now }).where(eq(leads.id, leadId)),
+  ]);
+
+  return { draftId: originalDraftId, status: "sent", messageId };
 }

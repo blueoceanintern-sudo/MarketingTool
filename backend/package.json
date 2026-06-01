@@ -28,6 +28,7 @@
     "node-cron": "^4.2.1",
     "node-fetch": "^3.3.2",
     "playwright": "^1.60.0",
+    "postal-mime": "^2.7.4",
     "postgres": "^3.4.9"
   }
 }
