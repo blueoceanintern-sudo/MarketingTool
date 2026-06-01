@@ -1,7 +1,13 @@
 import { Hono } from "hono";
 import { db } from "../db";
-import { sourceRegistry, suppressionList, promptTemplates, emailDrafts, normalizeVertical, normalizeGeo } from "../db/schema";
-import { eq } from "drizzle-orm";
+import { sourceRegistry, suppressionList, promptTemplates, emailDrafts, campaigns, normalizeVertical, normalizeGeo } from "../db/schema";
+import { eq, and, inArray } from "drizzle-orm";
+import { logAudit } from "../services/audit/log";
+import { DIRECTORY_CONFIGS, discoverSources, getDirectoryConfig } from "../services/sourceRegistry";
+
+// ---------------------------------------------------------------------------
+// CSV helpers (used by /registry/sources/import)
+// ---------------------------------------------------------------------------
 
 function parseCSVLine(line: string): string[] {
   const fields: string[] = [];
@@ -26,9 +32,12 @@ function parseBool(val: string | undefined, def: boolean): boolean {
   if (!val) return def;
   return ["true", "1", "yes"].includes(val.toLowerCase());
 }
-import { logAudit } from "../services/audit/log";
 
 export const adminRouter = new Hono();
+
+// ---------------------------------------------------------------------------
+// Source registry — CRUD
+// ---------------------------------------------------------------------------
 
 adminRouter.get("/registry/sources", async (c) => {
   const rows = await db.select().from(sourceRegistry).orderBy(sourceRegistry.createdAt);
@@ -155,6 +164,124 @@ adminRouter.post("/registry/sources/import", async (c) => {
   const skipped = errors.filter((e) => e.reason.includes("already exists")).length;
   return c.json({ imported: imported.length, skipped, errors }, 201);
 });
+
+// ---------------------------------------------------------------------------
+// Tavily-driven source discovery
+// ---------------------------------------------------------------------------
+
+// Public-facing view of DIRECTORY_CONFIGS so the registry UI can render which
+// (vertical, geo) tuples have auto-discovery wired up.
+adminRouter.get("/registry/directory-configs", async (c) => {
+  const items = Object.entries(DIRECTORY_CONFIGS).map(([key, cfg]) => {
+    const [vertical, geo] = key.split(":");
+    return { vertical, geo, query: cfg.query, domains: cfg.domains };
+  });
+  return c.json(items);
+});
+
+// Rate-limit manual refresh to 1 req / 60s per (vertical, geo). In-memory is
+// fine for a single-instance Lightsail deploy; if we go multi-instance,
+// swap for Redis.
+const refreshLastTriggered = new Map<string, number>();
+const REFRESH_COOLDOWN_MS = 60_000;
+
+adminRouter.post("/registry/discover", async (c) => {
+  const body = await c.req.json<{ vertical?: string; geo?: string }>();
+  if (!body.vertical || !body.geo) {
+    return c.json({ error: "vertical and geo are required" }, 400);
+  }
+
+  const vertical = normalizeVertical(body.vertical);
+  const geo = normalizeGeo(body.geo);
+  const key = `${vertical}:${geo}`;
+
+  const config = getDirectoryConfig(vertical, geo);
+  if (!config) {
+    return c.json(
+      {
+        status: "skipped_no_config",
+        message: `No directory config for ${key}. Add a config to sourceRegistry/index.ts or seed sources manually.`,
+      },
+      400,
+    );
+  }
+
+  const last = refreshLastTriggered.get(key) ?? 0;
+  const sinceLast = Date.now() - last;
+  if (sinceLast < REFRESH_COOLDOWN_MS) {
+    const retryAfter = Math.ceil((REFRESH_COOLDOWN_MS - sinceLast) / 1000);
+    c.header("Retry-After", String(retryAfter));
+    return c.json(
+      { error: `Cooldown active. Try again in ${retryAfter}s.`, retry_after_seconds: retryAfter },
+      429,
+    );
+  }
+  refreshLastTriggered.set(key, Date.now());
+
+  // No campaignId here — manual refresh isn't anchored to a campaign. The
+  // discoverSources signature still expects one for the `generated_by` FK;
+  // pass the first active campaign matching (vertical, geo) so lineage is
+  // meaningful, or null when no match exists.
+  const [anyCampaign] = await db
+    .select({ id: campaigns.id })
+    .from(campaigns)
+    .where(and(eq(campaigns.vertical, vertical), eq(campaigns.status, "active")))
+    .limit(1);
+
+  void discoverSources(vertical, geo, anyCampaign?.id ?? null).catch((err) => {
+    console.error(`[discovery] manual refresh ${key} failed:`, err);
+  });
+
+  await logAudit({
+    actor: "user",
+    action: "registry.discover_refresh",
+    targetType: "source_registry",
+    ipAddress:
+      c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ??
+      c.req.header("x-real-ip") ??
+      null,
+    metadata: { vertical, geo, domains: config.domains },
+  });
+
+  return c.json(
+    {
+      status: "triggered",
+      message: `Discovering sources from ${config.domains.join(", ")}. Refresh the table in ~30s.`,
+      domains: config.domains,
+    },
+    202,
+  );
+});
+
+// Convenience: returns (vertical, geo) tuples currently used by any active
+// campaign. The UI uses this to render a "Refresh" button per active
+// combination, regardless of whether DIRECTORY_CONFIGS has them.
+adminRouter.get("/registry/active-combinations", async (c) => {
+  const rows = await db
+    .selectDistinct({ vertical: campaigns.vertical, geography: campaigns.geography })
+    .from(campaigns)
+    .where(inArray(campaigns.status, ["active", "paused"]));
+
+  // geography is comma-separated → expand to (vertical, geo) pairs
+  const pairs = new Set<string>();
+  for (const row of rows) {
+    for (const g of row.geography.split(",")) {
+      const geo = g.trim();
+      if (geo) pairs.add(`${row.vertical}:${geo}`);
+    }
+  }
+
+  return c.json(
+    Array.from(pairs).map((p) => {
+      const [vertical, geo] = p.split(":");
+      return { vertical, geo, has_config: !!getDirectoryConfig(vertical!, geo!) };
+    }),
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Suppression list
+// ---------------------------------------------------------------------------
 
 adminRouter.get("/suppression", async (c) => {
   const campaignId = c.req.query("campaign_id");

@@ -160,6 +160,131 @@ to pull in system libraries (fonts, libnss, etc.). Not needed on macOS.
 
 ---
 
+## AWS Setup (from scratch)
+
+Complete setup sequence for a new AWS account. Do these once before first deploy.
+
+---
+
+### 1. IAM — create a service user
+
+1. Go to **IAM → Users → Create user**. Name it `blueocean-app`.
+2. Attach these managed policies directly:
+   - `AmazonSESFullAccess`
+   - `AmazonSNSFullAccess`
+   - `AmazonSSMReadOnlyAccess` (for reading secrets from Parameter Store)
+3. Go to **Security credentials → Create access key**. Select "Application running outside AWS". Save the `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` — you won't see the secret again.
+
+> In production, prefer an **IAM Role** attached to the Lightsail instance over a long-lived access key.
+
+---
+
+### 2. SES — verify your sending domain
+
+1. Go to **SES → Verified identities → Create identity**. Choose **Domain**. Enter your domain (e.g. `yourdomain.com`).
+2. SES will show you CNAME records. Add them to your DNS provider. Wait for status to show **Verified** (up to 48h).
+3. While there, enable **Easy DKIM** (2048-bit). SES generates three CNAME records — add those too.
+4. Add an **SPF** TXT record to your DNS:
+   ```
+   v=spf1 include:amazonses.com ~all
+   ```
+5. Add a **DMARC** TXT record at `_dmarc.yourdomain.com`:
+   ```
+   v=DMARC1; p=quarantine; rua=mailto:dmarc-reports@yourdomain.com
+   ```
+
+> Without SPF + DKIM + DMARC, cold outreach to SG/AU/US targets will land in spam.
+
+---
+
+### 3. SES — exit the sandbox
+
+New SES accounts are sandboxed (can only send to verified addresses). Request production access:
+
+1. **SES → Account dashboard → Request production access**.
+2. Describe your use case (B2B cold outreach, opt-out in every email, suppression list maintained).
+3. AWS typically responds within 24h.
+
+---
+
+### 4. SES — configure inbound email receipt
+
+This is what routes replies back to the app.
+
+1. Go to **SES → Email receiving → Rule sets → Create rule set**. Name it `blueocean-inbound`. Set it as active.
+2. Inside the rule set, **Create rule**:
+   - **Recipient condition**: `outreach@yourdomain.com` (your `AWS_SES_FROM_ADDRESS`)
+   - **Action**: **Publish to Amazon SNS topic** (create a new topic in the next step, then come back)
+3. Under **SES → Verified identities → your domain → Email receiving**, enable inbound by adding an MX record to your DNS:
+   ```
+   10  inbound-smtp.<AWS_REGION>.amazonaws.com
+   ```
+   e.g. `10  inbound-smtp.ap-southeast-1.amazonaws.com`
+
+---
+
+### 5. SNS — create the inbound topic and subscribe the webhook
+
+1. Go to **SNS → Topics → Create topic**. Type: **Standard**. Name: `ses-inbound-replies`.
+2. Note the **ARN** — this is your `SNS_TOPIC_ARN` env var (e.g. `arn:aws:sns:ap-southeast-1:123456789:ses-inbound-replies`).
+3. Go back to step 4 and select this topic as the SES receipt rule action.
+4. **Create subscription** on the topic:
+   - Protocol: **HTTPS**
+   - Endpoint: `https://yourdomain.com/api/v1/webhooks/ses/reply`
+5. SNS will POST a `SubscriptionConfirmation` message to that URL. The webhook handles this automatically — check your backend logs to confirm it was confirmed.
+6. **Upgrade SignatureVersion to 2**: on the topic, go to **Edit → Delivery retry policy** and set `SignatureVersion` to `2` (SHA256). This is the AWS-recommended setting.
+
+---
+
+### 6. AWS Systems Manager — store production secrets
+
+Never store secrets in `.env` on the server. Use Parameter Store:
+
+1. Go to **Systems Manager → Parameter Store → Create parameter** for each secret:
+
+   | Parameter name | Value |
+   |---|---|
+   | `/blueocean/DATABASE_URL` | `postgresql://...` |
+   | `/blueocean/ANTHROPIC_API_KEY` | `sk-ant-...` |
+   | `/blueocean/AWS_SECRET_ACCESS_KEY` | from step 1 |
+   | `/blueocean/SNOVIO_CLIENT_SECRET` | from Snov.io dashboard |
+   | `/blueocean/SNS_TOPIC_ARN` | from step 5 |
+
+2. Use type **SecureString** (KMS-encrypted) for all secrets.
+3. At server startup, pull these into the process environment before the app boots. A simple loader script:
+   ```bash
+   aws ssm get-parameters-by-path --path /blueocean --with-decryption \
+     --query "Parameters[*].[Name,Value]" --output text \
+     | awk '{gsub("/blueocean/","",$1); print $1"="$2}' > /etc/blueocean.env
+   ```
+   Then `source /etc/blueocean.env` before running the app.
+
+---
+
+### 7. Lightsail — create the instance
+
+1. Go to **Lightsail → Create instance**. Choose:
+   - Platform: **Linux/Unix**
+   - Blueprint: **Ubuntu 22.04 LTS**
+   - Instance plan: **2 GB RAM / 2 vCPUs** (minimum recommended)
+2. Attach a **static IP** to the instance.
+3. Open ports in the Lightsail firewall: **443 (HTTPS)**, **80 (HTTP)**, **22 (SSH)**.
+4. Point your domain's A record to the static IP.
+5. Install a TLS certificate (Let's Encrypt via `certbot`) so the SNS subscription endpoint is HTTPS — SNS will not subscribe to plain HTTP.
+
+---
+
+### 8. RDS / Lightsail Managed Database (optional)
+
+If you want a managed PostgreSQL instead of running it on the same instance:
+
+1. **Lightsail → Databases → Create database**. Choose PostgreSQL 15, 1 GB RAM plan minimum.
+2. Enable **Automatic backups** (7-day retention).
+3. Set `DATABASE_URL` to the connection string with `sslmode=require`.
+4. The app instance and database must be in the **same Lightsail region** to use the private endpoint.
+
+---
+
 ## Deployment (AWS Lightsail)
 
 Target: single-instance Lightsail VM, 2GB RAM / 2 vCPUs.

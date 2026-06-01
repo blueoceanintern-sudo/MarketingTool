@@ -1,7 +1,11 @@
-import { getDraftQueue } from "@/lib/api";
+import { getDraftQueue, getDraftsByStatus } from "@/lib/api";
 import DraftsClient from "./drafts-client";
 
 export default async function DraftsPage() {
-  const drafts = await getDraftQueue();
-  return <DraftsClient initialDrafts={drafts} />;
+  const [queue, scheduled, sent] = await Promise.all([
+    getDraftQueue(),
+    getDraftsByStatus("scheduled"),
+    getDraftsByStatus("sent"),
+  ]);
+  return <DraftsClient initialQueue={queue} initialScheduled={scheduled} initialSent={sent} />;
 }

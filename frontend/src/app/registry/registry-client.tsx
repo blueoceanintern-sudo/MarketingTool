@@ -1,7 +1,18 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { createRegistrySource, importRegistrySources, type RegistryImportResult, type ScraperType, type SourceRegistry } from "@/lib/api";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
+import {
+  createRegistrySource,
+  importRegistrySources,
+  triggerDiscovery,
+  type ActiveCombination,
+  type DirectoryConfig,
+  type RegistryImportResult,
+  type ScraperType,
+  type SourceRegistry,
+} from "@/lib/api";
 
 const scraperTypeLabel: Record<ScraperType, string> = {
   cheerio: "Cheerio (static HTML)",
@@ -30,10 +41,14 @@ US Daycare Registry,childcare,US,https://childcare.gov/index/registry,cheerio,fa
 
 interface Props {
   initialSources: SourceRegistry[];
+  directoryConfigs: DirectoryConfig[];
+  activeCombinations: ActiveCombination[];
 }
 
-export default function RegistryClient({ initialSources }: Props) {
+export default function RegistryClient({ initialSources, directoryConfigs, activeCombinations }: Props) {
+  const router = useRouter();
   const [sources, setSources] = useState(initialSources);
+  const [refreshing, setRefreshing] = useState<string | null>(null);
   const [geoFilter, setGeoFilter] = useState<string>("all");
   const [verticalFilter, setVerticalFilter] = useState<string>("all");
   const [activeOnly, setActiveOnly] = useState(false);
@@ -112,6 +127,50 @@ export default function RegistryClient({ initialSources }: Props) {
     a.download = "source_registry_template.csv";
     a.click();
   }
+
+  async function handleRefresh(vertical: string, geo: string, domains: string[]) {
+    const key = `${vertical}:${geo}`;
+    setRefreshing(key);
+    const result = await triggerDiscovery(vertical, geo);
+    setRefreshing(null);
+
+    if (!result.ok) {
+      if (result.retryAfter) {
+        toast.warning(result.error ?? "Rate-limited", {
+          description: `Try again in ${result.retryAfter}s.`,
+        });
+      } else {
+        toast.error(result.error ?? "Discovery failed");
+      }
+      return;
+    }
+
+    toast.info(result.message ?? `Discovering sources for ${key}`, {
+      description: domains.length ? `Searching: ${domains.join(", ")}` : undefined,
+      duration: 8000,
+    });
+
+    // Re-fetch sources after ~10s so the table reflects new rows
+    setTimeout(() => router.refresh(), 10_000);
+  }
+
+  // Coverage rows shown in the "Auto-discovery coverage" card:
+  // - everything from DIRECTORY_CONFIGS (always show what's wired)
+  // - plus any active-campaign (vertical, geo) NOT in DIRECTORY_CONFIGS,
+  //   flagged so the rep can see the gap.
+  const coverageRows = useMemo(() => {
+    const configured = directoryConfigs.map((c) => ({
+      vertical: c.vertical,
+      geo: c.geo,
+      has_config: true,
+      domains: c.domains,
+    }));
+    const configuredKeys = new Set(configured.map((c) => `${c.vertical}:${c.geo}`));
+    const gaps = activeCombinations
+      .filter((c) => !configuredKeys.has(`${c.vertical}:${c.geo}`))
+      .map((c) => ({ ...c, domains: [] as string[] }));
+    return [...configured, ...gaps];
+  }, [directoryConfigs, activeCombinations]);
 
   return (
     <div className="p-4 sm:p-6 lg:p-10 max-w-[1600px] mx-auto">
@@ -202,7 +261,72 @@ export default function RegistryClient({ initialSources }: Props) {
         </div>
       </div>
 
-      <div className="bg-white rounded-lg border border-grey-100 overflow-x-auto">
+      {coverageRows.length > 0 && (
+        <div className="bg-white rounded-lg border border-grey-100 overflow-hidden mb-8">
+          <div className="px-5 py-4 border-b border-grey-100 bg-grey-50">
+            <h3 className="text-[14px] font-semibold text-primary">Auto-discovery coverage</h3>
+            <p className="text-[12px] text-grey-500 mt-1">
+              Tavily searches the whitelisted directories below and inserts new sources automatically.
+              Refresh runs the search again — useful when a directory adds new entries.
+            </p>
+          </div>
+          <table className="w-full border-collapse">
+            <thead className="bg-grey-50 border-b border-grey-100">
+              <tr className="text-left text-[13px]">
+                <th className="px-5 py-3 font-semibold">Vertical</th>
+                <th className="px-4 py-3 font-semibold text-center">Geo</th>
+                <th className="px-4 py-3 font-semibold">Domains searched</th>
+                <th className="px-4 py-3 font-semibold text-right pr-5"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-grey-100">
+              {coverageRows.map((row) => {
+                const key = `${row.vertical}:${row.geo}`;
+                return (
+                  <tr key={key} className="hover:bg-ocean-wash/40">
+                    <td className="px-5 py-3 text-[13px] font-medium">{row.vertical}</td>
+                    <td className="px-4 py-3 text-center text-[12px]">{row.geo}</td>
+                    <td className="px-4 py-3">
+                      {row.has_config ? (
+                        <div className="flex flex-wrap gap-1">
+                          {row.domains.map((d) => (
+                            <span
+                              key={d}
+                              className="inline-flex items-center px-2 py-0.5 rounded-full bg-grey-50 border border-grey-200 text-[11px] font-mono text-grey-700"
+                            >
+                              {d}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[12px] text-warning">
+                          <span className="material-symbols-outlined text-[14px]">info</span>
+                          No directory config — sources must be added manually
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right pr-5">
+                      {row.has_config && (
+                        <button
+                          type="button"
+                          onClick={() => handleRefresh(row.vertical, row.geo, row.domains)}
+                          disabled={refreshing === key}
+                          className="flex items-center gap-1.5 ml-auto px-3 py-1.5 border border-grey-200 rounded-lg text-[12px] font-medium text-grey-700 hover:bg-grey-50 disabled:opacity-60"
+                        >
+                          <span className="material-symbols-outlined text-[14px]">refresh</span>
+                          {refreshing === key ? "Refreshing…" : "Refresh"}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="bg-white rounded-lg border border-grey-100 overflow-hidden">
         <div className="px-5 py-4 border-b border-grey-100 bg-grey-50 flex flex-wrap gap-3 items-center justify-between">
           <div className="flex flex-wrap gap-2">
             <select

@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { db } from "../db";
 import { emailDrafts, leads, campaigns } from "../db/schema";
 import { eq, and } from "drizzle-orm";
+import { logAudit } from "../services/audit/log";
 
 function formatDraft(row: {
   id: string;
@@ -61,6 +62,42 @@ async function getDraftWithJoins(draftId: string) {
 
 export const draftsRouter = new Hono();
 
+// GET /drafts?status=scheduled|sent  — for the scheduled/sent views in the UI.
+// Returns drafts grouped by campaign_id (client sorts/groups from the flat array).
+const ALLOWED_LIST_STATUSES = ["scheduled", "sent"] as const;
+type ListStatus = (typeof ALLOWED_LIST_STATUSES)[number];
+
+draftsRouter.get("/", async (c) => {
+  const statusParam = c.req.query("status") as ListStatus | undefined;
+  if (!statusParam || !ALLOWED_LIST_STATUSES.includes(statusParam)) {
+    return c.json({ error: "status query param must be 'scheduled' or 'sent'" }, 400);
+  }
+
+  const rows = await db
+    .select({
+      id: emailDrafts.id,
+      leadId: emailDrafts.leadId,
+      campaignId: emailDrafts.campaignId,
+      templateId: emailDrafts.templateId,
+      subject: emailDrafts.subject,
+      body: emailDrafts.body,
+      confidenceScore: emailDrafts.confidenceScore,
+      status: emailDrafts.status,
+      createdAt: emailDrafts.createdAt,
+      leadFirstName: leads.firstName,
+      leadLastName: leads.lastName,
+      leadRole: leads.role,
+      campaignName: campaigns.name,
+    })
+    .from(emailDrafts)
+    .innerJoin(leads, eq(emailDrafts.leadId, leads.id))
+    .innerJoin(campaigns, eq(emailDrafts.campaignId, campaigns.id))
+    .where(eq(emailDrafts.status, statusParam))
+    .orderBy(campaigns.name, emailDrafts.createdAt);
+
+  return c.json(rows.map(formatDraft));
+});
+
 draftsRouter.get("/queue", async (c) => {
   const rows = await db
     .select({
@@ -96,6 +133,13 @@ draftsRouter.patch("/:id/approve", async (c) => {
   }
 
   await db.update(emailDrafts).set({ status: "scheduled" }).where(eq(emailDrafts.id, draftId));
+  await logAudit({
+    actor: "user",
+    action: "draft.approve",
+    targetId: draftId,
+    targetType: "email_draft",
+    ipAddress: c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? c.req.header("x-real-ip") ?? null,
+  });
   const row = await getDraftWithJoins(draftId);
   if (!row) return c.json({ error: "Draft not found after update" }, 500);
   return c.json(formatDraft(row));
@@ -110,6 +154,13 @@ draftsRouter.patch("/:id/reject", async (c) => {
   }
 
   await db.update(emailDrafts).set({ status: "rejected" }).where(eq(emailDrafts.id, draftId));
+  await logAudit({
+    actor: "user",
+    action: "draft.reject",
+    targetId: draftId,
+    targetType: "email_draft",
+    ipAddress: c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? c.req.header("x-real-ip") ?? null,
+  });
   const row = await getDraftWithJoins(draftId);
   if (!row) return c.json({ error: "Draft not found after update" }, 500);
   return c.json(formatDraft(row));
@@ -136,6 +187,14 @@ draftsRouter.patch("/:id/edit", async (c) => {
   }
 
   await db.update(emailDrafts).set(updates).where(eq(emailDrafts.id, draftId));
+  await logAudit({
+    actor: "user",
+    action: "draft.edit",
+    targetId: draftId,
+    targetType: "email_draft",
+    ipAddress: c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? c.req.header("x-real-ip") ?? null,
+    metadata: { changed: Object.keys(updates).filter((k) => k !== "status") },
+  });
   const row = await getDraftWithJoins(draftId);
   if (!row) return c.json({ error: "Draft not found after update" }, 500);
   return c.json(formatDraft(row));
