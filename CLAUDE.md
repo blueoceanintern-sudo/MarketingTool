@@ -39,7 +39,7 @@ When adding features, prefer extending **existing** paths until a deliberate mig
 | `src/config/sourceRegistry.ts` | Legacy CSS selector map — unused; `runScrapeJob` reads selectors from `source_registry` DB table |
 | `src/routes/campaigns.ts` | `POST/GET /campaigns`, `GET /campaigns/:id`, `PATCH /campaigns/:id/status` |
 | `src/routes/leads.ts` | `POST /campaigns/:id/leads/import`, `GET /campaigns/:id/leads`, `GET /leads` |
-| `src/routes/drafts.ts` | `GET /drafts/queue`, `PATCH /drafts/:id/approve`, `PATCH /drafts/:id/reject`, `PATCH /drafts/:id/edit` |
+| `src/routes/drafts.ts` | `GET /drafts?status=scheduled\|sent`, `GET /drafts/queue`, `PATCH /drafts/:id/approve`, `PATCH /drafts/:id/reject`, `PATCH /drafts/:id/edit`; all mutating routes call `logAudit()` |
 | `src/routes/replies.ts` | `POST /webhooks/ses/reply`, `GET /replies/flagged`, `PATCH /replies/:id/resolve` |
 | `src/routes/demos.ts` | `POST/GET /demos`, `PATCH /demos/:id/assign` |
 | `src/routes/analytics.ts` | `GET /analytics/overview`, `/analytics/templates`, `/analytics/export` |
@@ -47,7 +47,7 @@ When adding features, prefer extending **existing** paths until a deliberate mig
 | `src/services/scrapers/cheerioScraper.ts` | Static HTML scraper; returns `Lead { company?, email?, website }` |
 | `src/services/scrapers/crawl4aiScraper.ts` | Crawl4AI HTTP client for JS-rendered pages |
 | `src/services/scraping/runScrapeJob.ts` | Orchestrates scrape jobs; updates `scrape_jobs` status/counts |
-| `src/services/drafting/index.ts` | Claude Haiku 4.5 Batch API email generation; one draft per (lead, campaign); picks a `prompt_templates` row by weighted-random and records `template_id` on the draft |
+| `src/services/drafting/index.ts` | Claude Haiku 4.5 Batch API email generation; one draft per (lead, campaign); picks a `prompt_templates` row by weighted-random and records `template_id` on the draft; `generateFollowUpContent()` for attempt-aware follow-up emails (nudge / new angle / break-up) via Batch API |
 | `src/services/drafting/orchestrator.ts` | Walks `campaign_leads → leads` for eligible (auto_queue, not suppressed, no existing draft) members; calls drafting service; persists drafts |
 | `src/services/enrichment/orchestrator.ts` | Full enrichment pipeline: registry → cowork (Claude browser agent) → Snov.io provider chain; persists to `enrichment_records` and updates `leads` |
 | `src/services/enrichment/cowork.ts` | Cowork provider — Claude Haiku 4.5 drives headless Chrome via Playwright; extracts institution + contact from public pages |
@@ -57,9 +57,9 @@ When adding features, prefer extending **existing** paths until a deliberate mig
 | `src/services/enrichment/snovio.ts` | Snov.io provider — token auth, domain lookup, email verification |
 | `src/services/enrichment/ndjsonWriter.ts` | Appends enrichment records to NDJSON log file |
 | `src/services/enrichment/types.ts` | Shared enrichment types (`EnrichmentInput`, `EnrichmentProvider`, `EnrichmentRecord`, etc.) |
-| `src/services/sender/index.ts` | AWS SES send; warm-up cap; suppression + 90-day + risk-flag + verified checks; A/B routing |
+| `src/services/sender/index.ts` | AWS SES send; warm-up cap; suppression + risk-flag + verified checks; A/B routing; `sendFollowUpEmail()` for follow-up sends (same gates, no draft status check); both functions store `ses_message_id` on `email_events` |
 | `src/templates/outreachEmail.ts` | HTML email template with one-click unsubscribe link |
-| `src/workers/index.ts` | All 6 cron jobs: follow-up-sender (9am), warmup-tracker (midnight), scrape-retry (4am), enrichment-retry (3am — **fully connected** to `enrichLead()` orchestrator), template-improver (Sun midnight — logs only), purge-old-records (Sun 2am) |
+| `src/workers/index.ts` | All 6 cron jobs: follow-up-sender (9am), warmup-tracker (midnight), scrape-retry (4am), enrichment-retry (3am — **fully connected** to `enrichLead()` orchestrator), drafting-runner (every 30 min), purge-old-records (Sun 2am) |
 
 **Live routes:**
 
@@ -76,6 +76,7 @@ PATCH  /api/v1/campaigns/:id/status
 POST   /api/v1/campaigns/:id/leads/import
 GET    /api/v1/campaigns/:id/leads
 GET    /api/v1/leads
+GET    /api/v1/drafts?status=scheduled|sent
 GET    /api/v1/drafts/queue
 PATCH  /api/v1/drafts/:id/approve
 PATCH  /api/v1/drafts/:id/reject
@@ -232,7 +233,7 @@ bun run workers                      # start all cron jobs
 
 | Worker | Schedule | What it does |
 |---|---|---|
-| `follow-up-sender` | Daily 9am | Follow-ups (attempts 1–3) for no-reply leads |
+| `follow-up-sender` | Daily 9am | Phase A: sends `scheduled` drafts not yet in `email_events`, creates `follow_ups` rows on success; Phase B: lazily generates follow-up content via Batch API and sends attempts 1–3 for no-reply leads |
 | `enrichment-retry` | Daily 3am | Retries unenriched leads or `not_found` leads older than 7 days; calls `enrichLead()` via orchestrator; capped by `ENRICHMENT_DAILY_RUN_CAP` env var (default 200) |
 | `scrape-retry` | Daily 4am | Retry failed `scrape_jobs` under `max_retries` |
 | `warmup-tracker` | Daily midnight | Warm-up phase + daily send cap |
@@ -257,7 +258,8 @@ Items from the target spec that are **not yet implemented**:
 - Monorepo migration (`apps/web`, `apps/api`, `shared/`) — still `backend/` + `frontend/`
 - DB migrations — schema defined in Drizzle but `drizzle-kit generate` + `migrate` not yet run; `db/migrations/` folder does not exist
 - Self-updating templates — schema supports it (`parent_template_id`, `created_by`, `weight`, `active`) but no cron yet auto-mutates winners or adjusts weights based on engagement. Manual CRUD only via `/templates` admin page
-- Security middleware not yet wired: API key auth (`X-API-Key` / `SECRET_API_KEY`), rate limiting, SSRF protection in scraper, SNS signature verification on webhook, CSV injection sanitization
+- Security middleware not yet wired: API key auth (`X-API-Key` / `SECRET_API_KEY`), rate limiting, SSRF protection in scraper, CSV injection sanitization
+- SNS signature verification ✅ implemented in `src/routes/replies.ts` (SHA1 + SHA256, TopicArn validation, SubscriptionConfirmation handshake)
 - CORS locked to `NEXT_PUBLIC_API_URL` only — currently hardcodes `localhost:3000` and `127.0.0.1:3000` in `src/index.ts`; needs env-driven config
 - `POST /admin/leads/:id/erase` right-to-deletion endpoint — in target API spec, not yet built
 - `GET /admin/audit-log` and `GET /admin/audit-log/export` — `audit_log` table is defined but no routes expose it yet
@@ -329,7 +331,9 @@ body_embedding vector(1536) with HNSW index
 UNIQUE (lead_id, campaign_id)  // one draft per lead per campaign
 
 // email_events
-id, draft_id (FK), lead_id (FK), sent_at, opened_at, replied_at, unsubscribed_at
+id, draft_id (FK), lead_id (FK),
+ses_message_id (text, nullable),  // <MessageId@email.amazonses.com> — matched against In-Reply-To on inbound replies
+sent_at, opened_at, replied_at, unsubscribed_at
 
 // replies
 id, email_event_id (FK), body, sentiment, category, received_at
@@ -352,7 +356,10 @@ id, email, reason (unsubscribed | spam_complaint | hostile | manual), added_at
 
 // follow_ups
 id, lead_id (FK), campaign_id (FK), attempt_number (1|2|3),
-scheduled_at, sent_at, draft_id (FK)
+scheduled_at, sent_at,
+draft_id (FK, nullable),   // points to original campaign draft for email_events lineage
+subject (text, nullable),  // lazily generated by follow-up-sender cron on first processing
+body (text, nullable)      // lazily generated by follow-up-sender cron on first processing
 
 // demos
 id, lead_id (FK), campaign_id (FK), reply_id (FK), assigned_to,
@@ -487,6 +494,8 @@ CRAWL4AI_BASE_URL=http://localhost:11235
 
 SECRET_API_KEY=                         # internal API auth — required on all /api/v1/* routes
 
+SNS_TOPIC_ARN=                          # ARN of SNS topic forwarding SES inbound to the reply webhook; webhook rejects messages from any other topic
+
 NODE_ENV=development | production
 PORT=3001
 NEXT_PUBLIC_API_URL=http://localhost:3001
@@ -520,7 +529,7 @@ Non-negotiable:
 5. **Suppression list** before every SES send
 6. **One-click unsubscribe** in every email body
 7. **Legal flags by market:** SG → PDPA; AU → Privacy Act; US → CAN-SPAM
-8. **No re-contact within 90 days** of prior outreach (hard gate)
+8. Suppression list checked before every send — never re-contact suppressed leads
 
 ---
 
@@ -540,13 +549,18 @@ Reject the job and set `scrape_jobs.status = blocked` if the resolved IP falls i
 
 ### SES webhook signature verification
 
-`POST /webhooks/ses/reply` receives SNS notifications from AWS. Before processing any payload:
+`POST /webhooks/ses/reply` receives SNS notifications from AWS. **Implemented** in `src/routes/replies.ts`. The implementation:
 
-1. Verify the `SigningCertURL` domain is `amazonaws.com`
-2. Download the cert and verify the SNS `Signature` field against the raw message
-3. Reject (HTTP 403) any request that fails verification — never process unverified payloads
+1. Validates `SigningCertURL` matches `https://sns.<region>.amazonaws.com/`
+2. Downloads and caches the signing certificate
+3. Verifies the SNS `Signature` field — supports both SignatureVersion `"1"` (SHA1) and `"2"` (SHA256; AWS-recommended)
+4. Validates `TopicArn` against `SNS_TOPIC_ARN` env var to prevent spoofing from other topics
+5. Handles `SubscriptionConfirmation` automatically by fetching `SubscribeURL`
+6. Rejects (HTTP 403) any request that fails verification — never processes unverified payloads
+7. Parses raw MIME email body via `postal-mime` to extract plain-text reply content
+8. Resolves lead by `From` address; matches email event via `In-Reply-To` → `email_events.ses_message_id`; falls back to most recent unread event if header absent
 
-Use the AWS SDK's built-in SNS message validator; do not hand-roll this.
+Note: AWS SDK v3 has no built-in SNS message validator. The implementation follows the AWS verification algorithm directly using `node:crypto`.
 
 ### CSV injection sanitization
 
@@ -602,7 +616,7 @@ Add a `purge-old-records` cron worker running weekly. Log purge counts to `audit
 
 Required by PDPA (SG), Australia Privacy Act, and CAN-SPAM opt-out obligations:
 
-- `POST /admin/leads/:id/erase` — hard-deletes all PII for a lead: name, email, company data, drafts, events, flags, follow-ups. Replaces email with `[deleted]` in `suppression_list` entry so the 90-day re-contact gate still applies without retaining PII
+- `POST /admin/leads/:id/erase` — hard-deletes all PII for a lead: name, email, company data, drafts, events, flags, follow-ups. Replaces email with `[deleted]` in `suppression_list` entry so the suppression remains in force without retaining PII
 - Erasure must complete within **30 days** of request
 - Log every erasure to `audit_log` with timestamp and requesting actor
 - CSV exports must exclude erased leads
@@ -654,12 +668,12 @@ Without these, cold outreach to SG/AU/US targets will be flagged or rejected, an
 **Runtime:** Bun | **Framework:** Hono
 
 - `src/index.ts` — Hono app; CORS middleware (hardcoded to `localhost:3000` / `127.0.0.1:3000` — not yet env-driven); all `/api/v1/*` routers mounted; `/unsubscribe` one-click handler; **no security middleware wired yet**
-- `src/db/` — Drizzle client + full schema; includes `audit_log` and `enrichment_records`; `approved_by`/`approved_at` on `email_drafts`; `lastContactedAt` on `leads`; still missing `generated_by` on `source_registry`
-- `src/routes/` — all target API routes implemented (campaigns, leads, drafts, replies, demos, analytics, admin registry/suppression); still missing `/admin/leads/:id/erase` and `/admin/audit-log`
+- `src/db/` — Drizzle client + full schema; includes `audit_log` and `enrichment_records`; `approved_by`/`approved_at` on `email_drafts`; `lastContactedAt` on `leads`; `ses_message_id` on `email_events`; `subject`/`body` on `follow_ups`; still missing `generated_by` on `source_registry`
+- `src/routes/` — all target API routes implemented (campaigns, leads, drafts, replies, demos, analytics, admin registry/suppression); `GET /drafts?status=scheduled|sent` added; audit trail on draft approve/reject/edit; still missing `/admin/leads/:id/erase` and `/admin/audit-log`
 - `src/services/scrapers/cheerioScraper.ts` — static HTML scraper
 - `src/services/scrapers/crawl4aiScraper.ts` — Crawl4AI HTTP client for JS-rendered pages
 - `src/services/scraping/runScrapeJob.ts` — scrape job orchestrator; updates `scrape_jobs` table
-- `src/services/drafting/index.ts` — Claude Haiku 4.5 Batch API; one draft per (lead, campaign); picks a `prompt_templates` row by weighted-random; campaign-goal-aware via campaign description/pain_points/CTA; confidence score in same call
+- `src/services/drafting/index.ts` — Claude Haiku 4.5 Batch API; one draft per (lead, campaign); picks a `prompt_templates` row by weighted-random; campaign-goal-aware via campaign description/pain_points/CTA; confidence score in same call; `generateFollowUpContent()` for attempt-aware follow-up emails (Batch API)
 - `src/services/enrichment/orchestrator.ts` — full enrichment pipeline: registry → cowork → snovio provider chain; persists `enrichment_records`, updates `leads.emailStatus / enrichmentSource / routing / isVerified`
 - `src/services/enrichment/cowork.ts` — Cowork provider; Claude Haiku 4.5 drives Playwright headless Chrome; extracts institution + contact from public pages; rate-limited (2s min interval, `COWORK_DAILY_RUN_CAP` env)
 - `src/services/enrichment/snovio.ts` — Snov.io provider (third in chain); token auth, domain lookup, email verification
@@ -667,9 +681,9 @@ Without these, cold outreach to SG/AU/US targets will be flagged or rejected, an
 - `src/services/enrichment/agent.ts` + `browserDriver.ts` — Claude browser agent loop + Playwright browser launcher
 - `src/services/enrichment/ndjsonWriter.ts` — appends enrichment results to NDJSON log
 - `src/services/enrichment/types.ts` — shared enrichment types
-- `src/services/sender/index.ts` — AWS SES send; warm-up cap; suppression/90-day/risk/verified hard gates
+- `src/services/sender/index.ts` — AWS SES send; warm-up cap; suppression/risk/verified hard gates; `sendFollowUpEmail()` (same gates, no draft status check); both store `ses_message_id` on `email_events`
 - `src/templates/outreachEmail.ts` — branded HTML email with one-click unsubscribe
-- `src/workers/index.ts` — 6 node-cron jobs: follow-up-sender, warmup-tracker, scrape-retry, enrichment-retry, drafting-runner (every 30 min), purge-old-records
+- `src/workers/index.ts` — 6 node-cron jobs: follow-up-sender (Phase A: sends scheduled drafts + creates follow_up rows; Phase B: lazy content gen + sends attempts 1–3), warmup-tracker, scrape-retry, enrichment-retry, drafting-runner (every 30 min), purge-old-records
 - `src/config/sourceRegistry.ts` — legacy selector map; unused by `runScrapeJob` which reads from DB
 
 ### Current — Frontend (`frontend/`)
@@ -735,7 +749,7 @@ source_registry / scrape_jobs
 - `services/enrichment` — Snov.io primary; Cowork when vertical coverage is insufficient
 - `services/source-registry` — Tavily API generates 10 dynamic URLs per campaign trigger; validates via HEAD request; deduplicates against existing `source_registry` rows; inserts with `generated_by` set to the triggering campaign/service
 - `services/drafting` — Batch API email generation; 1 draft per campaign per lead (max 3 per lead); campaign-goal-aligned prompt; max 125 words; confidence score in same response
-- `services/scoring` — Hard gates (suppression, 90-day rule, legal flags, unverified email) + draft quality score
+- `services/scoring` — Hard gates (suppression, legal flags, unverified email) + draft quality score
 - `services/sender` — SES send, warm-up daily cap, suppression check, one-click unsubscribe, A/B routing (20% / 80%)
 - `services/reply-handler` — Inbound SES webhook; Haiku classification with prompt caching; routes to follow-up / demo / flag
 - `services/improver` — Template A/B performance; pgvector similarity on `email_drafts.body_embedding`; updates skill.md
@@ -804,7 +818,7 @@ Each draft is scored 0–100 across four equally weighted factors:
 Every send must pass **before** SES is called (implemented in `services/scoring` / `services/sender`):
 
 1. Email not on `suppression_list`
-2. No outreach to same address within **90 days** (prior `email_events.sent_at`)
+2. Lead not on `suppression_list` — checked again at send time (enrichment also flags suppressed leads to `rep_review`)
 3. Lead has no blocking `risk_flags` (e.g. `legal_keyword`, `hostile_interaction`)
 4. `is_verified` true (or policy allows retry path from enrichment worker)
 5. Body includes **one-click unsubscribe** link (template requirement — never omit)
@@ -821,11 +835,18 @@ Track outcomes by `template_id` via `GET /api/v1/analytics/templates`, which joi
 
 ### Follow-ups (no reply)
 
-`follow-up-sender` runs daily at 9am:
+`follow-up-sender` runs daily at 9am in two phases:
 
-- Up to **3 attempts** per lead/campaign (`follow_ups.attempt_number` 1 → 2 → 3)
-- Only when `email_events` has `sent_at` but no `replied_at` and lead not suppressed
-- Each attempt gets its own draft row; respects warm-up cap and pre-send checks
+**Phase A — initial send:** finds all `email_drafts` with `status = 'scheduled'` that have no `email_events` row yet. Runs hard gates via `sendDraft()`. On success, inserts 3 `follow_ups` rows for that `(lead_id, campaign_id)` at +3 / +7 / +14 days with no content yet.
+
+**Phase B — follow-up send:** finds due `follow_ups` rows (`sentAt IS NULL`, `scheduledAt ≤ now`). If `subject`/`body` are null, generates content lazily via `generateFollowUpContent()` (Batch API, 50% cheaper than sync) with attempt-aware prompts:
+- Attempt 1: short nudge — vary the angle slightly from the initial email
+- Attempt 2: introduce a new piece of value or relevant insight
+- Attempt 3: break-up email — light, leaves door open
+
+Follow-up content does **not** include the previous email body — campaign context + attempt number are sufficient. Sends via `sendFollowUpEmail()` which enforces all gates (suppression, weekly cap, risk flags, verified, daily cap, campaign active).
+
+Up to **3 attempts** per lead/campaign enforced by only ever creating 3 `follow_ups` rows. Skips the lead entirely if `email_events.repliedAt` is set. Sequential ordering enforced: attempt N requires attempt N-1 `sentAt` to be set.
 
 ### Inbound replies (decision tree)
 
