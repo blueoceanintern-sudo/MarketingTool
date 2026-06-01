@@ -1,0 +1,1 @@
+ALTER TABLE "email_events" ADD COLUMN "ses_message_id" text;

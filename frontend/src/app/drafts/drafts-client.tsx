@@ -4,8 +4,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Draft } from "@/lib/api";
 import { approveDraft, editDraft, rejectDraft } from "@/lib/api";
 
+type Tab = "queue" | "scheduled" | "sent";
+
 interface Props {
-  initialDrafts: Draft[];
+  initialQueue: Draft[];
+  initialScheduled: Draft[];
+  initialSent: Draft[];
 }
 
 function confidenceLabel(score: number) {
@@ -18,7 +22,106 @@ function wordCount(text: string) {
   return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
-export default function DraftsClient({ initialDrafts }: Props) {
+// Groups drafts by campaign_name, preserving order.
+function groupByCampaign(drafts: Draft[]): { campaign: string; drafts: Draft[] }[] {
+  const map = new Map<string, Draft[]>();
+  for (const d of drafts) {
+    const group = map.get(d.campaign_name) ?? [];
+    group.push(d);
+    map.set(d.campaign_name, group);
+  }
+  return Array.from(map.entries()).map(([campaign, drafts]) => ({ campaign, drafts }));
+}
+
+// ── Scheduled / Sent table ────────────────────────────────────────────────────
+
+function DraftsTable({ drafts, emptyMessage }: { drafts: Draft[]; emptyMessage: string }) {
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  if (drafts.length === 0) {
+    return (
+      <div className="h-[calc(100vh-8rem)] flex items-center justify-center flex-col gap-4 text-grey-400">
+        <span className="material-symbols-outlined text-[48px]">inbox</span>
+        <p className="text-[16px] font-medium">{emptyMessage}</p>
+      </div>
+    );
+  }
+
+  const groups = groupByCampaign(drafts);
+
+  return (
+    <div className="p-8 overflow-y-auto h-[calc(100vh-8rem)]">
+      <div className="flex flex-col gap-8">
+        {groups.map(({ campaign, drafts: groupDrafts }) => (
+          <div key={campaign}>
+            <h3 className="text-[13px] font-semibold text-grey-400 uppercase tracking-wider mb-3">{campaign}</h3>
+            <div className="bg-white rounded-lg border border-grey-100 overflow-hidden">
+              <table className="w-full text-[13px]">
+                <thead>
+                  <tr className="border-b border-grey-100 text-grey-400 text-[11px] uppercase tracking-wider">
+                    <th className="text-left px-4 py-3 font-medium">Lead</th>
+                    <th className="text-left px-4 py-3 font-medium">Subject</th>
+                    <th className="text-left px-4 py-3 font-medium w-24">Score</th>
+                    <th className="text-left px-4 py-3 font-medium w-28">Date</th>
+                    <th className="px-4 py-3 w-8" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {groupDrafts.map((d) => {
+                    const conf = confidenceLabel(d.confidence_score);
+                    const isOpen = expanded === d.id;
+                    return (
+                      <>
+                        <tr
+                          key={d.id}
+                          className="border-b border-grey-100 last:border-0 hover:bg-grey-50 cursor-pointer"
+                          onClick={() => setExpanded(isOpen ? null : d.id)}
+                        >
+                          <td className="px-4 py-3">
+                            <p className="font-medium text-primary">{d.lead_name}</p>
+                            <p className="text-grey-400 text-[11px]">{d.lead_role}</p>
+                          </td>
+                          <td className="px-4 py-3 text-grey-600 truncate max-w-[300px]">{d.subject}</td>
+                          <td className="px-4 py-3">
+                            <span className={`px-2 py-0.5 text-[11px] font-medium rounded ${conf.className}`}>
+                              {conf.label} ({Math.round(d.confidence_score)}%)
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-grey-400">
+                            {new Date(d.created_at).toLocaleDateString()}
+                          </td>
+                          <td className="px-4 py-3 text-grey-400 text-center">
+                            <span className="material-symbols-outlined text-[16px]">
+                              {isOpen ? "expand_less" : "expand_more"}
+                            </span>
+                          </td>
+                        </tr>
+                        {isOpen && (
+                          <tr key={`${d.id}-body`} className="bg-grey-50 border-b border-grey-100 last:border-0">
+                            <td colSpan={5} className="px-6 py-4">
+                              <pre className="font-mono text-[12px] text-grey-700 whitespace-pre-wrap leading-relaxed">
+                                {d.body}
+                              </pre>
+                              <p className="text-[11px] text-grey-400 mt-2">{wordCount(d.body)} words</p>
+                            </td>
+                          </tr>
+                        )}
+                      </>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Review queue (unchanged logic, new props shape) ───────────────────────────
+
+function ReviewQueue({ initialDrafts }: { initialDrafts: Draft[] }) {
   const pending = initialDrafts.filter((d) => d.status === "pending_review");
   const [drafts, setDrafts] = useState<Draft[]>(pending);
   const [selectedIdx, setSelectedIdx] = useState(0);
@@ -103,7 +206,7 @@ export default function DraftsClient({ initialDrafts }: Props) {
 
   if (drafts.length === 0) {
     return (
-      <div className="h-[calc(100vh-4rem)] flex items-center justify-center flex-col gap-4 text-grey-400">
+      <div className="h-[calc(100vh-8rem)] flex items-center justify-center flex-col gap-4 text-grey-400">
         <span className="material-symbols-outlined text-[48px]">check_circle</span>
         <p className="text-[16px] font-medium">Review queue is empty</p>
         <p className="text-[13px]">Generate drafts from a campaign or wait for new leads.</p>
@@ -116,7 +219,7 @@ export default function DraftsClient({ initialDrafts }: Props) {
 
   return (
     <>
-      <div className="h-[calc(100vh-4rem)] flex flex-col overflow-hidden">
+      <div className="h-[calc(100vh-8rem)] flex flex-col overflow-hidden">
         <div className="flex-1 flex overflow-hidden">
           <section className="w-[260px] lg:w-[320px] bg-white border-r border-grey-100 flex flex-col overflow-y-auto shrink-0">
             <div className="px-5 py-4 border-b border-grey-100 sticky top-0 bg-white z-10">
@@ -238,10 +341,62 @@ export default function DraftsClient({ initialDrafts }: Props) {
             disabled={submitting || saving}
             className="px-8 py-2 bg-success text-white font-semibold rounded-lg disabled:opacity-60"
           >
-            {submitting ? "Approving…" : "Approve & Send"}
+            {submitting ? "Approving…" : "Approve & Schedule"}
           </button>
         </footer>
       </div>
     </>
+  );
+}
+
+// ── Root tabbed component ─────────────────────────────────────────────────────
+
+export default function DraftsClient({ initialQueue, initialScheduled, initialSent }: Props) {
+  const [tab, setTab] = useState<Tab>("queue");
+
+  const tabs: { key: Tab; label: string; count: number }[] = [
+    { key: "queue", label: "Review Queue", count: initialQueue.length },
+    { key: "scheduled", label: "Scheduled", count: initialScheduled.length },
+    { key: "sent", label: "Sent", count: initialSent.length },
+  ];
+
+  return (
+    <div className="flex flex-col h-[calc(100vh-4rem)]">
+      <div className="bg-white border-b border-grey-100 px-8 flex gap-6 shrink-0">
+        {tabs.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setTab(t.key)}
+            className={[
+              "py-4 text-[14px] font-medium border-b-2 transition-colors",
+              tab === t.key
+                ? "border-primary text-primary"
+                : "border-transparent text-grey-400 hover:text-grey-600",
+            ].join(" ")}
+          >
+            {t.label}
+            <span
+              className={[
+                "ml-2 px-2 py-0.5 rounded-full text-[11px] font-semibold",
+                tab === t.key ? "bg-primary text-white" : "bg-grey-100 text-grey-500",
+              ].join(" ")}
+            >
+              {t.count}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      <div className="flex-1 overflow-hidden">
+        {tab === "queue" && <ReviewQueue initialDrafts={initialQueue} />}
+        {tab === "scheduled" && (
+          <DraftsTable drafts={initialScheduled} emptyMessage="No drafts scheduled for sending." />
+        )}
+        {tab === "sent" && (
+          <DraftsTable drafts={initialSent} emptyMessage="No emails sent yet." />
+        )}
+      </div>
+    </div>
   );
 }

@@ -102,12 +102,12 @@ If any condition below is triggered:
 
 #### Hard Gate Conditions
 
-- Duplicate contact within last 90 days
 - Unverified email
 - Missing critical fields
 - Legal/compliance risk flags
 - Prior hostile interaction
 - Regulated entity detection
+- Lead on suppression list
 
 ---
 

@@ -1,6 +1,6 @@
 {
-  "id": "fe6f4d79-b5dc-4540-851b-f9a17f6f4311",
-  "prevId": "00000000-0000-0000-0000-000000000000",
+  "id": "5a92adbc-1fdb-463e-b5db-f95c0f33d1a1",
+  "prevId": "77fdab6f-8a96-4c7d-bc35-39849db08d86",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -576,6 +576,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "ses_message_id": {
+          "name": "ses_message_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "sent_at": {
           "name": "sent_at",
           "type": "timestamp",
@@ -818,6 +824,18 @@
         "draft_id": {
           "name": "draft_id",
           "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "subject": {
+          "name": "subject",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "body": {
+          "name": "body",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         }

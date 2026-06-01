@@ -1,6 +1,7 @@
 import "./globals.css";
 import { DM_Sans, JetBrains_Mono } from "next/font/google";
 import { ReactNode } from "react";
+import { Toaster } from "sonner";
 import AppSidebar from "@/components/sidebar";
 import ProfileHeader from "@/components/profile-header";
 
@@ -60,6 +61,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <main className="ml-[220px] pt-16 min-h-screen">
           {children}
         </main>
+        <Toaster richColors position="top-right" closeButton />
       </body>
     </html>
   );

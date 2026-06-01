@@ -1,6 +1,6 @@
 {
-  "id": "fe6f4d79-b5dc-4540-851b-f9a17f6f4311",
-  "prevId": "00000000-0000-0000-0000-000000000000",
+  "id": "77fdab6f-8a96-4c7d-bc35-39849db08d86",
+  "prevId": "fe6f4d79-b5dc-4540-851b-f9a17f6f4311",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -818,6 +818,18 @@
         "draft_id": {
           "name": "draft_id",
           "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "subject": {
+          "name": "subject",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "body": {
+          "name": "body",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         }

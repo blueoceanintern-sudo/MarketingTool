@@ -1,11 +1,14 @@
 import cron from "node-cron";
 import { db } from "../db";
-import { followUps, leads, emailEvents, riskFlags, scrapeJobs, campaigns, replies } from "../db/schema";
-import { eq, and, isNull, lte, isNotNull, lt, or, inArray } from "drizzle-orm";
-import { sendDraft, getTotalSent } from "../services/sender";
+import { followUps, leads, emailEvents, emailDrafts, riskFlags, scrapeJobs, campaigns, replies, companies } from "../db/schema";
+import { eq, and, isNull, lte, isNotNull, lt, or, inArray, notInArray } from "drizzle-orm";
+import { sendDraft, sendFollowUpEmail, getTotalSent } from "../services/sender";
 import { runScrapeJob } from "../services/scraping/runScrapeJob";
 import { enrichLead } from "../services/enrichment/orchestrator";
 import { generateDraftsForCampaign } from "../services/drafting/orchestrator";
+import { generateFollowUpContent } from "../services/drafting";
+
+const MAX_FOLLOW_UP_ATTEMPTS = 3;
 
 // ---------------------------------------------------------------------------
 // warmup-tracker  — midnight daily
@@ -17,60 +20,189 @@ cron.schedule("0 0 * * *", async () => {
 
 // ---------------------------------------------------------------------------
 // follow-up-sender  — 09:00 daily
+//
+// Phase A: Send approved (scheduled) drafts that haven't been sent yet.
+//   On success, create follow_ups rows for attempts 1–3 (+3/+7/+14 days).
+//
+// Phase B: Process pending follow_ups rows lazily.
+//   If subject/body are null, generate them via the Batch API first.
+//   Skip if lead has already replied; enforce sequential attempt ordering.
 // ---------------------------------------------------------------------------
 cron.schedule("0 9 * * *", async () => {
   console.log("[follow-up-sender] running");
 
-  const pending = await db
+  let sent = 0;
+  let blocked = 0;
+  let capHit = false;
+
+  // ── Phase A: send scheduled drafts ────────────────────────────────────────
+  // Find drafts with status=scheduled that have no email_events row yet (i.e.
+  // never sent — not a re-send of an existing sent draft).
+  const alreadySentDraftIds = (
+    await db.select({ draftId: emailEvents.draftId }).from(emailEvents).where(isNotNull(emailEvents.sentAt))
+  ).map((r) => r.draftId);
+
+  const scheduledDrafts = await db
     .select({
-      id: followUps.id,
-      draftId: followUps.draftId,
-      leadId: followUps.leadId,
+      id: emailDrafts.id,
+      leadId: emailDrafts.leadId,
+      campaignId: emailDrafts.campaignId,
       leadEmail: leads.email,
       isVerified: leads.isVerified,
     })
-    .from(followUps)
-    .innerJoin(leads, eq(followUps.leadId, leads.id))
-    .where(and(isNull(followUps.sentAt), lte(followUps.scheduledAt, new Date())));
+    .from(emailDrafts)
+    .innerJoin(leads, eq(emailDrafts.leadId, leads.id))
+    .where(
+      and(
+        eq(emailDrafts.status, "scheduled"),
+        alreadySentDraftIds.length > 0 ? notInArray(emailDrafts.id, alreadySentDraftIds) : undefined,
+      ),
+    );
 
-  let sent = 0;
-  let blocked = 0;
+  for (const draft of scheduledDrafts) {
+    if (capHit) break;
 
-  for (const fu of pending) {
-    if (!fu.draftId) continue;
-
-    // Skip if lead has already replied
-    const [hasReply] = await db
-      .select({ id: emailEvents.id })
-      .from(emailEvents)
-      .where(and(eq(emailEvents.leadId, fu.leadId), isNotNull(emailEvents.repliedAt)))
-      .limit(1);
-    if (hasReply) continue;
-
-    // Check risk flags
-    const [flag] = await db
-      .select({ id: riskFlags.id })
-      .from(riskFlags)
-      .where(eq(riskFlags.leadId, fu.leadId))
-      .limit(1);
+    const [flag] = await db.select({ id: riskFlags.id }).from(riskFlags).where(eq(riskFlags.leadId, draft.leadId)).limit(1);
 
     const result = await sendDraft({
-      draftId: fu.draftId,
-      toEmail: fu.leadEmail,
-      leadId: fu.leadId,
-      isVerified: fu.isVerified,
+      draftId: draft.id,
+      toEmail: draft.leadEmail,
+      leadId: draft.leadId,
+      isVerified: draft.isVerified,
       hasRiskFlags: !!flag,
     });
 
     if (result.status === "sent") {
-      await db.update(followUps).set({ sentAt: new Date() }).where(eq(followUps.id, fu.id));
       sent++;
+      // Schedule 3 follow-up attempts: +3, +7, +14 days from now.
+      const now = Date.now();
+      const offsets = [3, 7, 14];
+      await db.insert(followUps).values(
+        offsets.map((days, i) => ({
+          leadId: draft.leadId,
+          campaignId: draft.campaignId,
+          attemptNumber: i + 1,
+          scheduledAt: new Date(now + days * 24 * 60 * 60 * 1000),
+          draftId: draft.id,
+        })),
+      );
     } else {
       blocked++;
     }
 
-    // Stop if daily cap hit
-    if (result.reason === "daily_cap_reached") break;
+    if (result.reason === "daily_cap_reached") capHit = true;
+  }
+
+  // ── Phase B: send pending follow-ups (lazy content generation) ────────────
+  if (!capHit) {
+    const pending = await db
+      .select({
+        id: followUps.id,
+        draftId: followUps.draftId,
+        subject: followUps.subject,
+        body: followUps.body,
+        leadId: followUps.leadId,
+        campaignId: followUps.campaignId,
+        attemptNumber: followUps.attemptNumber,
+        leadEmail: leads.email,
+        isVerified: leads.isVerified,
+        leadFirstName: leads.firstName,
+        leadLastName: leads.lastName,
+        leadRole: leads.role,
+        companyName: companies.name,
+        companyIndustry: companies.industry,
+      })
+      .from(followUps)
+      .innerJoin(leads, eq(followUps.leadId, leads.id))
+      .innerJoin(companies, eq(leads.companyId, companies.id))
+      .where(and(isNull(followUps.sentAt), lte(followUps.scheduledAt, new Date())));
+
+    for (const fu of pending) {
+      if (capHit) break;
+      if (fu.attemptNumber > MAX_FOLLOW_UP_ATTEMPTS) continue;
+
+      // Enforce sequential ordering
+      if (fu.attemptNumber > 1) {
+        const [prev] = await db
+          .select({ sentAt: followUps.sentAt })
+          .from(followUps)
+          .where(
+            and(
+              eq(followUps.leadId, fu.leadId),
+              eq(followUps.campaignId, fu.campaignId),
+              eq(followUps.attemptNumber, fu.attemptNumber - 1),
+            ),
+          )
+          .limit(1);
+        if (!prev?.sentAt) continue;
+      }
+
+      // Skip if lead has already replied
+      const [hasReply] = await db
+        .select({ id: emailEvents.id })
+        .from(emailEvents)
+        .where(and(eq(emailEvents.leadId, fu.leadId), isNotNull(emailEvents.repliedAt)))
+        .limit(1);
+      if (hasReply) continue;
+
+      const [flag] = await db.select({ id: riskFlags.id }).from(riskFlags).where(eq(riskFlags.leadId, fu.leadId)).limit(1);
+
+      // Lazily generate subject/body if not yet produced
+      let subject = fu.subject;
+      let body = fu.body;
+
+      if (!subject || !body) {
+        if (!fu.draftId) {
+          console.warn(`[follow-up-sender] follow_up ${fu.id} has no draftId — skipping`);
+          continue;
+        }
+
+        // Fetch campaign context for the prompt
+        const [campaignRow] = await db
+          .select({ name: campaigns.name, description: campaigns.description, painPoints: campaigns.painPoints, callToAction: campaigns.callToAction })
+          .from(campaigns)
+          .where(eq(campaigns.id, fu.campaignId))
+          .limit(1);
+        if (!campaignRow) continue;
+
+        try {
+          const generated = await generateFollowUpContent(
+            fu.leadId,
+            fu.campaignId,
+            { firstName: fu.leadFirstName ?? undefined, lastName: fu.leadLastName ?? undefined, role: fu.leadRole ?? undefined, companyName: fu.companyName, industry: fu.companyIndustry },
+            { name: campaignRow.name, description: campaignRow.description, painPoints: campaignRow.painPoints, callToAction: campaignRow.callToAction },
+            fu.attemptNumber,
+          );
+          subject = generated.subject;
+          body = generated.body;
+          await db.update(followUps).set({ subject, body }).where(eq(followUps.id, fu.id));
+        } catch (err) {
+          console.error(`[follow-up-sender] content generation failed for follow_up ${fu.id}:`, err);
+          continue;
+        }
+      }
+
+      const result = await sendFollowUpEmail({
+        followUpId: fu.id,
+        originalDraftId: fu.draftId!,
+        subject: subject!,
+        body: body!,
+        toEmail: fu.leadEmail,
+        leadId: fu.leadId,
+        campaignId: fu.campaignId,
+        isVerified: fu.isVerified,
+        hasRiskFlags: !!flag,
+      });
+
+      if (result.status === "sent") {
+        await db.update(followUps).set({ sentAt: new Date() }).where(eq(followUps.id, fu.id));
+        sent++;
+      } else {
+        blocked++;
+      }
+
+      if (result.reason === "daily_cap_reached") capHit = true;
+    }
   }
 
   console.log(`[follow-up-sender] done: sent=${sent}, blocked=${blocked}`);
@@ -153,14 +285,16 @@ cron.schedule("0 3 * * *", async () => {
 
 // ---------------------------------------------------------------------------
 // purge-old-records  — Sunday 02:00
-// Retention: replies 180d, email_events 90d, scrape_jobs (failed/complete) 30d
+// Retention: replies 180d, email_events 365d, scrape_jobs (failed/complete) 30d
+// email_events kept 365d so the weekly send-cap check (7d window) and
+// historical analytics always have data; replies kept 180d for engagement insights.
 // ---------------------------------------------------------------------------
 cron.schedule("0 2 * * 0", async () => {
   console.log("[purge-old-records] running");
 
   const now = Date.now();
-  const ninetyDaysAgo = new Date(now - 90 * 24 * 60 * 60 * 1000);
   const oneEightyDaysAgo = new Date(now - 180 * 24 * 60 * 60 * 1000);
+  const threeSixtyFiveDaysAgo = new Date(now - 365 * 24 * 60 * 60 * 1000);
   const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
 
   // Replies older than 180 days.
@@ -169,11 +303,11 @@ cron.schedule("0 2 * * 0", async () => {
     .where(lt(replies.receivedAt, oneEightyDaysAgo))
     .returning({ id: replies.id });
 
-  // email_events older than 90 days — delete any linked replies first (FK constraint).
+  // email_events older than 365 days — delete any linked replies first (FK constraint).
   const staleEvents = await db
     .select({ id: emailEvents.id })
     .from(emailEvents)
-    .where(and(isNotNull(emailEvents.sentAt), lt(emailEvents.sentAt, ninetyDaysAgo)));
+    .where(and(isNotNull(emailEvents.sentAt), lt(emailEvents.sentAt, threeSixtyFiveDaysAgo)));
 
   let purgedEvents = 0;
   if (staleEvents.length > 0) {

@@ -191,6 +191,11 @@ export async function getCampaigns(): Promise<Campaign[]> {
   return (await apiFetch<Campaign[]>("/campaigns")) ?? [];
 }
 
+export type DiscoveryStatus =
+  | { status: "already_seeded"; message: string }
+  | { status: "triggered"; message: string; domains: string[] }
+  | { status: "skipped_no_config"; message: string };
+
 export async function createCampaign(payload: {
   name: string;
   vertical: string;
@@ -200,7 +205,7 @@ export async function createCampaign(payload: {
   description?: string | null;
   pain_points?: string[];
   call_to_action?: string | null;
-}): Promise<{ campaign: Campaign | null; error?: string }> {
+}): Promise<{ campaign: Campaign | null; discovery?: DiscoveryStatus; error?: string }> {
   try {
     const res = await fetch(`${BASE}/api/v1/campaigns`, {
       method: "POST",
@@ -211,8 +216,9 @@ export async function createCampaign(payload: {
       const body = (await res.json().catch(() => ({}))) as { error?: string };
       return { campaign: null, error: body.error ?? `Request failed (${res.status})` };
     }
-    const campaign = (await res.json()) as Campaign;
-    return { campaign };
+    const data = (await res.json()) as Campaign & { discovery?: DiscoveryStatus };
+    const { discovery, ...campaign } = data;
+    return { campaign: campaign as Campaign, discovery };
   } catch {
     return { campaign: null, error: "Could not reach the API. Is the backend running?" };
   }
@@ -422,6 +428,10 @@ export async function getDraftQueue(): Promise<Draft[]> {
   return (await apiFetch<Draft[]>("/drafts/queue")) ?? [];
 }
 
+export async function getDraftsByStatus(status: "scheduled" | "sent"): Promise<Draft[]> {
+  return (await apiFetch<Draft[]>(`/drafts?status=${status}`)) ?? [];
+}
+
 export async function getReplies(flaggedOnly = false): Promise<Reply[]> {
   const path = flaggedOnly ? "/replies/flagged" : "/replies";
   return (await apiFetch<Reply[]>(path)) ?? [];
@@ -433,6 +443,53 @@ export async function getDemos(): Promise<Demo[]> {
 
 export async function getRegistrySources(): Promise<SourceRegistry[]> {
   return (await apiFetch<SourceRegistry[]>("/registry/sources")) ?? [];
+}
+
+export interface DirectoryConfig {
+  vertical: string;
+  geo: string;
+  query: string;
+  domains: string[];
+}
+
+export interface ActiveCombination {
+  vertical: string;
+  geo: string;
+  has_config: boolean;
+}
+
+export async function getDirectoryConfigs(): Promise<DirectoryConfig[]> {
+  return (await apiFetch<DirectoryConfig[]>("/registry/directory-configs")) ?? [];
+}
+
+export async function getActiveCombinations(): Promise<ActiveCombination[]> {
+  return (await apiFetch<ActiveCombination[]>("/registry/active-combinations")) ?? [];
+}
+
+export async function triggerDiscovery(
+  vertical: string,
+  geo: string,
+): Promise<{ ok: boolean; status?: string; message?: string; domains?: string[]; error?: string; retryAfter?: number }> {
+  try {
+    const res = await fetch(`${BASE}/api/v1/registry/discover`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ vertical, geo }),
+    });
+    const body = (await res.json().catch(() => ({}))) as {
+      status?: string;
+      message?: string;
+      domains?: string[];
+      error?: string;
+      retry_after_seconds?: number;
+    };
+    if (!res.ok) {
+      return { ok: false, error: body.error ?? `Request failed (${res.status})`, retryAfter: body.retry_after_seconds };
+    }
+    return { ok: true, status: body.status, message: body.message, domains: body.domains };
+  } catch {
+    return { ok: false, error: "Could not reach the API." };
+  }
 }
 
 export async function createRegistrySource(payload: {
