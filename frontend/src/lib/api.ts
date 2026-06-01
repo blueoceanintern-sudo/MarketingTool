@@ -425,6 +425,10 @@ export async function getDraftQueue(): Promise<Draft[]> {
   return (await apiFetch<Draft[]>("/drafts/queue")) ?? [];
 }
 
+export async function getDraftsByStatus(status: "scheduled" | "sent"): Promise<Draft[]> {
+  return (await apiFetch<Draft[]>(`/drafts?status=${status}`)) ?? [];
+}
+
 export async function getReplies(flaggedOnly = false): Promise<Reply[]> {
   const path = flaggedOnly ? "/replies/flagged" : "/replies";
   return (await apiFetch<Reply[]>(path)) ?? [];
