@@ -3,6 +3,7 @@ import { db } from "../../db";
 import { campaigns, campaignLeads, campaignLeadExclusions, companies, leads, scrapeJobs, sourceRegistry, normalizeVertical, normalizeGeo } from "../../db/schema";
 import { scrapeWithFallback } from "../scrapers/crawl4aiScraper";
 import { scrapeWebsite } from "../scrapers/cheerioScraper";
+import { isValidLeadEmail } from "../scrapers/emailFilter";
 
 function parseGeographies(geography: string): string[] {
   return geography
@@ -31,6 +32,7 @@ async function persistScrapedLead(
   if (!scraped.email) return false;
 
   const email = scraped.email.trim().toLowerCase();
+  if (!isValidLeadEmail(email)) return false;
 
   // Reuse the existing lead row if we've seen this email before — m:n means
   // the same person can be in multiple campaigns. We add a campaign_leads

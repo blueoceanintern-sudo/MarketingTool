@@ -1,5 +1,6 @@
 import type { Lead } from "./cheerioScraper";
 import { scrapeWebsite as cheerioFallback } from "./cheerioScraper";
+import { isValidLeadEmail } from "./emailFilter";
 
 // Crawl4AI 0.4+ schema. POST /crawl accepts { urls: string[] } and returns
 // a per-URL results array. Each result has its own `success` flag plus an
@@ -34,7 +35,8 @@ const STEALTH_USER_AGENT =
 function extractAllEmails(text: string): string[] {
   const emails = new Set<string>();
   for (const match of text.matchAll(EMAIL_REGEX)) {
-    emails.add(match[0].toLowerCase());
+    const candidate = match[0].toLowerCase();
+    if (isValidLeadEmail(candidate)) emails.add(candidate);
   }
   return Array.from(emails);
 }
