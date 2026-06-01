@@ -1,9 +1,8 @@
-import { and, eq, gte, isNotNull } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "../../db";
 import {
   leads,
   companies,
-  emailEvents,
   riskFlags,
   suppressionList,
   enrichmentRecords,
@@ -216,23 +215,8 @@ async function isDuplicateContact(email: string | null): Promise<boolean> {
     .from(suppressionList)
     .where(eq(suppressionList.email, email))
     .limit(1);
-  if (suppressed) return true;
 
-  const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
-  const [recent] = await db
-    .select({ id: emailEvents.id })
-    .from(emailEvents)
-    .innerJoin(leads, eq(emailEvents.leadId, leads.id))
-    .where(
-      and(
-        eq(leads.email, email),
-        isNotNull(emailEvents.sentAt),
-        gte(emailEvents.sentAt, ninetyDaysAgo),
-      ),
-    )
-    .limit(1);
-
-  return Boolean(recent);
+  return Boolean(suppressed);
 }
 
 async function hasRiskFlag(leadId: string): Promise<{ flagged: boolean; reason: string | null }> {
