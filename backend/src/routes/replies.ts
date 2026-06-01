@@ -1,9 +1,10 @@
 import { Hono } from "hono";
 import PostalMime from "postal-mime";
 import { createVerify } from "node:crypto";
+import Anthropic from "@anthropic-ai/sdk";
 import { db } from "../db";
-import { replies, emailEvents, leads, companies, emailDrafts, campaigns, suppressionList, riskFlags } from "../db/schema";
-import { eq, and, isNull, inArray } from "drizzle-orm";
+import { replies, emailEvents, leads, companies, emailDrafts, campaigns, suppressionList, followUps, demos } from "../db/schema";
+import { eq, and, isNull, inArray, asc } from "drizzle-orm";
 
 // ── SNS types ─────────────────────────────────────────────────────────────────
 
@@ -86,30 +87,87 @@ async function verifySnsSignature(msg: SnsEnvelope): Promise<boolean> {
 
 // ── Reply classification ───────────────────────────────────────────────────────
 
-function classifyReply(body: string): string {
-  const lower = body.toLowerCase();
-  if (/unsubscribe|opt.?out|remove me|stop emailing/i.test(lower)) return "unsubscribe";
-  if (/legal|lawsuit|report|spam|attorney|solicitor/i.test(lower)) return "hostile";
-  if (/interested|yes|love to|sounds good|tell me more|book|call|demo/i.test(lower)) return "positive";
-  if (/\?|how|what|when|who|where|clarif|more info/i.test(lower)) return "question";
-  return "neutral";
+const anthropic = new Anthropic();
+
+async function classifyReply(body: string): Promise<{ category: string; return_date: string | null }> {
+  const currentDate = new Date().toISOString().split("T")[0];
+  const systemPrompt = `You are classifying replies to cold marketing emails. Your job is to categorise the reply into exactly one of four classes and extract any return date if present.
+
+Current date: ${currentDate}
+
+## Classes
+
+positive — the recipient shows explicit interest, willingness to continue discussion, a request for more information or pricing, scheduling intent, or openness to evaluating the offer.
+Examples: "I'd love to learn more", "Can we set up a call?", "Send me your pricing", "Yes, let's talk", "Please send more details", "Can you explain what you offer?", "What are your rates?"
+
+negative — the recipient is not interested, asks to be removed, expresses frustration, explicitly declines, or the reply is a delivery failure or mailbox error.
+Examples: "Please unsubscribe me", "Not interested", "Remove me from your list", "We already have a solution", "Thanks but we're good", "Mailbox full", "Recipient no longer at this address", "Delivery failed", "Undeliverable"
+Note: polite phrasing does not override a clear rejection. "Thanks, but we're not interested" is negative.
+
+out_of_office — the reply is an automated out-of-office or vacation message, not a human response.
+Examples: "I am out of the office until...", "I will be back on...", "I'm on leave", "Auto-reply: away until..."
+
+neutral — the reply does not clearly fit any of the above. Includes replies that are ambiguous, challenging, or acknowledge receipt without indicating interest or disinterest.
+Examples: "Who are you?", "How did you get my email?", "What company is this?", "Who referred you?", "OK", "Thanks", "Noted", "Got it"
+Note: "Thanks" and similar pleasantries without any engagement signal are neutral, not positive.
+
+## Priority order
+
+When a reply contains multiple signals, apply this priority:
+1. negative — always wins if present
+2. out_of_office — wins over positive and neutral
+3. positive
+4. neutral
+
+Example: "I'm out until June 20. Not interested." → negative
+Example: "Out of office until July 1. Please reach out to my colleague instead." → out_of_office
+Example: "Thanks, but we're not interested." → negative
+Example: "Please send pricing." → positive
+
+## Date extraction
+
+If the class is out_of_office, extract the return date if one is explicitly stated. Format as YYYY-MM-DD using ${currentDate} as reference for relative dates like "next Monday" or "end of the week". If no date is found or the date is ambiguous, return null.
+
+## Instructions
+
+1. Classify the reply into exactly one class, even if multiple signals are present. Follow the priority order above.
+2. Ignore all quoted original email text below any reply divider (e.g. "On [date] wrote:", "-----Original Message-----"). Classify only the new reply content.
+3. Unsubscribe requests, delivery failures, and mailbox errors are always negative regardless of tone.
+4. Polite tone does not override clear rejection intent.
+5. Requests for pricing, details, or further information are always positive regardless of brevity.
+6. When in doubt, classify as neutral.
+
+## Output format
+
+Return only valid JSON. No explanation, no preamble, no markdown fences.
+
+{
+  "sentiment": "positive" | "negative" | "out_of_office" | "neutral",
+  "return_date": "YYYY-MM-DD" | null
+}`;
+
+  try {
+    const response = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 128,
+      system: systemPrompt,
+      messages: [{ role: "user", content: `<reply>\n${body}\n</reply>` }],
+    });
+    const text = response.content[0].type === "text" ? response.content[0].text : "";
+    const parsed = JSON.parse(text) as { sentiment?: string; return_date?: string | null };
+    return {
+      category: parsed.sentiment ?? "neutral",
+      return_date: parsed.return_date ?? null,
+    };
+  } catch {
+    return { category: "neutral", return_date: null };
+  }
 }
 
 function categoryToSentiment(category: string): "positive" | "negative" | "neutral" {
   if (category === "positive") return "positive";
-  if (["unsubscribe", "hostile", "negative"].includes(category)) return "negative";
+  if (category === "negative") return "negative";
   return "neutral";
-}
-
-function resolveAction(category: string): string {
-  switch (category) {
-    case "positive":   return "demo_booking";
-    case "unsubscribe":
-    case "negative":   return "suppressed";
-    case "hostile":    return "risk_flagged_and_suppressed";
-    case "question":   return "flagged_for_review";
-    default:           return "flagged_for_review";
-  }
 }
 
 // ── Format helpers ─────────────────────────────────────────────────────────────
@@ -129,8 +187,6 @@ function formatReply(row: {
   campaignId: string;
   campaignName: string;
 }) {
-  const isQuestion = row.category === "question";
-  const isHostile  = row.category === "hostile";
   return {
     id:            row.id,
     lead_id:       row.leadId,
@@ -144,7 +200,7 @@ function formatReply(row: {
     category:      row.category,
     received_at:   row.receivedAt.toISOString(),
     resolved_at:   row.resolvedAt?.toISOString() ?? null,
-    is_flagged:    (isQuestion || isHostile) && row.resolvedAt === null,
+    is_flagged:    (row.category === "positive" || row.category === "neutral") && row.resolvedAt === null,
   };
 }
 
@@ -183,7 +239,7 @@ repliesRouter.get("/replies", async (c) => {
 
 repliesRouter.get("/replies/flagged", async (c) => {
   const rows = await repliesJoinQuery()
-    .where(and(isNull(replies.resolvedAt), inArray(replies.category, ["question", "hostile"])))
+    .where(and(isNull(replies.resolvedAt), inArray(replies.category, ["positive", "neutral"])))
     .orderBy(replies.receivedAt);
   return c.json(rows.map(formatReply));
 });
@@ -316,8 +372,17 @@ repliesRouter.post("/webhooks/ses/reply", async (c) => {
     return c.json({ ok: true });
   }
 
-  const category = classifyReply(replyBody);
+  const { category, return_date } = await classifyReply(replyBody);
   const sentiment = categoryToSentiment(category);
+
+  // Resolve campaign_id from the matched email event → draft.
+  const [eventDraft] = await db
+    .select({ campaignId: emailDrafts.campaignId })
+    .from(emailEvents)
+    .innerJoin(emailDrafts, eq(emailEvents.draftId, emailDrafts.id))
+    .where(eq(emailEvents.id, emailEventId))
+    .limit(1);
+  const campaignId = eventDraft?.campaignId ?? null;
 
   const [reply] = await db
     .insert(replies)
@@ -329,17 +394,39 @@ repliesRouter.post("/webhooks/ses/reply", async (c) => {
     .set({ repliedAt: new Date() })
     .where(eq(emailEvents.id, emailEventId));
 
-  if (category === "unsubscribe" || category === "negative" || category === "hostile") {
-    await db
-      .insert(suppressionList)
-      .values({ email: fromEmail, reason: category === "hostile" ? "hostile" : "unsubscribed" })
-      .onConflictDoNothing();
-  }
+  if (campaignId) {
+    if (category === "positive") {
+      await db.insert(demos).values({ leadId: lead.id, campaignId, replyId: reply.id });
+      await db
+        .delete(followUps)
+        .where(and(eq(followUps.leadId, lead.id), eq(followUps.campaignId, campaignId), isNull(followUps.sentAt)));
+    } else if (category === "negative") {
+      await db.insert(suppressionList).values({ email: fromEmail, reason: "manual" }).onConflictDoNothing();
+      await db
+        .delete(followUps)
+        .where(and(eq(followUps.leadId, lead.id), eq(followUps.campaignId, campaignId), isNull(followUps.sentAt)));
+      await db
+        .delete(emailDrafts)
+        .where(and(eq(emailDrafts.leadId, lead.id), eq(emailDrafts.campaignId, campaignId), eq(emailDrafts.status, "pending_review")));
+    } else if (category === "out_of_office") {
+      const returnDate = return_date ? new Date(return_date) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
-  if (category === "hostile") {
-    await db.insert(riskFlags).values({ leadId: lead.id, flagType: "hostile_interaction" });
+      const [nextFollowUp] = await db
+        .select({ id: followUps.id })
+        .from(followUps)
+        .where(and(eq(followUps.leadId, lead.id), eq(followUps.campaignId, campaignId), isNull(followUps.sentAt)))
+        .orderBy(asc(followUps.scheduledAt))
+        .limit(1);
+
+      if (nextFollowUp) {
+        await db.update(followUps).set({ scheduledAt: returnDate }).where(eq(followUps.id, nextFollowUp.id));
+      } else {
+        await db.insert(followUps).values({ leadId: lead.id, campaignId, attemptNumber: 1, scheduledAt: returnDate });
+      }
+    }
+    // neutral: reply is saved and left unresolved (flagged for rep review); follow-up sequence continues
   }
 
   console.log(`[reply-webhook] processed reply from ${fromEmail}: category=${category}`);
-  return c.json({ reply, action: resolveAction(category) }, 201);
+  return c.json({ reply }, 201);
 });

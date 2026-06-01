@@ -22,6 +22,13 @@
       "when": 1780297458227,
       "tag": "0002_odd_rumiko_fujikawa",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1780303605629,
+      "tag": "0003_premium_chronomancer",
+      "breakpoints": true
     }
   ]
 }
