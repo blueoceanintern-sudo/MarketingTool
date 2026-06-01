@@ -119,7 +119,7 @@ leadsRouter.get("/:id/leads", async (c) => {
     .innerJoin(leads, eq(campaignLeads.leadId, leads.id))
     .innerJoin(companies, eq(leads.companyId, companies.id))
     .where(eq(campaignLeads.campaignId, campaignId))
-    .orderBy(leads.createdAt);
+    .orderBy(campaignLeads.addedAt);
 
   const campaignMap = await attachCampaignsToLeads(rows.map((r) => r.id));
   return c.json(rows.map((r) => formatLead(r, campaignMap.get(r.id) ?? [])));

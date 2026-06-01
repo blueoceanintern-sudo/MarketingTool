@@ -28,6 +28,7 @@
     "node-cron": "^4.2.1",
     "node-fetch": "^3.3.2",
     "playwright": "^1.60.0",
-    "postgres": "^3.4.9"
+    "postgres": "^3.4.9",
+    "tldts": "^7.4.2"
   }
 }
