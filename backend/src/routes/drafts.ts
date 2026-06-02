@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { db } from "../db";
 import { emailDrafts, leads, campaigns } from "../db/schema";
-import { eq, and } from "drizzle-orm";
+import { count, eq, and } from "drizzle-orm";
 import { logAudit } from "../services/audit/log";
 
 function formatDraft(row: {
@@ -73,6 +73,18 @@ draftsRouter.get("/", async (c) => {
     return c.json({ error: "status query param must be 'scheduled' or 'sent'" }, 400);
   }
 
+  const page = Math.max(1, parseInt(c.req.query("page") ?? "1", 10) || 1);
+  const limit = Math.min(200, Math.max(1, parseInt(c.req.query("limit") ?? "50", 10) || 50));
+  const offset = (page - 1) * limit;
+
+  const where = eq(emailDrafts.status, statusParam);
+
+  const [countRow] = await db
+    .select({ total: count() })
+    .from(emailDrafts)
+    .where(where);
+  const total = Number(countRow?.total ?? 0);
+
   const rows = await db
     .select({
       id: emailDrafts.id,
@@ -92,10 +104,18 @@ draftsRouter.get("/", async (c) => {
     .from(emailDrafts)
     .innerJoin(leads, eq(emailDrafts.leadId, leads.id))
     .innerJoin(campaigns, eq(emailDrafts.campaignId, campaigns.id))
-    .where(eq(emailDrafts.status, statusParam))
-    .orderBy(campaigns.name, emailDrafts.createdAt);
+    .where(where)
+    .orderBy(campaigns.name, emailDrafts.createdAt)
+    .limit(limit)
+    .offset(offset);
 
-  return c.json(rows.map(formatDraft));
+  return c.json({
+    data: rows.map(formatDraft),
+    total,
+    page,
+    limit,
+    total_pages: Math.ceil(total / limit),
+  });
 });
 
 draftsRouter.get("/queue", async (c) => {

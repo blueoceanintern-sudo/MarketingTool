@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Draft } from "@/lib/api";
 import { approveDraft, editDraft, rejectDraft } from "@/lib/api";
+import Pagination from "@/components/pagination";
+
+const DRAFTS_PER_PAGE = 50;
 
 type Tab = "queue" | "scheduled" | "sent";
 
@@ -37,6 +40,10 @@ function groupByCampaign(drafts: Draft[]): { campaign: string; drafts: Draft[] }
 
 function DraftsTable({ drafts, emptyMessage }: { drafts: Draft[]; emptyMessage: string }) {
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+
+  const totalPages = Math.ceil(drafts.length / DRAFTS_PER_PAGE);
+  const pageDrafts = drafts.slice((page - 1) * DRAFTS_PER_PAGE, page * DRAFTS_PER_PAGE);
 
   if (drafts.length === 0) {
     return (
@@ -47,7 +54,7 @@ function DraftsTable({ drafts, emptyMessage }: { drafts: Draft[]; emptyMessage: 
     );
   }
 
-  const groups = groupByCampaign(drafts);
+  const groups = groupByCampaign(pageDrafts);
 
   return (
     <div className="p-8 overflow-y-auto h-[calc(100vh-8rem)]">
@@ -114,6 +121,19 @@ function DraftsTable({ drafts, emptyMessage }: { drafts: Draft[]; emptyMessage: 
             </div>
           </div>
         ))}
+
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between bg-white rounded-lg border border-grey-100 px-5 py-3">
+            <p className="text-[13px] text-grey-500">
+              Showing {(page - 1) * DRAFTS_PER_PAGE + 1}–{Math.min(page * DRAFTS_PER_PAGE, drafts.length)} of {drafts.length}
+            </p>
+            <Pagination
+              page={page}
+              totalPages={totalPages}
+              onPageChange={(p) => { setPage(p); setExpanded(null); }}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

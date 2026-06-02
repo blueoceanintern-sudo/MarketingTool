@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { db } from "../db";
 import { leads, companies, campaigns, campaignLeads, campaignLeadExclusions, suppressionList, enrichmentRecords, emailDrafts, emailEvents, followUps } from "../db/schema";
-import { eq, desc, and, inArray, isNull, isNotNull } from "drizzle-orm";
+import { count, sql, eq, desc, and, inArray, isNull, isNotNull } from "drizzle-orm";
 import { enrichLead } from "../services/enrichment/orchestrator";
 import { logAudit } from "../services/audit/log";
 import { isValidLeadEmail } from "../services/scrapers/emailFilter";
@@ -63,33 +63,105 @@ async function attachCampaignsToLeads(leadIds: string[]): Promise<Map<string, { 
   return map;
 }
 
+const LEAD_SELECT = {
+  id: leads.id,
+  firstName: leads.firstName,
+  lastName: leads.lastName,
+  email: leads.email,
+  role: leads.role,
+  isVerified: leads.isVerified,
+  status: leads.status,
+  emailStatus: leads.emailStatus,
+  enrichmentSource: leads.enrichmentSource,
+  routing: leads.routing,
+  enrichedAt: leads.enrichedAt,
+  scraperUsed: leads.scraperUsed,
+  createdAt: leads.createdAt,
+  companyName: companies.name,
+} as const;
+
+const SUMMARY_SELECT = {
+  total: count(),
+  verified: sql<number>`cast(sum(case when ${leads.emailStatus} = 'verified' then 1 else 0 end) as int)`,
+  auto_queue: sql<number>`cast(sum(case when ${leads.routing} = 'auto_queue' then 1 else 0 end) as int)`,
+  rep_review: sql<number>`cast(sum(case when ${leads.routing} = 'rep_review' then 1 else 0 end) as int)`,
+} as const;
+
 // Mounted at /api/v1/leads — all leads, no campaign filter
 export const allLeadsRouter = new Hono();
 
 allLeadsRouter.get("/", async (c) => {
-  const rows = await db
-    .select({
-      id: leads.id,
-      firstName: leads.firstName,
-      lastName: leads.lastName,
-      email: leads.email,
-      role: leads.role,
-      isVerified: leads.isVerified,
-      status: leads.status,
-      emailStatus: leads.emailStatus,
-      enrichmentSource: leads.enrichmentSource,
-      routing: leads.routing,
-      enrichedAt: leads.enrichedAt,
-      scraperUsed: leads.scraperUsed,
-      createdAt: leads.createdAt,
-      companyName: companies.name,
-    })
-    .from(leads)
-    .innerJoin(companies, eq(leads.companyId, companies.id))
-    .orderBy(leads.createdAt);
+  const page = Math.max(1, parseInt(c.req.query("page") ?? "1", 10) || 1);
+  const limit = Math.min(200, Math.max(1, parseInt(c.req.query("limit") ?? "50", 10) || 50));
+  const offset = (page - 1) * limit;
+
+  const statusParam = c.req.query("status") as string | undefined;
+  const emailStatusParam = c.req.query("email_status") as string | undefined;
+  const routingParam = c.req.query("routing") as string | undefined;
+  const campaignIdParam = c.req.query("campaign_id");
+
+  const filterConds = and(
+    statusParam ? eq(leads.status, statusParam as "new" | "contacted" | "replied" | "converted" | "suppressed") : undefined,
+    emailStatusParam ? eq(leads.emailStatus, emailStatusParam as "verified" | "pattern_guessed" | "not_found") : undefined,
+    routingParam ? eq(leads.routing, routingParam as "auto_queue" | "rep_review") : undefined,
+  );
+
+  let rows: LeadRow[];
+  let summaryRow: { total: number; verified: number; auto_queue: number; rep_review: number } | undefined;
+
+  if (campaignIdParam) {
+    const where = and(eq(campaignLeads.campaignId, campaignIdParam), filterConds);
+
+    [summaryRow] = await db
+      .select(SUMMARY_SELECT)
+      .from(campaignLeads)
+      .innerJoin(leads, eq(campaignLeads.leadId, leads.id))
+      .innerJoin(companies, eq(leads.companyId, companies.id))
+      .where(where);
+
+    rows = await db
+      .select(LEAD_SELECT)
+      .from(campaignLeads)
+      .innerJoin(leads, eq(campaignLeads.leadId, leads.id))
+      .innerJoin(companies, eq(leads.companyId, companies.id))
+      .where(where)
+      .orderBy(campaignLeads.addedAt)
+      .limit(limit)
+      .offset(offset);
+  } else {
+    [summaryRow] = await db
+      .select(SUMMARY_SELECT)
+      .from(leads)
+      .innerJoin(companies, eq(leads.companyId, companies.id))
+      .where(filterConds);
+
+    rows = await db
+      .select(LEAD_SELECT)
+      .from(leads)
+      .innerJoin(companies, eq(leads.companyId, companies.id))
+      .where(filterConds)
+      .orderBy(leads.createdAt)
+      .limit(limit)
+      .offset(offset);
+  }
+
+  const total = Number(summaryRow?.total ?? 0);
+  const summary = {
+    verified: Number(summaryRow?.verified ?? 0),
+    auto_queue: Number(summaryRow?.auto_queue ?? 0),
+    rep_review: Number(summaryRow?.rep_review ?? 0),
+  };
 
   const campaignMap = await attachCampaignsToLeads(rows.map((r) => r.id));
-  return c.json(rows.map((r) => formatLead(r, campaignMap.get(r.id) ?? [])));
+
+  return c.json({
+    data: rows.map((r) => formatLead(r, campaignMap.get(r.id) ?? [])),
+    total,
+    page,
+    limit,
+    total_pages: Math.ceil(total / limit),
+    summary,
+  });
 });
 
 // Mounted at /api/v1/campaigns — campaign-scoped lead endpoints
@@ -97,32 +169,39 @@ export const leadsRouter = new Hono();
 
 leadsRouter.get("/:id/leads", async (c) => {
   const campaignId = c.req.param("id");
+  const page = Math.max(1, parseInt(c.req.query("page") ?? "1", 10) || 1);
+  const limit = Math.min(200, Math.max(1, parseInt(c.req.query("limit") ?? "50", 10) || 50));
+  const offset = (page - 1) * limit;
 
-  const rows = await db
-    .select({
-      id: leads.id,
-      firstName: leads.firstName,
-      lastName: leads.lastName,
-      email: leads.email,
-      role: leads.role,
-      isVerified: leads.isVerified,
-      status: leads.status,
-      emailStatus: leads.emailStatus,
-      enrichmentSource: leads.enrichmentSource,
-      routing: leads.routing,
-      enrichedAt: leads.enrichedAt,
-      scraperUsed: leads.scraperUsed,
-      createdAt: leads.createdAt,
-      companyName: companies.name,
-    })
+  const where = eq(campaignLeads.campaignId, campaignId);
+
+  const [countRow] = await db
+    .select({ total: count() })
     .from(campaignLeads)
     .innerJoin(leads, eq(campaignLeads.leadId, leads.id))
     .innerJoin(companies, eq(leads.companyId, companies.id))
-    .where(eq(campaignLeads.campaignId, campaignId))
-    .orderBy(campaignLeads.addedAt);
+    .where(where);
+  const total = Number(countRow?.total ?? 0);
+
+  const rows = await db
+    .select(LEAD_SELECT)
+    .from(campaignLeads)
+    .innerJoin(leads, eq(campaignLeads.leadId, leads.id))
+    .innerJoin(companies, eq(leads.companyId, companies.id))
+    .where(where)
+    .orderBy(campaignLeads.addedAt)
+    .limit(limit)
+    .offset(offset);
 
   const campaignMap = await attachCampaignsToLeads(rows.map((r) => r.id));
-  return c.json(rows.map((r) => formatLead(r, campaignMap.get(r.id) ?? [])));
+
+  return c.json({
+    data: rows.map((r) => formatLead(r, campaignMap.get(r.id) ?? [])),
+    total,
+    page,
+    limit,
+    total_pages: Math.ceil(total / limit),
+  });
 });
 
 leadsRouter.get("/:id/leads/excluded", async (c) => {
