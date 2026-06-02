@@ -700,3 +700,13 @@ export async function resolveReply(id: string): Promise<boolean> {
     return false;
   }
 }
+
+export async function triggerEnrichment(): Promise<{ queued: number } | null> {
+  try {
+    const res = await fetch(`${BASE}/api/v1/leads/enrich`, { method: "POST" });
+    if (!res.ok) return null;
+    return res.json() as Promise<{ queued: number }>;
+  } catch {
+    return null;
+  }
+}
