@@ -1,6 +1,6 @@
 import * as cheerio from "cheerio";
-import fetch from "node-fetch";
 import { sourceRegistry } from "../../config/sourceRegistry";
+import { isValidLeadEmail } from "./emailFilter";
 
 export interface Lead {
   company?: string;
@@ -14,7 +14,14 @@ export async function scrapeWebsite(
   url: string,
   source: keyof typeof sourceRegistry = "generic"
 ): Promise<Lead[]> {
-  const response = await fetch(url);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000); // 15s max
+  let response: Response;
+  try {
+    response = await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
   if (!response.ok) throw new Error(`Failed to fetch: ${url}`);
 
   const html = await response.text();
@@ -29,13 +36,16 @@ export async function scrapeWebsite(
   $('a[href^="mailto:"]').each((_, el) => {
     const href = $(el).attr("href") ?? "";
     const candidate = href.replace(/^mailto:/i, "").split("?")[0]?.trim().toLowerCase();
-    if (candidate && candidate.includes("@")) emails.add(candidate);
+    if (candidate && candidate.includes("@") && isValidLeadEmail(candidate)) {
+      emails.add(candidate);
+    }
   });
 
   // 2) plain-text email patterns anywhere in the body
   const bodyText = $("body").text();
   for (const match of bodyText.matchAll(EMAIL_REGEX)) {
-    emails.add(match[0].toLowerCase());
+    const candidate = match[0].toLowerCase();
+    if (isValidLeadEmail(candidate)) emails.add(candidate);
   }
 
   return Array.from(emails).map((email) => ({ company, email, website: url }));

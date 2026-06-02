@@ -8,11 +8,12 @@ interface Props {
   leadId: string;
   leadName: string;
   currentCampaignId: string;
+  onRemoved?: (leadId: string) => void;
 }
 
 type Mode = "add" | "remove";
 
-export default function LeadActions({ leadId, leadName, currentCampaignId }: Props) {
+export default function LeadActions({ leadId, leadName, currentCampaignId, onRemoved }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -20,6 +21,7 @@ export default function LeadActions({ leadId, leadName, currentCampaignId }: Pro
   const [mode, setMode] = useState<Mode>("add");
   const [targetCampaignId, setTargetCampaignId] = useState<string>("");
   const [campaigns, setCampaigns] = useState<Campaign[] | null>(null);
+  const [removeReason, setRemoveReason] = useState<string>("");
 
   useEffect(() => {
     if (!open || campaigns !== null) return;
@@ -35,6 +37,7 @@ export default function LeadActions({ leadId, leadName, currentCampaignId }: Pro
     setOpen(false);
     setError(null);
     setMode("add");
+    setRemoveReason("");
   }
 
   async function handleSubmit(e: SubmitEvent<HTMLFormElement>) {
@@ -50,7 +53,7 @@ export default function LeadActions({ leadId, leadName, currentCampaignId }: Pro
       }
       result = await addLeadToCampaign(leadId, targetCampaignId);
     } else {
-      result = await removeLeadFromCampaign(leadId, currentCampaignId);
+      result = await removeLeadFromCampaign(leadId, currentCampaignId, removeReason || undefined);
     }
     setSubmitting(false);
     if (!result.ok) {
@@ -58,7 +61,11 @@ export default function LeadActions({ leadId, leadName, currentCampaignId }: Pro
       return;
     }
     closeModal();
-    router.refresh();
+    if (mode === "remove" && onRemoved) {
+      onRemoved(leadId);
+    } else {
+      router.refresh();
+    }
   }
 
   const noTargets = campaigns !== null && campaigns.length === 0;
@@ -68,10 +75,11 @@ export default function LeadActions({ leadId, leadName, currentCampaignId }: Pro
       <button
         type="button"
         onClick={(e) => { e.stopPropagation(); setOpen(true); }}
-        className="flex items-center gap-1 px-2 py-1 text-[12px] text-grey-500 hover:text-primary hover:bg-grey-50 rounded"
+        className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] font-medium text-grey-500 hover:text-primary hover:bg-grey-50 border border-transparent hover:border-grey-200 rounded-lg transition-colors"
         aria-label="Manage lead"
       >
-        <span className="material-symbols-outlined text-[16px]">more_horiz</span>
+        <span className="material-symbols-outlined text-[14px]">more_horiz</span>
+        Manage
       </button>
 
       {open && (
@@ -129,8 +137,17 @@ export default function LeadActions({ leadId, leadName, currentCampaignId }: Pro
                 <div className="flex-1">
                   <p className="text-[13px] font-medium">Remove from this campaign</p>
                   <p className="text-[12px] text-grey-500 mt-0.5">
-                    The lead is unlinked from this campaign only. Other campaign memberships and the lead record itself stay intact. Pending drafts for this campaign are deleted.
+                    The lead is unlinked from this campaign only. Pending drafts are deleted. The lead is also excluded so future scrape and CSV imports cannot re-add them.
                   </p>
+                  {mode === "remove" && (
+                    <input
+                      type="text"
+                      value={removeReason}
+                      onChange={(e) => setRemoveReason(e.target.value)}
+                      placeholder="Reason (optional) — e.g. wrong vertical, duplicate"
+                      className="mt-2 w-full border border-grey-200 rounded-lg px-3 py-2 text-[13px] bg-white placeholder:text-grey-400"
+                    />
+                  )}
                 </div>
               </label>
 

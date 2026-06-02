@@ -54,7 +54,7 @@ export default function TemplatesClient({ initialTemplates, initialEngagement }:
   }
 
   return (
-    <div className="p-10 max-w-[1600px] mx-auto">
+    <div className="p-4 sm:p-6 lg:p-10 max-w-[1600px] mx-auto">
       <div className="flex justify-between items-end mb-8">
         <div>
           <nav className="flex items-center gap-2 mb-2">
@@ -85,7 +85,7 @@ export default function TemplatesClient({ initialTemplates, initialEngagement }:
         </p>
       )}
 
-      <div className="bg-white rounded-lg border border-grey-100 overflow-hidden">
+      <div className="bg-white rounded-lg border border-grey-100 overflow-x-auto">
         {templates.length === 0 ? (
           <p className="px-6 py-16 text-center text-grey-400 text-[14px]">
             No templates yet. Drafting will fail until you add one.

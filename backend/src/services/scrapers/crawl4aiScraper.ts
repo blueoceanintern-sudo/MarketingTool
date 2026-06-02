@@ -1,5 +1,6 @@
 import type { Lead } from "./cheerioScraper";
 import { scrapeWebsite as cheerioFallback } from "./cheerioScraper";
+import { isValidLeadEmail } from "./emailFilter";
 
 // Crawl4AI 0.4+ schema. POST /crawl accepts { urls: string[] } and returns
 // a per-URL results array. Each result has its own `success` flag plus an
@@ -34,7 +35,8 @@ const STEALTH_USER_AGENT =
 function extractAllEmails(text: string): string[] {
   const emails = new Set<string>();
   for (const match of text.matchAll(EMAIL_REGEX)) {
-    emails.add(match[0].toLowerCase());
+    const candidate = match[0].toLowerCase();
+    if (isValidLeadEmail(candidate)) emails.add(candidate);
   }
   return Array.from(emails);
 }
@@ -42,31 +44,40 @@ function extractAllEmails(text: string): string[] {
 async function crawl4aiScrape(url: string): Promise<Lead[]> {
   const baseUrl = process.env.CRAWL4AI_BASE_URL ?? "http://localhost:11235";
 
-  const res = await fetch(`${baseUrl}/crawl`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      urls: [url],
-      browser_config: {
-        type: "BrowserConfig",
-        params: {
-          user_agent: STEALTH_USER_AGENT,
-          headless: true,
-          viewport_width: 1920,
-          viewport_height: 1080,
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 45_000); // 45s max per URL
+
+  let res: Response;
+  try {
+    res = await fetch(`${baseUrl}/crawl`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        urls: [url],
+        browser_config: {
+          type: "BrowserConfig",
+          params: {
+            user_agent: STEALTH_USER_AGENT,
+            headless: true,
+            viewport_width: 1920,
+            viewport_height: 1080,
+          },
         },
-      },
-      crawler_config: {
-        type: "CrawlerRunConfig",
-        params: {
-          simulate_user: true,
-          override_navigator: true,
-          magic: true,
-          delay_before_return_html: 2.0,
+        crawler_config: {
+          type: "CrawlerRunConfig",
+          params: {
+            simulate_user: true,
+            override_navigator: true,
+            magic: true,
+            delay_before_return_html: 2.0,
+          },
         },
-      },
-    }),
-  });
+      }),
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");

@@ -335,9 +335,12 @@ export async function addLeadToCampaign(
 export async function removeLeadFromCampaign(
   leadId: string,
   campaignId: string,
+  reason?: string,
 ): Promise<{ ok: boolean; error?: string; cascaded_pending_drafts?: number; cascaded_unsent_follow_ups?: number }> {
   try {
-    const res = await fetch(`${BASE}/api/v1/leads/${leadId}/campaigns/${campaignId}`, {
+    const url = new URL(`${BASE}/api/v1/leads/${leadId}/campaigns/${campaignId}`);
+    if (reason) url.searchParams.set("reason", reason);
+    const res = await fetch(url.toString(), {
       method: "DELETE",
     });
     const body = (await res.json().catch(() => ({}))) as {
@@ -513,6 +516,25 @@ export async function createRegistrySource(payload: {
     return { source };
   } catch {
     return { source: null, error: "Could not reach the API." };
+  }
+}
+
+export interface RegistryImportResult {
+  imported: number;
+  skipped: number;
+  errors: { row: number; reason: string }[];
+}
+
+export async function importRegistrySources(file: File): Promise<{ result: RegistryImportResult | null; error?: string }> {
+  try {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${BASE}/api/v1/registry/sources/import`, { method: "POST", body: form });
+    const body = (await res.json()) as RegistryImportResult & { error?: string };
+    if (!res.ok) return { result: null, error: body.error ?? `Import failed (${res.status})` };
+    return { result: body };
+  } catch {
+    return { result: null, error: "Could not reach the API." };
   }
 }
 

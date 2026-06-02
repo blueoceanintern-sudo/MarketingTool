@@ -1,13 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   createRegistrySource,
+  importRegistrySources,
   triggerDiscovery,
   type ActiveCombination,
   type DirectoryConfig,
+  type RegistryImportResult,
   type ScraperType,
   type SourceRegistry,
 } from "@/lib/api";
@@ -22,6 +24,21 @@ function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString("en-SG", { day: "numeric", month: "short", year: "numeric" });
 }
 
+const CSV_COLUMNS = [
+  { name: "name",         description: "Display name for the source",                       example: "MOE Schools Directory" },
+  { name: "vertical",     description: "Industry vertical (e.g. education, childcare, ihl)", example: "education" },
+  { name: "geo",          description: "Geography — must be SG, AU, or US",                 example: "SG" },
+  { name: "url",          description: "Full URL to scrape (must be unique)",                example: "https://moe.gov.sg/schools" },
+  { name: "scraper_type", description: "Engine — crawl4ai (JS pages), cheerio (static HTML), or api", example: "cheerio" },
+  { name: "legal_flag",   description: "Legal sign-off obtained — true or false",           example: "true" },
+  { name: "active",       description: "Include in scrape runs — true or false",            example: "true" },
+];
+
+const SAMPLE_CSV = `name,vertical,geo,url,scraper_type,legal_flag,active
+MOE Schools Directory,education,SG,https://moe.gov.sg/schools,cheerio,true,true
+ACECQA Provider List,childcare,AU,https://www.acecqa.gov.au/providers,crawl4ai,false,true
+US Daycare Registry,childcare,US,https://childcare.gov/index/registry,cheerio,false,false`;
+
 interface Props {
   initialSources: SourceRegistry[];
   directoryConfigs: DirectoryConfig[];
@@ -35,9 +52,14 @@ export default function RegistryClient({ initialSources, directoryConfigs, activ
   const [geoFilter, setGeoFilter] = useState<string>("all");
   const [verticalFilter, setVerticalFilter] = useState<string>("all");
   const [activeOnly, setActiveOnly] = useState(false);
-  const [showModal, setShowModal] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<RegistryImportResult | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [form, setForm] = useState({
     name: "",
     vertical: "",
@@ -74,21 +96,36 @@ export default function RegistryClient({ initialSources, directoryConfigs, activ
       active: form.active,
     });
     setSubmitting(false);
-    if (error || !source) {
-      setFormError(error ?? "Failed to add source");
-      return;
-    }
+    if (error || !source) { setFormError(error ?? "Failed to add source"); return; }
     setSources((prev) => [source, ...prev]);
-    setShowModal(false);
-    setForm({
-      name: "",
-      vertical: "",
-      geo: "SG",
-      url: "",
-      scraper_type: "cheerio",
-      legal_flag: false,
-      active: true,
-    });
+    setShowAddModal(false);
+    setForm({ name: "", vertical: "", geo: "SG", url: "", scraper_type: "cheerio", legal_flag: false, active: true });
+  }
+
+  async function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setShowImportModal(false);
+    setImporting(true);
+    setImportResult(null);
+    setImportError(null);
+    const { result, error } = await importRegistrySources(file);
+    setImporting(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    if (error || !result) { setImportError(error ?? "Import failed"); return; }
+    setImportResult(result);
+    if (result.imported > 0) {
+      const fresh = await import("@/lib/api").then((m) => m.getRegistrySources());
+      setSources(fresh);
+    }
+  }
+
+  function downloadTemplate() {
+    const blob = new Blob([SAMPLE_CSV], { type: "text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "source_registry_template.csv";
+    a.click();
   }
 
   async function handleRefresh(vertical: string, geo: string, domains: string[]) {
@@ -136,7 +173,7 @@ export default function RegistryClient({ initialSources, directoryConfigs, activ
   }, [directoryConfigs, activeCombinations]);
 
   return (
-    <div className="p-10 max-w-[1600px] mx-auto">
+    <div className="p-4 sm:p-6 lg:p-10 max-w-[1600px] mx-auto">
       <div className="flex justify-between items-end mb-8">
         <div>
           <nav className="flex items-center gap-2 mb-2">
@@ -149,17 +186,61 @@ export default function RegistryClient({ initialSources, directoryConfigs, activ
             Scrape sources used when running a campaign. Sources are matched by vertical + geography.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setShowModal(true)}
-          className="flex items-center gap-2 px-6 py-2 bg-primary text-white rounded-lg text-[14px] font-semibold"
-        >
-          <span className="material-symbols-outlined text-[20px]">add</span>
-          Add Source
-        </button>
+        <div className="flex items-center gap-3">
+          <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleImport} />
+          <button
+            type="button"
+            onClick={() => setShowImportModal(true)}
+            disabled={importing}
+            className="flex items-center gap-2 px-5 py-2 border border-grey-200 bg-white text-primary rounded-lg text-[14px] font-semibold hover:bg-grey-50 disabled:opacity-50"
+          >
+            <span className="material-symbols-outlined text-[20px]">upload_file</span>
+            {importing ? "Importing…" : "Import CSV"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-2 px-6 py-2 bg-primary text-white rounded-lg text-[14px] font-semibold"
+          >
+            <span className="material-symbols-outlined text-[20px]">add</span>
+            Add Source
+          </button>
+        </div>
       </div>
 
-      <div className="grid grid-cols-4 gap-6 mb-8">
+      {importError && (
+        <div className="mb-6 px-4 py-3 rounded-lg bg-danger-bg text-danger text-[13px] flex items-center justify-between">
+          <span>{importError}</span>
+          <button type="button" onClick={() => setImportError(null)} className="ml-4 hover:opacity-70">
+            <span className="material-symbols-outlined text-[18px]">close</span>
+          </button>
+        </div>
+      )}
+
+      {importResult && (
+        <div className="mb-6 px-4 py-3 rounded-lg bg-success-bg text-[13px] flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <span className="text-success font-semibold">
+              Import complete — {importResult.imported} added, {importResult.skipped} skipped (duplicates)
+              {importResult.errors.length - importResult.skipped > 0
+                ? `, ${importResult.errors.length - importResult.skipped} invalid rows`
+                : ""}
+            </span>
+            <button type="button" onClick={() => setImportResult(null)} className="ml-4 text-success hover:opacity-70">
+              <span className="material-symbols-outlined text-[18px]">close</span>
+            </button>
+          </div>
+          {importResult.errors.length > 0 && (
+            <ul className="list-disc pl-5 text-grey-600 space-y-0.5">
+              {importResult.errors.map((e) => (
+                <li key={e.row}>Row {e.row}: {e.reason}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6 mb-8">
         <div className="bg-white p-5 rounded-lg border border-grey-100">
           <p className="text-[13px] text-grey-500">Total sources</p>
           <h3 className="text-[24px] font-bold font-mono mt-2">{sources.length}</h3>
@@ -322,7 +403,72 @@ export default function RegistryClient({ initialSources, directoryConfigs, activ
         )}
       </div>
 
-      {showModal && (
+      {/* ── Import CSV format modal ─────────────────────────────────────────── */}
+      {showImportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+          <div className="bg-white rounded-xl w-full max-w-2xl p-6 flex flex-col gap-5 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-start justify-between">
+              <div>
+                <h3 className="text-[18px] font-bold text-primary">Import CSV</h3>
+                <p className="text-[13px] text-grey-500 mt-1">All 7 columns are required. Rows with missing or invalid values are skipped.</p>
+              </div>
+              <button type="button" onClick={() => setShowImportModal(false)} className="text-grey-400 hover:text-grey-600">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="border border-grey-100 rounded-lg overflow-auto max-h-56">
+              <table className="w-full text-[13px]">
+                <thead className="bg-grey-50 border-b border-grey-100 sticky top-0">
+                  <tr className="text-left">
+                    <th className="px-4 py-2.5 font-semibold text-primary">Column</th>
+                    <th className="px-4 py-2.5 font-semibold text-primary">Description</th>
+                    <th className="px-4 py-2.5 font-semibold text-primary">Example</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-grey-100">
+                  {CSV_COLUMNS.map((col) => (
+                    <tr key={col.name}>
+                      <td className="px-4 py-2.5 font-mono font-semibold text-ocean-light">{col.name}</td>
+                      <td className="px-4 py-2.5 text-grey-600">{col.description}</td>
+                      <td className="px-4 py-2.5 font-mono text-grey-500">{col.example}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div>
+              <p className="text-[12px] font-semibold text-grey-500 uppercase tracking-wide mb-2">Sample CSV</p>
+              <pre className="bg-grey-50 border border-grey-100 rounded-lg px-4 py-3 text-[12px] font-mono text-grey-700 overflow-x-auto whitespace-pre">
+                {SAMPLE_CSV}
+              </pre>
+            </div>
+
+            <div className="flex gap-3 justify-end pt-1">
+              <button
+                type="button"
+                onClick={downloadTemplate}
+                className="flex items-center gap-2 px-4 py-2 border border-grey-200 rounded-lg text-[14px] text-grey-600 hover:bg-grey-50"
+              >
+                <span className="material-symbols-outlined text-[18px]">download</span>
+                Download template
+              </button>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="flex items-center gap-2 px-6 py-2 bg-primary text-white rounded-lg text-[14px] font-semibold"
+              >
+                <span className="material-symbols-outlined text-[18px]">upload_file</span>
+                Choose file
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Add source modal ────────────────────────────────────────────────── */}
+      {showAddModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
           <div className="bg-white rounded-lg w-full max-w-md p-6">
             <h3 className="text-[18px] font-bold mb-4">Add Source</h3>
@@ -402,7 +548,7 @@ export default function RegistryClient({ initialSources, directoryConfigs, activ
               </div>
               {formError && <p className="text-danger text-[13px]">{formError}</p>}
               <div className="flex gap-3 justify-end">
-                <button type="button" onClick={() => setShowModal(false)} className="px-4 py-2 border rounded-lg">
+                <button type="button" onClick={() => setShowAddModal(false)} className="px-4 py-2 border rounded-lg">
                   Cancel
                 </button>
                 <button type="submit" disabled={submitting} className="px-6 py-2 bg-primary text-white rounded-lg">

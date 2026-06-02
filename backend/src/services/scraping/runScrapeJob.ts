@@ -1,9 +1,9 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "../../db";
-import { campaigns, campaignLeads, companies, leads, scrapeJobs, sourceRegistry, normalizeVertical, normalizeGeo } from "../../db/schema";
+import { campaigns, campaignLeads, campaignLeadExclusions, companies, leads, scrapeJobs, sourceRegistry, normalizeVertical, normalizeGeo } from "../../db/schema";
 import { scrapeWithFallback } from "../scrapers/crawl4aiScraper";
 import { scrapeWebsite } from "../scrapers/cheerioScraper";
-import { enrichLead } from "../enrichment/orchestrator";
+import { isValidLeadEmail } from "../scrapers/emailFilter";
 
 function parseGeographies(geography: string): string[] {
   return geography
@@ -32,12 +32,20 @@ async function persistScrapedLead(
   if (!scraped.email) return false;
 
   const email = scraped.email.trim().toLowerCase();
+  if (!isValidLeadEmail(email)) return false;
 
   // Reuse the existing lead row if we've seen this email before — m:n means
   // the same person can be in multiple campaigns. We add a campaign_leads
   // link rather than inserting a duplicate lead.
   const [existing] = await db.select({ id: leads.id }).from(leads).where(eq(leads.email, email)).limit(1);
   if (existing) {
+    const [excluded] = await db
+      .select({ leadId: campaignLeadExclusions.leadId })
+      .from(campaignLeadExclusions)
+      .where(and(eq(campaignLeadExclusions.leadId, existing.id), eq(campaignLeadExclusions.campaignId, campaignId)))
+      .limit(1);
+    if (excluded) return false; // excluded from this campaign — do not re-add
+
     const [existingLink] = await db
       .select({ leadId: campaignLeads.leadId })
       .from(campaignLeads)
@@ -81,9 +89,6 @@ async function persistScrapedLead(
 
   if (lead) {
     await db.insert(campaignLeads).values({ leadId: lead.id, campaignId, source: "scrape" });
-    void enrichLead(lead.id).catch((err) => {
-      console.error(`[scrape] enrichment failed for ${lead.id}:`, err);
-    });
   }
 
   return true;

@@ -177,10 +177,14 @@ export const riskFlags = pgTable("risk_flags", {
 
 export const suppressionList = pgTable("suppression_list", {
   id: uuid("id").primaryKey().defaultRandom(),
-  email: text("email").unique().notNull(),
+  email: text("email").notNull(),
+  campaignId: uuid("campaign_id").references(() => campaigns.id, { onDelete: "cascade" }).notNull(),
   reason: suppressionReasonEnum("reason").notNull(),
   addedAt: timestamp("added_at").defaultNow().notNull(),
-});
+}, (t) => [
+  unique("suppression_list_email_campaign_unique").on(t.email, t.campaignId),
+  index("suppression_list_campaign_id_idx").on(t.campaignId),
+]);
 
 export const followUps = pgTable("follow_ups", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -242,6 +246,21 @@ export interface EnrichmentPipelineFlags {
   risk_flag: boolean;
   risk_flag_reason: string | null;
 }
+
+// Permanent per-campaign exclusion list. Once a lead is manually removed from
+// a campaign, this row prevents automated scrape/CSV runs from re-adding them.
+// Manual adds via POST /leads/:id/campaigns can still override and will delete
+// the exclusion row.
+export const campaignLeadExclusions = pgTable("campaign_lead_exclusions", {
+  leadId: uuid("lead_id").references(() => leads.id, { onDelete: "cascade" }).notNull(),
+  campaignId: uuid("campaign_id").references(() => campaigns.id, { onDelete: "cascade" }).notNull(),
+  excludedAt: timestamp("excluded_at").defaultNow().notNull(),
+  excludedBy: text("excluded_by").notNull(),
+  reason: text("reason"),
+}, (t) => [
+  primaryKey({ columns: [t.leadId, t.campaignId] }),
+  index("campaign_lead_exclusions_campaign_id_idx").on(t.campaignId),
+]);
 
 export const enrichmentRecords = pgTable("enrichment_records", {
   id: uuid("id").primaryKey().defaultRandom(),
