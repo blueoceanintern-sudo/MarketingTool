@@ -55,7 +55,7 @@ export default async function AnalyticsPage() {
   ];
 
   return (
-    <div className="p-10 max-w-[1600px] mx-auto">
+    <div className="p-4 sm:p-6 lg:p-10 max-w-[1600px] mx-auto">
       {/* Page header */}
       <div className="flex justify-between items-end mb-8">
         <div>
@@ -74,7 +74,7 @@ export default async function AnalyticsPage() {
       </div>
 
       {/* 5-column KPI tiles */}
-      <div className="grid grid-cols-5 gap-4 mb-8">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
         {kpiTiles.map((tile) => (
           <div
             key={tile.label}
@@ -101,8 +101,8 @@ export default async function AnalyticsPage() {
       </div>
 
       {/* Bar chart */}
-      <div className="grid grid-cols-12 gap-8 mb-8">
-        <div className="col-span-8 bg-white p-6 rounded-lg shadow-[0_1px_3px_rgba(27,45,91,0.08)]">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 mb-8">
+        <div className="lg:col-span-8 bg-white p-6 rounded-lg shadow-[0_1px_3px_rgba(27,45,91,0.08)]">
           <div className="flex justify-between items-center mb-6">
             <h3 className="text-[16px] font-semibold text-primary">Emails Sent Over Time</h3>
             <div className="flex gap-2">
@@ -155,7 +155,7 @@ export default async function AnalyticsPage() {
         </div>
 
         {/* Reply sentiment */}
-        <div className="col-span-4 bg-white p-6 rounded-lg shadow-[0_1px_3px_rgba(27,45,91,0.08)] flex flex-col">
+        <div className="lg:col-span-4 bg-white p-6 rounded-lg shadow-[0_1px_3px_rgba(27,45,91,0.08)] flex flex-col">
           <h3 className="text-[16px] font-semibold text-primary mb-6">Reply Breakdown</h3>
           {overview ? (
             <div className="flex-1 flex flex-col justify-center gap-4">

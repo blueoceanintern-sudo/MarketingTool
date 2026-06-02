@@ -43,7 +43,7 @@ export default function RepliesClient({ initialReplies }: Props) {
     <>
       <div className="h-[calc(100vh-4rem)] flex flex-col overflow-hidden">
         {/* Header bar */}
-        <div className="bg-white border-b border-grey-100 px-10 py-4 flex items-center justify-between shrink-0">
+        <div className="bg-white border-b border-grey-100 px-4 sm:px-6 lg:px-10 py-4 flex items-center justify-between shrink-0 flex-wrap gap-3">
           <div>
             <h1 className="text-[20px] font-bold text-primary">Replies</h1>
             <p className="text-[13px] text-grey-500 mt-0.5">
@@ -71,7 +71,7 @@ export default function RepliesClient({ initialReplies }: Props) {
         {/* Split pane */}
         <div className="flex-1 flex overflow-hidden">
           {/* Left list */}
-          <section className="w-[340px] bg-white border-r border-grey-100 flex flex-col overflow-y-auto shrink-0">
+          <section className="w-[260px] lg:w-[340px] bg-white border-r border-grey-100 flex flex-col overflow-y-auto shrink-0">
             {visible.length === 0 ? (
               <div className="flex-1 flex items-center justify-center text-grey-300 text-[13px]">
                 No replies
@@ -115,7 +115,7 @@ export default function RepliesClient({ initialReplies }: Props) {
           </section>
 
           {/* Right detail */}
-          <section className="flex-1 bg-grey-50 overflow-y-auto p-8 flex flex-col gap-6">
+          <section className="flex-1 bg-grey-50 overflow-y-auto p-4 sm:p-6 lg:p-8 flex flex-col gap-6">
             {selected && (
               <>
                 {/* Contact card */}

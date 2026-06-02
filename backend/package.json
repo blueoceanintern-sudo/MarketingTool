@@ -29,6 +29,7 @@
     "node-fetch": "^3.3.2",
     "playwright": "^1.60.0",
     "postal-mime": "^2.7.4",
-    "postgres": "^3.4.9"
+    "postgres": "^3.4.9",
+    "tldts": "^7.4.2"
   }
 }

@@ -9,7 +9,23 @@
       "Bash(npm install *)",
       "Bash(bun install *)",
       "Bash(bun test *)",
-      "Bash(bunx tsc *)"
+      "Bash(bunx tsc *)",
+      "Bash(git show-branch *)",
+      "Bash(docker compose down *)",
+      "Bash(docker compose up *)",
+      "Bash(curl -s http://localhost:3001/health)",
+      "Bash(printf 'name,vertical,geo,url,scraper_type,legal_flag,active\\\\nTest School,education,SG,https://test-school-sg.example.com,cheerio,false,true\\\\n')",
+      "Bash(curl -s -X POST http://localhost:3001/api/v1/registry/sources/import -F \"file=@/tmp/test_registry.csv\")",
+      "Bash(printf 'name,vertical,geo,url,scraper_type,legal_flag,active\\\\nTest School,education,SG,https://test-school-sg.example.com,cheerio,false,true\\\\nBad Row,,AU,https://bad.example.com,cheerio,false,true\\\\nAnother School,education,AU,https://another-school.example.com,badtype,false,true\\\\n')",
+      "Bash(curl -s -X POST http://localhost:3001/api/v1/registry/sources/import -F \"file=@/tmp/test_registry2.csv\")",
+      "Bash(npm run *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/registry)",
+      "Bash(printf 'name,vertical,geo,url,scraper_type,legal_flag,active\\\\nTest Missing Bool,education,SG,https://test-missing-bool.example.com,cheerio,,\\\\n')",
+      "Bash(curl -s -X POST http://localhost:3001/api/v1/registry/sources/import -F \"file=@/tmp/test_missing_bool.csv\")",
+      "Bash(printf 'name,vertical,geo,url,scraper_type,legal_flag,active\\\\nTest False Bools,education,AU,https://test-false-bools.example.com,crawl4ai,false,false\\\\n')",
+      "Bash(curl -s -X POST http://localhost:3001/api/v1/registry/sources/import -F \"file=@/tmp/test_false_bools.csv\")",
+      "Bash(git diff *)",
+      "mcp__ide__getDiagnostics"
     ]
   }
 }

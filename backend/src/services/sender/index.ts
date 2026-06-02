@@ -2,6 +2,7 @@ import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
 import { db } from "../../db";
 import { suppressionList, emailDrafts, emailEvents, campaigns, leads } from "../../db/schema";
 import { eq, and, isNotNull, count, gte } from "drizzle-orm";
+
 import { buildEmailHtml } from "../../templates/outreachEmail";
 
 const MAX_EMAILS_PER_LEAD_PER_WEEK = 2;
@@ -10,6 +11,7 @@ interface SendPayload {
   draftId: string;
   toEmail: string;
   leadId: string;
+  campaignId: string;
   isVerified: boolean;
   hasRiskFlags: boolean;
 }
@@ -82,12 +84,12 @@ function getSesClient(): SESClient {
 }
 
 export async function sendDraft(payload: SendPayload): Promise<SendResult> {
-  const { draftId, toEmail, leadId, isVerified, hasRiskFlags } = payload;
+  const { draftId, toEmail, leadId, campaignId, isVerified, hasRiskFlags } = payload;
 
   const [suppressed] = await db
     .select({ id: suppressionList.id })
     .from(suppressionList)
-    .where(eq(suppressionList.email, toEmail))
+    .where(and(eq(suppressionList.email, toEmail), eq(suppressionList.campaignId, campaignId)))
     .limit(1);
   if (suppressed) return { draftId, status: "blocked", reason: "suppression_list" };
 
@@ -131,9 +133,9 @@ export async function sendDraft(payload: SendPayload): Promise<SendResult> {
   if (!fromAddress) return { draftId, status: "blocked", reason: "ses_not_configured" };
 
   const apiBase = getApiBase();
-  const unsubscribeUrl = `${apiBase}/unsubscribe?id=${leadId}`;
+  const unsubscribeUrl = `${apiBase}/unsubscribe?id=${leadId}&campaign=${campaignId}`;
   const textBody = `${draft.body}\n\nTo unsubscribe: ${unsubscribeUrl}`;
-  const htmlBody = buildEmailHtml(draft.body, leadId, apiBase);
+  const htmlBody = buildEmailHtml(draft.body, leadId, apiBase, campaignId);
 
   // SES_DRY_RUN=true skips the actual SES call — use this to test the full
   // pipeline locally without AWS credentials.

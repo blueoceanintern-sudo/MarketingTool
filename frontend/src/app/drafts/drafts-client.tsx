@@ -221,7 +221,7 @@ function ReviewQueue({ initialDrafts }: { initialDrafts: Draft[] }) {
     <>
       <div className="h-[calc(100vh-8rem)] flex flex-col overflow-hidden">
         <div className="flex-1 flex overflow-hidden">
-          <section className="w-[320px] bg-white border-r border-grey-100 flex flex-col overflow-y-auto shrink-0">
+          <section className="w-[260px] lg:w-[320px] bg-white border-r border-grey-100 flex flex-col overflow-y-auto shrink-0">
             <div className="px-5 py-4 border-b border-grey-100 sticky top-0 bg-white z-10">
               <h2 className="text-[16px] font-semibold text-primary">Queue ({drafts.length})</h2>
             </div>
@@ -257,7 +257,7 @@ function ReviewQueue({ initialDrafts }: { initialDrafts: Draft[] }) {
 
           {selected && (
             <section className="flex-1 bg-grey-50 overflow-y-auto">
-              <div className="p-10 flex flex-col gap-6">
+              <div className="p-4 sm:p-6 lg:p-10 flex flex-col gap-6">
                 <div className="bg-white p-6 rounded-lg shadow-[0_1px_3px_rgba(27,45,91,0.08)]">
                   <h2 className="text-[20px] font-bold text-primary">{selected.lead_name}</h2>
                   <p className="text-[13px] text-grey-500">{selected.subject}</p>
@@ -267,7 +267,7 @@ function ReviewQueue({ initialDrafts }: { initialDrafts: Draft[] }) {
                   {saveError && <p className="text-[13px] text-danger mt-1">{saveError}</p>}
                 </div>
 
-                <div className="grid grid-cols-12 gap-6">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                   <div className="col-span-8">
                     <div className="bg-white rounded-lg border border-grey-100 flex flex-col min-h-[400px]">
                       <textarea
@@ -326,7 +326,7 @@ function ReviewQueue({ initialDrafts }: { initialDrafts: Draft[] }) {
           )}
         </div>
 
-        <footer className="bg-white border-t border-grey-100 px-10 py-4 flex justify-end gap-4 shrink-0">
+        <footer className="bg-white border-t border-grey-100 px-4 sm:px-6 lg:px-10 py-4 flex justify-end gap-4 shrink-0">
           <button
             type="button"
             onClick={() => setShowReject(true)}

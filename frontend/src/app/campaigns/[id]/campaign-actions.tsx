@@ -1,8 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
+  getCampaign,
   triggerCampaignScrape,
   triggerCampaignDraftGeneration,
   updateCampaignStatus,
@@ -20,30 +21,78 @@ export default function CampaignActions({ campaignId, status }: Props) {
   const [drafting, setDrafting] = useState(false);
   const [busyStatus, setBusyStatus] = useState<CampaignStatus | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []);
 
   async function handleScrape() {
     setScraping(true);
     setMessage(null);
+    if (pollRef.current) clearInterval(pollRef.current);
+
     const { ok, error } = await triggerCampaignScrape(campaignId);
-    setScraping(false);
     if (!ok) {
+      setScraping(false);
       setMessage(error ?? "Scrape failed");
       return;
     }
-    setMessage("Scrape started. Refresh in a moment to see new leads.");
-    router.refresh();
+
+    const before = await getCampaign(campaignId);
+    const beforeCount = before?.leads_count ?? 0;
+    setMessage("Scraping…");
+
+    let tries = 0;
+    pollRef.current = setInterval(async () => {
+      tries++;
+      const updated = await getCampaign(campaignId);
+      const newCount = updated?.leads_count ?? beforeCount;
+      const done = newCount > beforeCount || tries >= 10;
+      if (done) {
+        clearInterval(pollRef.current!);
+        pollRef.current = null;
+        setScraping(false);
+        const diff = newCount - beforeCount;
+        setMessage("Done");
+        router.refresh();
+      }
+    }, 3000);
   }
 
   async function handleGenerateDrafts() {
     setDrafting(true);
     setMessage(null);
+    if (pollRef.current) clearInterval(pollRef.current);
+
     const { ok, error } = await triggerCampaignDraftGeneration(campaignId);
-    setDrafting(false);
     if (!ok) {
+      setDrafting(false);
       setMessage(error ?? "Draft generation failed");
       return;
     }
-    setMessage("Draft generation queued. The Batch API takes ~30–60s; check the Review Queue shortly.");
+
+    const before = await getCampaign(campaignId);
+    const beforePending = before?.drafts_pending ?? 0;
+    setMessage("Generating drafts — Batch API in progress…");
+
+    let tries = 0;
+    pollRef.current = setInterval(async () => {
+      tries++;
+      const updated = await getCampaign(campaignId);
+      const newPending = updated?.drafts_pending ?? beforePending;
+      const done = newPending > beforePending || tries >= 20;
+      if (done) {
+        clearInterval(pollRef.current!);
+        pollRef.current = null;
+        setDrafting(false);
+        const diff = newPending - beforePending;
+        setMessage(diff > 0 ? `${diff} new draft${diff !== 1 ? "s" : ""} added to Review Queue.` : "Draft generation complete — check the Review Queue.");
+        router.refresh();
+      }
+    }, 3000);
   }
 
   async function handleStatusChange(next: CampaignStatus, label: string) {
@@ -60,26 +109,26 @@ export default function CampaignActions({ campaignId, status }: Props) {
 
   return (
     <div className="flex flex-col items-end gap-2">
-      <div className="flex items-center gap-3 flex-wrap justify-end">
+      <div className="flex items-center gap-2 flex-wrap justify-end">
         <button
           type="button"
           onClick={handleScrape}
-          disabled={scraping || status === "complete"}
-          className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg text-[14px] font-semibold disabled:opacity-60"
+          disabled={scraping || drafting || status === "complete"}
+          className="flex items-center gap-2 px-3 py-2 bg-primary text-white rounded-lg text-[13px] font-semibold disabled:opacity-60"
         >
-          <span className="material-symbols-outlined text-[20px]">travel_explore</span>
+          <span className="material-symbols-outlined text-[18px]">travel_explore</span>
           {scraping ? "Scraping…" : "Run Scrape"}
         </button>
 
         <button
           type="button"
           onClick={handleGenerateDrafts}
-          disabled={drafting || status === "complete" || status === "draft"}
+          disabled={drafting || scraping || status === "complete" || status === "draft"}
           title={status === "draft" ? "Activate the campaign before generating drafts" : undefined}
-          className="flex items-center gap-2 px-4 py-2 border border-primary text-primary rounded-lg text-[14px] font-semibold disabled:opacity-60"
+          className="flex items-center gap-2 px-3 py-2 border border-primary text-primary rounded-lg text-[13px] font-semibold disabled:opacity-60"
         >
-          <span className="material-symbols-outlined text-[20px]">edit_note</span>
-          {drafting ? "Queuing…" : "Generate Drafts Now"}
+          <span className="material-symbols-outlined text-[18px]">edit_note</span>
+          {drafting ? "Generating…" : "Generate Drafts"}
         </button>
 
         {status === "draft" && (
@@ -87,9 +136,9 @@ export default function CampaignActions({ campaignId, status }: Props) {
             type="button"
             onClick={() => handleStatusChange("active", "Activate")}
             disabled={busyStatus !== null}
-            className="flex items-center gap-2 px-4 py-2 bg-success text-white rounded-lg text-[14px] font-semibold disabled:opacity-60"
+            className="flex items-center gap-2 px-3 py-2 bg-success text-white rounded-lg text-[13px] font-semibold disabled:opacity-60"
           >
-            <span className="material-symbols-outlined text-[20px]">play_arrow</span>
+            <span className="material-symbols-outlined text-[18px]">play_arrow</span>
             {busyStatus === "active" ? "Activating…" : "Activate"}
           </button>
         )}
@@ -99,9 +148,9 @@ export default function CampaignActions({ campaignId, status }: Props) {
             type="button"
             onClick={() => handleStatusChange("paused", "Pause")}
             disabled={busyStatus !== null}
-            className="flex items-center gap-2 px-4 py-2 border border-danger rounded-lg text-[14px] font-semibold text-danger hover:bg-danger-bg disabled:opacity-60"
+            className="flex items-center gap-2 px-3 py-2 border border-danger rounded-lg text-[13px] font-semibold text-danger hover:bg-danger-bg disabled:opacity-60"
           >
-            <span className="material-symbols-outlined text-[20px]">pause_circle</span>
+            <span className="material-symbols-outlined text-[18px]">pause_circle</span>
             {busyStatus === "paused" ? "Pausing…" : "Pause"}
           </button>
         )}
@@ -111,9 +160,9 @@ export default function CampaignActions({ campaignId, status }: Props) {
             type="button"
             onClick={() => handleStatusChange("active", "Resume")}
             disabled={busyStatus !== null}
-            className="flex items-center gap-2 px-4 py-2 bg-success text-white rounded-lg text-[14px] font-semibold disabled:opacity-60"
+            className="flex items-center gap-2 px-3 py-2 bg-success text-white rounded-lg text-[13px] font-semibold disabled:opacity-60"
           >
-            <span className="material-symbols-outlined text-[20px]">play_arrow</span>
+            <span className="material-symbols-outlined text-[18px]">play_arrow</span>
             {busyStatus === "active" ? "Resuming…" : "Resume"}
           </button>
         )}
@@ -123,17 +172,16 @@ export default function CampaignActions({ campaignId, status }: Props) {
             type="button"
             onClick={() => handleStatusChange("complete", "Mark complete")}
             disabled={busyStatus !== null}
-            className="flex items-center gap-2 px-4 py-2 border border-grey-200 rounded-lg text-[14px] font-semibold text-grey-700 hover:bg-grey-50 disabled:opacity-60"
+            className="flex items-center gap-2 px-3 py-2 border border-grey-200 rounded-lg text-[13px] font-semibold text-grey-700 hover:bg-grey-50 disabled:opacity-60"
           >
-            <span className="material-symbols-outlined text-[20px]">flag</span>
+            <span className="material-symbols-outlined text-[18px]">flag</span>
             {busyStatus === "complete" ? "Completing…" : "Mark Complete"}
           </button>
         )}
       </div>
-      {(status === "active" || status === "paused") && (
+      {(status === "active" || status === "paused") && !message && (
         <p className="text-[11px] text-grey-400 max-w-xs text-right leading-snug">
-          Drafts auto-generate every 30 min for enriched leads (auto_queue).
-          Use &ldquo;Now&rdquo; to skip the wait.
+          Drafts auto-generate every 30 min for enriched leads.
         </p>
       )}
       {message && <p className="text-[12px] text-grey-500 max-w-xs text-right">{message}</p>}
