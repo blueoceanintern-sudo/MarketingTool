@@ -1,12 +1,12 @@
 import cron from "node-cron";
 import { db } from "../db";
 import { followUps, leads, emailEvents, emailDrafts, riskFlags, scrapeJobs, campaigns, replies, companies } from "../db/schema";
-import { eq, and, isNull, lte, isNotNull, lt, or, inArray, notInArray } from "drizzle-orm";
+import { eq, and, isNull, lte, isNotNull, lt, or, inArray, notInArray, asc } from "drizzle-orm";
 import { sendDraft, sendFollowUpEmail, getTotalSent } from "../services/sender";
 import { runScrapeJob } from "../services/scraping/runScrapeJob";
 import { enrichLead } from "../services/enrichment/orchestrator";
 import { generateDraftsForCampaign } from "../services/drafting/orchestrator";
-import { generateFollowUpContent } from "../services/drafting";
+import { generateFollowUpBatch, type FollowUpRequest } from "../services/drafting";
 
 const MAX_FOLLOW_UP_ATTEMPTS = 3;
 
@@ -111,17 +111,24 @@ cron.schedule("0 9 * * *", async () => {
         leadRole: leads.role,
         companyName: companies.name,
         companyIndustry: companies.industry,
+        originalSubject: emailDrafts.subject,
       })
       .from(followUps)
       .innerJoin(leads, eq(followUps.leadId, leads.id))
       .innerJoin(companies, eq(leads.companyId, companies.id))
+      .leftJoin(emailDrafts, eq(followUps.draftId, emailDrafts.id))
       .where(and(isNull(followUps.sentAt), lte(followUps.scheduledAt, new Date())));
 
-    for (const fu of pending) {
-      if (capHit) break;
-      if (fu.attemptNumber > MAX_FOLLOW_UP_ATTEMPTS) continue;
+    // Pass 1: qualify (sequential ordering + no reply + has draftId)
+    const qualified = [] as typeof pending;
 
-      // Enforce sequential ordering
+    for (const fu of pending) {
+      if (fu.attemptNumber > MAX_FOLLOW_UP_ATTEMPTS) continue;
+      if (!fu.draftId) {
+        console.warn(`[follow-up-sender] follow_up ${fu.id} has no draftId — skipping`);
+        continue;
+      }
+
       if (fu.attemptNumber > 1) {
         const [prev] = await db
           .select({ sentAt: followUps.sentAt })
@@ -137,7 +144,6 @@ cron.schedule("0 9 * * *", async () => {
         if (!prev?.sentAt) continue;
       }
 
-      // Skip if lead has already replied
       const [hasReply] = await db
         .select({ id: emailEvents.id })
         .from(emailEvents)
@@ -145,19 +151,17 @@ cron.schedule("0 9 * * *", async () => {
         .limit(1);
       if (hasReply) continue;
 
-      const [flag] = await db.select({ id: riskFlags.id }).from(riskFlags).where(eq(riskFlags.leadId, fu.leadId)).limit(1);
+      qualified.push(fu);
+    }
 
-      // Lazily generate subject/body if not yet produced
-      let subject = fu.subject;
-      let body = fu.body;
+    // Pass 2: batch-generate missing content in a single Batch API call
+    const needsContent = qualified.filter((fu) => !fu.subject || !fu.body);
+    const contentMap = new Map<string, { subject: string; body: string }>();
 
-      if (!subject || !body) {
-        if (!fu.draftId) {
-          console.warn(`[follow-up-sender] follow_up ${fu.id} has no draftId — skipping`);
-          continue;
-        }
+    if (needsContent.length > 0) {
+      const batchRequests: FollowUpRequest[] = [];
 
-        // Fetch campaign context for the prompt
+      for (const fu of needsContent) {
         const [campaignRow] = await db
           .select({ name: campaigns.name, description: campaigns.description, painPoints: campaigns.painPoints, callToAction: campaigns.callToAction })
           .from(campaigns)
@@ -165,28 +169,75 @@ cron.schedule("0 9 * * *", async () => {
           .limit(1);
         if (!campaignRow) continue;
 
+        // Subjects from already-sent follow-ups for this lead+campaign (attempts < current)
+        const prevFollowUps =
+          fu.attemptNumber > 1
+            ? await db
+                .select({ subject: followUps.subject, attemptNumber: followUps.attemptNumber })
+                .from(followUps)
+                .where(
+                  and(
+                    eq(followUps.leadId, fu.leadId),
+                    eq(followUps.campaignId, fu.campaignId),
+                    isNotNull(followUps.sentAt),
+                    lt(followUps.attemptNumber, fu.attemptNumber),
+                  ),
+                )
+                .orderBy(asc(followUps.attemptNumber))
+            : [];
+
+        // Build ordered chain: [original email, followup 1, followup 2, ...]
+        const previousSubjects: string[] = [];
+        if (fu.originalSubject) previousSubjects.push(fu.originalSubject);
+        for (const prev of prevFollowUps) {
+          if (prev.subject) previousSubjects.push(prev.subject);
+        }
+
+        batchRequests.push({
+          followUpId: fu.id,
+          leadId: fu.leadId,
+          campaignId: fu.campaignId,
+          lead: {
+            firstName: fu.leadFirstName ?? undefined,
+            lastName: fu.leadLastName ?? undefined,
+            role: fu.leadRole ?? undefined,
+            companyName: fu.companyName,
+            industry: fu.companyIndustry,
+          },
+          campaign: campaignRow,
+          attemptNumber: fu.attemptNumber,
+          previousSubjects,
+        });
+      }
+
+      if (batchRequests.length > 0) {
         try {
-          const generated = await generateFollowUpContent(
-            fu.leadId,
-            fu.campaignId,
-            { firstName: fu.leadFirstName ?? undefined, lastName: fu.leadLastName ?? undefined, role: fu.leadRole ?? undefined, companyName: fu.companyName, industry: fu.companyIndustry },
-            { name: campaignRow.name, description: campaignRow.description, painPoints: campaignRow.painPoints, callToAction: campaignRow.callToAction },
-            fu.attemptNumber,
-          );
-          subject = generated.subject;
-          body = generated.body;
-          await db.update(followUps).set({ subject, body }).where(eq(followUps.id, fu.id));
+          const generated = await generateFollowUpBatch(batchRequests);
+          for (const gen of generated) {
+            await db.update(followUps).set({ subject: gen.subject, body: gen.body }).where(eq(followUps.id, gen.followUpId));
+            contentMap.set(gen.followUpId, { subject: gen.subject, body: gen.body });
+          }
         } catch (err) {
-          console.error(`[follow-up-sender] content generation failed for follow_up ${fu.id}:`, err);
-          continue;
+          console.error("[follow-up-sender] batch content generation failed:", err);
         }
       }
+    }
+
+    // Pass 3: send all qualified follow-ups
+    for (const fu of qualified) {
+      if (capHit) break;
+
+      const subject = fu.subject ?? contentMap.get(fu.id)?.subject;
+      const body = fu.body ?? contentMap.get(fu.id)?.body;
+      if (!subject || !body) continue;
+
+      const [flag] = await db.select({ id: riskFlags.id }).from(riskFlags).where(eq(riskFlags.leadId, fu.leadId)).limit(1);
 
       const result = await sendFollowUpEmail({
         followUpId: fu.id,
         originalDraftId: fu.draftId!,
-        subject: subject!,
-        body: body!,
+        subject,
+        body,
         toEmail: fu.leadEmail,
         leadId: fu.leadId,
         campaignId: fu.campaignId,
