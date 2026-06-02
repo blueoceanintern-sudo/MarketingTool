@@ -128,12 +128,26 @@ export async function sendDraft(payload: SendPayload): Promise<SendResult> {
   }
 
   const fromAddress = process.env.AWS_SES_FROM_ADDRESS;
-  if (!fromAddress) throw new Error("AWS_SES_FROM_ADDRESS is required");
+  if (!fromAddress) return { draftId, status: "blocked", reason: "ses_not_configured" };
 
   const apiBase = getApiBase();
   const unsubscribeUrl = `${apiBase}/unsubscribe?id=${leadId}`;
   const textBody = `${draft.body}\n\nTo unsubscribe: ${unsubscribeUrl}`;
   const htmlBody = buildEmailHtml(draft.body, leadId, apiBase);
+
+  // SES_DRY_RUN=true skips the actual SES call — use this to test the full
+  // pipeline locally without AWS credentials.
+  if (process.env.SES_DRY_RUN === "true") {
+    const fakeMessageId = `dry-run-${Date.now()}`;
+    const now = new Date();
+    await Promise.all([
+      db.insert(emailEvents).values({ draftId, leadId, sesMessageId: `<${fakeMessageId}@dry-run.local>`, sentAt: now }),
+      db.update(emailDrafts).set({ status: "sent" }).where(eq(emailDrafts.id, draftId)),
+      db.update(leads).set({ lastContactedAt: now }).where(eq(leads.id, leadId)),
+    ]);
+    console.log(`[sender:dry-run] draft ${draftId} → ${toEmail} | subject: "${draft.subject}"`);
+    return { draftId, status: "sent", messageId: fakeMessageId };
+  }
 
   const command = new SendEmailCommand({
     Source: fromAddress,
@@ -149,7 +163,6 @@ export async function sendDraft(payload: SendPayload): Promise<SendResult> {
 
   const response = await getSesClient().send(command);
   const messageId = response.MessageId;
-  // Store as full Message-ID header format so In-Reply-To matching works directly.
   const sesMessageId = messageId ? `<${messageId}@email.amazonses.com>` : null;
 
   const now = new Date();
@@ -215,12 +228,23 @@ export async function sendFollowUpEmail(payload: FollowUpPayload): Promise<SendR
   }
 
   const fromAddress = process.env.AWS_SES_FROM_ADDRESS;
-  if (!fromAddress) throw new Error("AWS_SES_FROM_ADDRESS is required");
+  if (!fromAddress) return { draftId: originalDraftId, status: "blocked", reason: "ses_not_configured" };
 
   const apiBase = getApiBase();
   const unsubscribeUrl = `${apiBase}/unsubscribe?id=${leadId}`;
   const textBody = `${body}\n\nTo unsubscribe: ${unsubscribeUrl}`;
   const htmlBody = buildEmailHtml(body, leadId, apiBase);
+
+  if (process.env.SES_DRY_RUN === "true") {
+    const fakeMessageId = `dry-run-${Date.now()}`;
+    const now = new Date();
+    await Promise.all([
+      db.insert(emailEvents).values({ draftId: originalDraftId, leadId, sesMessageId: `<${fakeMessageId}@dry-run.local>`, sentAt: now }),
+      db.update(leads).set({ lastContactedAt: now }).where(eq(leads.id, leadId)),
+    ]);
+    console.log(`[sender:dry-run] follow-up → ${toEmail} | subject: "${subject}"`);
+    return { draftId: originalDraftId, status: "sent", messageId: fakeMessageId };
+  }
 
   const command = new SendEmailCommand({
     Source: fromAddress,
