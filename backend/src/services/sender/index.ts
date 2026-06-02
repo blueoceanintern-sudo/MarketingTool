@@ -201,7 +201,7 @@ export async function sendFollowUpEmail(payload: FollowUpPayload): Promise<SendR
   const [suppressed] = await db
     .select({ id: suppressionList.id })
     .from(suppressionList)
-    .where(eq(suppressionList.email, toEmail))
+    .where(and(eq(suppressionList.email, toEmail), eq(suppressionList.campaignId, campaignId)))
     .limit(1);
   if (suppressed) return { draftId: originalDraftId, status: "blocked", reason: "suppression_list" };
 

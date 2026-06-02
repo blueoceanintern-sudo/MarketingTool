@@ -12,6 +12,22 @@ async function apiFetch<T>(path: string): Promise<T | null> {
 
 // ── Shared types ──────────────────────────────────────────────────────────────
 
+export interface Paginated<T> {
+  data: T[];
+  total: number;
+  page: number;
+  limit: number;
+  total_pages: number;
+}
+
+export interface LeadsSummary {
+  verified: number;
+  auto_queue: number;
+  rep_review: number;
+}
+
+export type PaginatedLeads = Paginated<Lead> & { summary: LeadsSummary };
+
 export type CampaignStatus = "draft" | "active" | "paused" | "complete";
 export type LeadStatus = "new" | "contacted" | "replied" | "converted" | "suppressed";
 export type DraftStatus = "pending_review" | "approved" | "rejected" | "scheduled" | "sent";
@@ -306,8 +322,44 @@ export async function getCampaign(id: string): Promise<Campaign | null> {
 }
 
 export async function getLeads(campaignId?: string): Promise<Lead[]> {
-  const path = campaignId ? `/campaigns/${campaignId}/leads` : "/leads";
-  return (await apiFetch<Lead[]>(path)) ?? [];
+  if (campaignId) {
+    const result = await apiFetch<Paginated<Lead>>(`/campaigns/${campaignId}/leads?limit=500`);
+    return result?.data ?? [];
+  }
+  const result = await apiFetch<PaginatedLeads>(`/leads?limit=500`);
+  return result?.data ?? [];
+}
+
+export async function getLeadsPaginated(params?: {
+  page?: number;
+  limit?: number;
+  status?: string;
+  email_status?: string;
+  routing?: string;
+  campaign_id?: string;
+}): Promise<PaginatedLeads> {
+  const q = new URLSearchParams();
+  if (params?.page && params.page > 1) q.set("page", String(params.page));
+  if (params?.limit) q.set("limit", String(params.limit));
+  if (params?.status) q.set("status", params.status);
+  if (params?.email_status) q.set("email_status", params.email_status);
+  if (params?.routing) q.set("routing", params.routing);
+  if (params?.campaign_id) q.set("campaign_id", params.campaign_id);
+  const qs = q.toString();
+  const result = await apiFetch<PaginatedLeads>(`/leads${qs ? `?${qs}` : ""}`);
+  return result ?? { data: [], total: 0, page: 1, limit: 50, total_pages: 0, summary: { verified: 0, auto_queue: 0, rep_review: 0 } };
+}
+
+export async function getCampaignLeadsPaginated(
+  campaignId: string,
+  params?: { page?: number; limit?: number },
+): Promise<Paginated<Lead>> {
+  const q = new URLSearchParams();
+  if (params?.page && params.page > 1) q.set("page", String(params.page));
+  if (params?.limit) q.set("limit", String(params.limit));
+  const qs = q.toString();
+  const result = await apiFetch<Paginated<Lead>>(`/campaigns/${campaignId}/leads${qs ? `?${qs}` : ""}`);
+  return result ?? { data: [], total: 0, page: 1, limit: 50, total_pages: 0 };
 }
 
 export async function getLeadEnrichment(leadId: string): Promise<EnrichmentRecord | null> {
@@ -429,12 +481,38 @@ export async function getDraftQueue(): Promise<Draft[]> {
 }
 
 export async function getDraftsByStatus(status: "scheduled" | "sent"): Promise<Draft[]> {
-  return (await apiFetch<Draft[]>(`/drafts?status=${status}`)) ?? [];
+  const result = await apiFetch<Paginated<Draft>>(`/drafts?status=${status}&limit=200`);
+  return result?.data ?? [];
+}
+
+export async function getDraftsByStatusPaginated(
+  status: "scheduled" | "sent",
+  params?: { page?: number; limit?: number },
+): Promise<Paginated<Draft>> {
+  const q = new URLSearchParams({ status });
+  if (params?.page && params.page > 1) q.set("page", String(params.page));
+  if (params?.limit) q.set("limit", String(params.limit));
+  const result = await apiFetch<Paginated<Draft>>(`/drafts?${q.toString()}`);
+  return result ?? { data: [], total: 0, page: 1, limit: 50, total_pages: 0 };
 }
 
 export async function getReplies(flaggedOnly = false): Promise<Reply[]> {
   const path = flaggedOnly ? "/replies/flagged" : "/replies";
-  return (await apiFetch<Reply[]>(path)) ?? [];
+  const result = await apiFetch<Paginated<Reply>>(`${path}?limit=200`);
+  return result?.data ?? [];
+}
+
+export async function getRepliesPaginated(
+  flaggedOnly = false,
+  params?: { page?: number; limit?: number },
+): Promise<Paginated<Reply>> {
+  const q = new URLSearchParams();
+  if (params?.page && params.page > 1) q.set("page", String(params.page));
+  if (params?.limit) q.set("limit", String(params.limit));
+  const qs = q.toString();
+  const path = flaggedOnly ? "/replies/flagged" : "/replies";
+  const result = await apiFetch<Paginated<Reply>>(`${path}${qs ? `?${qs}` : ""}`);
+  return result ?? { data: [], total: 0, page: 1, limit: 50, total_pages: 0 };
 }
 
 export async function getDemos(): Promise<Demo[]> {

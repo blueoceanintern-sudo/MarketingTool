@@ -4,6 +4,9 @@ import { useState } from "react";
 import type { Reply, Sentiment } from "@/lib/api";
 import { resolveReply } from "@/lib/api";
 import BookDemoModal from "@/components/book-demo-modal";
+import Pagination from "@/components/pagination";
+
+const REPLIES_PER_PAGE = 20;
 
 const sentimentConfig: Record<Sentiment, { label: string; className: string; icon: string }> = {
   positive: { label: "Positive",  className: "bg-success-bg text-success",   icon: "thumb_up" },
@@ -27,8 +30,11 @@ export default function RepliesClient({ initialReplies }: Props) {
   const [filter, setFilter] = useState<"all" | Sentiment>("all");
   const [resolved, setResolved] = useState<Set<string>>(new Set());
   const [demoModal, setDemoModal] = useState<Reply | null>(null);
+  const [page, setPage] = useState(1);
 
-  const visible = filter === "all" ? replies : replies.filter((r) => r.sentiment === filter);
+  const allVisible = filter === "all" ? replies : replies.filter((r) => r.sentiment === filter);
+  const totalPages = Math.ceil(allVisible.length / REPLIES_PER_PAGE);
+  const visible = allVisible.slice((page - 1) * REPLIES_PER_PAGE, page * REPLIES_PER_PAGE);
 
   if (replies.length === 0) {
     return (
@@ -54,7 +60,7 @@ export default function RepliesClient({ initialReplies }: Props) {
             {(["all", "positive", "neutral", "negative"] as const).map((f) => (
               <button
                 key={f}
-                onClick={() => setFilter(f)}
+                onClick={() => { setFilter(f); setPage(1); }}
                 className={[
                   "px-3 py-1.5 rounded-lg text-[13px] font-medium capitalize transition-colors",
                   filter === f
@@ -72,7 +78,7 @@ export default function RepliesClient({ initialReplies }: Props) {
         <div className="flex-1 flex overflow-hidden">
           {/* Left list */}
           <section className="w-[260px] lg:w-[340px] bg-white border-r border-grey-100 flex flex-col overflow-y-auto shrink-0">
-            {visible.length === 0 ? (
+            {allVisible.length === 0 ? (
               <div className="flex-1 flex items-center justify-center text-grey-300 text-[13px]">
                 No replies
               </div>
@@ -111,6 +117,15 @@ export default function RepliesClient({ initialReplies }: Props) {
                   </button>
                 );
               })
+            )}
+            {totalPages > 1 && (
+              <div className="border-t border-grey-100 px-3 py-3 flex items-center justify-center shrink-0">
+                <Pagination
+                  page={page}
+                  totalPages={totalPages}
+                  onPageChange={(p) => { setPage(p); setSelected(null); }}
+                />
+              </div>
             )}
           </section>
 
