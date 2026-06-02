@@ -2,8 +2,8 @@ import { Hono } from "hono";
 import { db } from "../db";
 import { leads, companies, campaigns, campaignLeads, campaignLeadExclusions, suppressionList, enrichmentRecords, emailDrafts, emailEvents, followUps } from "../db/schema";
 import { count, sql, eq, desc, and, inArray, isNull, isNotNull } from "drizzle-orm";
-import { enrichLead } from "../services/enrichment/orchestrator";
 import { logAudit } from "../services/audit/log";
+import { enrichLead } from "../services/enrichment/orchestrator";
 import { isValidLeadEmail } from "../services/scrapers/emailFilter";
 
 interface LeadRow {
@@ -257,7 +257,6 @@ leadsRouter.post("/:id/leads/import", async (c) => {
   const imported: string[] = [];
   const linkedExisting: string[] = [];
   const skipped: string[] = [];
-  const enrichmentQueue: string[] = [];
 
   for (let i = 1; i < rows.length; i++) {
     const values = (rows[i] ?? "").split(",").map((v) => v.trim());
@@ -318,6 +317,7 @@ leadsRouter.post("/:id/leads/import", async (c) => {
         industry: row["industry"] ?? "Unknown",
         companySize: size,
         location: row["market"] ?? "",
+        source: row["company_website"] || null,
       }).returning();
       company = inserted!;
     }
@@ -340,16 +340,7 @@ leadsRouter.post("/:id/leads/import", async (c) => {
     if (lead) {
       await db.insert(campaignLeads).values({ leadId: lead.id, campaignId, source: "csv" });
       imported.push(email);
-      enrichmentQueue.push(lead.id);
     }
-  }
-
-  // Enrichment runs async — orchestrator owns pipeline_flags + routing.
-  // Worker `enrichment-retry` catches any failures.
-  for (const leadId of enrichmentQueue) {
-    void enrichLead(leadId).catch((err) => {
-      console.error(`[leads/import] enrichment failed for ${leadId}:`, err);
-    });
   }
 
   return c.json(
@@ -357,7 +348,6 @@ leadsRouter.post("/:id/leads/import", async (c) => {
       imported: imported.length,
       linked_existing: linkedExisting.length,
       skipped: skipped.length,
-      enrichment_queued: enrichmentQueue.length,
     },
     201,
   );
@@ -540,6 +530,27 @@ allLeadsRouter.delete("/:id/campaigns/:campaignId", async (c) => {
     cascaded_pending_drafts: cascadedDrafts,
     cascaded_unsent_follow_ups: deletedFollowUpsCount,
   });
+});
+
+// Trigger enrichment for all scraped (non-CSV) leads that haven't been enriched yet.
+// Returns immediately; enrichment runs async in the background.
+allLeadsRouter.post("/enrich", async (c) => {
+  const unenriched = await db
+    .select({ id: leads.id })
+    .from(leads)
+    .where(and(isNotNull(leads.scraperUsed), isNull(leads.enrichedAt)));
+
+  const queued = unenriched.length;
+  console.log(`[leads/enrich] queuing ${queued} scraped lead(s) for enrichment`);
+
+  for (const { id } of unenriched) {
+    void enrichLead(id).catch((err) => {
+      console.error(`[leads/enrich] enrichment failed for ${id}:`, err);
+    });
+  }
+
+  console.log(`[task:2] ✓ POST /api/v1/leads/enrich returned queued=${queued}`);
+  return c.json({ queued });
 });
 
 allLeadsRouter.get("/:id/enrichment", async (c) => {

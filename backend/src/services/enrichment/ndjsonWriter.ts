@@ -25,6 +25,8 @@ export async function appendEnrichmentRecord(record: EnrichmentRecord): Promise<
     }
   });
 
-  writeChain = next.catch(() => undefined);
+  writeChain = next.catch((err) => {
+    console.error("[ndjsonWriter] failed to append enrichment record:", err);
+  });
   await next;
 }

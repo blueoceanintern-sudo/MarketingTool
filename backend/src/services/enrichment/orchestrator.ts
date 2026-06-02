@@ -54,6 +54,10 @@ export async function enrichLead(leadId: string): Promise<EnrichmentRecord> {
     if (contact.email_status === "verified") break;
   }
 
+  if (primarySource === "manual" && !contact.email) {
+    throw new Error(`[enrichment] all providers returned no data for lead ${leadId}`);
+  }
+
   const finalInstitution = finalizeInstitution(institution, input);
   const finalContact = finalizeContact(contact);
   const pipelineFlags = await computePipelineFlags(input, finalContact);
@@ -90,6 +94,7 @@ async function buildInput(leadId: string): Promise<EnrichmentInput> {
       companyName: companies.name,
       industry: companies.industry,
       location: companies.location,
+      companySource: companies.source,
     })
     .from(leads)
     .innerJoin(companies, eq(leads.companyId, companies.id))
@@ -112,7 +117,7 @@ async function buildInput(leadId: string): Promise<EnrichmentInput> {
       email: row.email,
       role: row.role,
       companyName: row.companyName,
-      companyWebsite: null,
+      companyWebsite: row.companySource ?? null,
       industry: row.industry,
       region: market,
     },

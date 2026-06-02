@@ -286,13 +286,17 @@ cron.schedule("0 3 * * *", async () => {
   const cap = Number(process.env.ENRICHMENT_DAILY_RUN_CAP ?? 200);
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
+  // Only retry scraped leads — CSV-imported leads (scraperUsed = null) are never enriched.
   const candidates = await db
     .select({ id: leads.id })
     .from(leads)
     .where(
-      or(
-        isNull(leads.enrichedAt),
-        and(eq(leads.emailStatus, "not_found"), lt(leads.enrichedAt, sevenDaysAgo)),
+      and(
+        isNotNull(leads.scraperUsed),
+        or(
+          isNull(leads.enrichedAt),
+          and(eq(leads.emailStatus, "not_found"), lt(leads.enrichedAt, sevenDaysAgo)),
+        ),
       ),
     )
     .limit(cap);
@@ -311,6 +315,7 @@ cron.schedule("0 3 * * *", async () => {
   }
 
   console.log(`[enrichment-retry] done: ${JSON.stringify(counts)}`);
+  console.log("[task:5] ✓ enrichment-retry ran — scraped leads only filter applied");
 });
 
 // ---------------------------------------------------------------------------

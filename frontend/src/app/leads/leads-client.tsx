@@ -4,6 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   getLeadEnrichment,
+  triggerEnrichment,
   type Campaign,
   type EmailStatus,
   type EnrichmentRecord,
@@ -70,6 +71,22 @@ export default function LeadsClient({
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
+  const [enriching, setEnriching] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  async function handleEnrich() {
+    setEnriching(true);
+    const result = await triggerEnrichment();
+    setEnriching(false);
+    if (result === null) {
+      setToast("Failed to start enrichment — check server logs.");
+    } else if (result.queued === 0) {
+      setToast("No scraped leads to enrich.");
+    } else {
+      setToast(`Enrichment started for ${result.queued} lead${result.queued === 1 ? "" : "s"}.`);
+    }
+    setTimeout(() => setToast(null), 4000);
+  }
 
   function navigate(updates: Record<string, string | number | null>) {
     const sp = new URLSearchParams();
@@ -133,6 +150,13 @@ export default function LeadsClient({
       <div className="bg-white rounded-lg border border-grey-100 overflow-hidden">
         <div className="px-5 py-4 border-b border-grey-100 bg-grey-50 flex flex-wrap gap-3 items-center justify-between">
           <div className="flex flex-wrap gap-2">
+            <button
+              onClick={handleEnrich}
+              disabled={enriching}
+              className="px-3 py-1.5 bg-primary text-white text-[13px] font-medium rounded hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {enriching ? "Enriching…" : "Enrich Leads"}
+            </button>
             <select
               value={statusFilter}
               onChange={(e) => navigate({ status: e.target.value, page: 1 })}
@@ -274,6 +298,12 @@ export default function LeadsClient({
 
       {selectedLead && (
         <EnrichmentDrawer lead={selectedLead} onClose={() => setSelectedLead(null)} />
+      )}
+
+      {toast && (
+        <div className="fixed bottom-6 right-6 z-50 bg-primary text-white px-4 py-3 rounded-lg shadow-lg text-[14px] max-w-xs">
+          {toast}
+        </div>
       )}
     </div>
   );

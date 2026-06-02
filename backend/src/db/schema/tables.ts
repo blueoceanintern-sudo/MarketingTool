@@ -25,6 +25,7 @@ export const companies = pgTable("companies", {
   industry: text("industry").notNull(),
   companySize: companySizeEnum("company_size").notNull(),
   location: text("location").notNull(),
+  source: text("source"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
