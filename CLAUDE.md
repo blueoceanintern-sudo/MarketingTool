@@ -667,7 +667,7 @@ Without these, cold outreach to SG/AU/US targets will be flagged or rejected, an
 
 **Runtime:** Bun | **Framework:** Hono
 
-- `src/index.ts` — Hono app; CORS middleware (hardcoded to `localhost:3000` / `127.0.0.1:3000` — not yet env-driven); all `/api/v1/*` routers mounted; `/unsubscribe` one-click handler; **no security middleware wired yet**
+- `src/index.ts` — Hono app; CORS middleware (hardcoded to `localhost:3000` / `127.0.0.1:3000` — not yet env-driven); all `/api/v1/*` routers mounted; `/unsubscribe` one-click handler; **no security middleware wired yet**; imports `"./workers"` for dev convenience — **remove this import before production deploy and run workers as a separate process** (see README § Process separation)
 - `src/db/` — Drizzle client + full schema; includes `audit_log` and `enrichment_records`; `approved_by`/`approved_at` on `email_drafts`; `lastContactedAt` on `leads`; `ses_message_id` on `email_events`; `subject`/`body` on `follow_ups`; still missing `generated_by` on `source_registry`
 - `src/routes/` — all target API routes implemented (campaigns, leads, drafts, replies, demos, analytics, admin registry/suppression); `GET /drafts?status=scheduled|sent` added; audit trail on draft approve/reject/edit; still missing `/admin/leads/:id/erase` and `/admin/audit-log`
 - `src/services/scrapers/cheerioScraper.ts` — static HTML scraper

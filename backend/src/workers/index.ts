@@ -27,8 +27,11 @@ cron.schedule("0 0 * * *", async () => {
 // Phase B: Process pending follow_ups rows lazily.
 //   If subject/body are null, generate them via the Batch API first.
 //   Skip if lead has already replied; enforce sequential attempt ordering.
+//
+// Exported so it can be called directly in tests/scripts without waiting
+// for the 9am schedule.
 // ---------------------------------------------------------------------------
-cron.schedule("0 9 * * *", async () => {
+export async function runFollowUpSender() {
   console.log("[follow-up-sender] running");
 
   let sent = 0;
@@ -59,22 +62,32 @@ cron.schedule("0 9 * * *", async () => {
       ),
     );
 
+  console.log(`[follow-up-sender] Phase A: found ${scheduledDrafts.length} scheduled draft(s)`);
+
   for (const draft of scheduledDrafts) {
     if (capHit) break;
 
     const [flag] = await db.select({ id: riskFlags.id }).from(riskFlags).where(eq(riskFlags.leadId, draft.leadId)).limit(1);
 
-    const result = await sendDraft({
-      draftId: draft.id,
-      toEmail: draft.leadEmail,
-      leadId: draft.leadId,
-      isVerified: draft.isVerified,
-      hasRiskFlags: !!flag,
-    });
+    let result: Awaited<ReturnType<typeof sendDraft>>;
+    try {
+      result = await sendDraft({
+        draftId: draft.id,
+        toEmail: draft.leadEmail,
+        leadId: draft.leadId,
+        isVerified: draft.isVerified,
+        hasRiskFlags: !!flag,
+      });
+    } catch (err) {
+      console.error(`[follow-up-sender] Phase A: draft ${draft.id} threw:`, err);
+      blocked++;
+      continue;
+    }
+
+    console.log(`[follow-up-sender] Phase A: draft ${draft.id} → ${draft.leadEmail} → ${result.status}${result.reason ? `:${result.reason}` : ""}`);
 
     if (result.status === "sent") {
       sent++;
-      // Schedule 3 follow-up attempts: +3, +7, +14 days from now.
       const now = Date.now();
       const offsets = [3, 7, 14];
       await db.insert(followUps).values(
@@ -86,6 +99,7 @@ cron.schedule("0 9 * * *", async () => {
           draftId: draft.id,
         })),
       );
+      console.log(`[follow-up-sender] Phase A: follow_ups created for lead ${draft.leadId} (+3/+7/+14 days)`);
     } else {
       blocked++;
     }
@@ -117,6 +131,8 @@ cron.schedule("0 9 * * *", async () => {
       .innerJoin(companies, eq(leads.companyId, companies.id))
       .where(and(isNull(followUps.sentAt), lte(followUps.scheduledAt, new Date())));
 
+    console.log(`[follow-up-sender] Phase B: found ${pending.length} pending follow-up(s)`);
+
     for (const fu of pending) {
       if (capHit) break;
       if (fu.attemptNumber > MAX_FOLLOW_UP_ATTEMPTS) continue;
@@ -143,21 +159,22 @@ cron.schedule("0 9 * * *", async () => {
         .from(emailEvents)
         .where(and(eq(emailEvents.leadId, fu.leadId), isNotNull(emailEvents.repliedAt)))
         .limit(1);
-      if (hasReply) continue;
+      if (hasReply) {
+        console.log(`[follow-up-sender] Phase B: follow_up ${fu.id} attempt ${fu.attemptNumber} → skipped (lead replied)`);
+        continue;
+      }
 
       const [flag] = await db.select({ id: riskFlags.id }).from(riskFlags).where(eq(riskFlags.leadId, fu.leadId)).limit(1);
 
-      // Lazily generate subject/body if not yet produced
       let subject = fu.subject;
       let body = fu.body;
 
       if (!subject || !body) {
         if (!fu.draftId) {
-          console.warn(`[follow-up-sender] follow_up ${fu.id} has no draftId — skipping`);
+          console.warn(`[follow-up-sender] Phase B: follow_up ${fu.id} has no draftId — skipping`);
           continue;
         }
 
-        // Fetch campaign context for the prompt
         const [campaignRow] = await db
           .select({ name: campaigns.name, description: campaigns.description, painPoints: campaigns.painPoints, callToAction: campaigns.callToAction })
           .from(campaigns)
@@ -165,6 +182,7 @@ cron.schedule("0 9 * * *", async () => {
           .limit(1);
         if (!campaignRow) continue;
 
+        console.log(`[follow-up-sender] Phase B: follow_up ${fu.id} attempt ${fu.attemptNumber} → generating content via Batch API...`);
         try {
           const generated = await generateFollowUpContent(
             fu.leadId,
@@ -176,23 +194,33 @@ cron.schedule("0 9 * * *", async () => {
           subject = generated.subject;
           body = generated.body;
           await db.update(followUps).set({ subject, body }).where(eq(followUps.id, fu.id));
+          console.log(`[follow-up-sender] Phase B: follow_up ${fu.id} content ready | subject: "${subject}"`);
         } catch (err) {
-          console.error(`[follow-up-sender] content generation failed for follow_up ${fu.id}:`, err);
+          console.error(`[follow-up-sender] Phase B: content generation failed for follow_up ${fu.id}:`, err);
           continue;
         }
       }
 
-      const result = await sendFollowUpEmail({
-        followUpId: fu.id,
-        originalDraftId: fu.draftId!,
-        subject: subject!,
-        body: body!,
-        toEmail: fu.leadEmail,
-        leadId: fu.leadId,
-        campaignId: fu.campaignId,
-        isVerified: fu.isVerified,
-        hasRiskFlags: !!flag,
-      });
+      let result: Awaited<ReturnType<typeof sendFollowUpEmail>>;
+      try {
+        result = await sendFollowUpEmail({
+          followUpId: fu.id,
+          originalDraftId: fu.draftId!,
+          subject: subject!,
+          body: body!,
+          toEmail: fu.leadEmail,
+          leadId: fu.leadId,
+          campaignId: fu.campaignId,
+          isVerified: fu.isVerified,
+          hasRiskFlags: !!flag,
+        });
+      } catch (err) {
+        console.error(`[follow-up-sender] Phase B: follow_up ${fu.id} threw:`, err);
+        blocked++;
+        continue;
+      }
+
+      console.log(`[follow-up-sender] Phase B: follow_up ${fu.id} attempt ${fu.attemptNumber} → ${fu.leadEmail} → ${result.status}${result.reason ? `:${result.reason}` : ""}`);
 
       if (result.status === "sent") {
         await db.update(followUps).set({ sentAt: new Date() }).where(eq(followUps.id, fu.id));
@@ -206,7 +234,9 @@ cron.schedule("0 9 * * *", async () => {
   }
 
   console.log(`[follow-up-sender] done: sent=${sent}, blocked=${blocked}`);
-});
+}
+
+cron.schedule("0 9 * * *", runFollowUpSender);
 
 // ---------------------------------------------------------------------------
 // scrape-retry  — 04:00 daily
