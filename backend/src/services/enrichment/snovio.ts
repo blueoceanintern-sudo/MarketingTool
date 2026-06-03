@@ -36,6 +36,7 @@ async function getAccessToken(): Promise<string> {
   if (!res.ok) throw new Error(`Snov.io auth failed: ${res.status}`);
 
   const body = (await res.json()) as SnovioTokenResponse;
+  if (!body.access_token) throw new Error("Snov.io auth failed: no access_token in response");
   cachedToken = { value: body.access_token, expiresAt: Date.now() + body.expires_in * 1000 - 60_000 };
   return cachedToken.value;
 }
@@ -83,7 +84,12 @@ export const snovioProvider: EnrichmentProvider = {
       };
     }
 
-    const domain = new URL(seed.companyWebsite!).hostname.replace(/^www\./, "");
+    let domain: string;
+    try {
+      domain = new URL(seed.companyWebsite!).hostname.replace(/^www\./, "");
+    } catch {
+      return null;
+    }
     const results = await findByDomain(domain, token);
     if (results.length === 0) return null;
 

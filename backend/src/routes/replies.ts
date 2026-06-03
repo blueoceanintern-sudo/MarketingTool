@@ -4,7 +4,7 @@ import { createVerify } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { db } from "../db";
 import { replies, emailEvents, leads, companies, emailDrafts, campaigns, suppressionList, followUps, demos } from "../db/schema";
-import { eq, and, isNull, inArray, asc } from "drizzle-orm";
+import { count, eq, and, isNull, inArray, asc } from "drizzle-orm";
 
 // ── SNS types ─────────────────────────────────────────────────────────────────
 
@@ -153,7 +153,8 @@ Return only valid JSON. No explanation, no preamble, no markdown fences.
       system: systemPrompt,
       messages: [{ role: "user", content: `<reply>\n${body}\n</reply>` }],
     });
-    const text = response.content[0].type === "text" ? response.content[0].text : "";
+    const first = response.content[0];
+    const text = first?.type === "text" ? first.text : "";
     const parsed = JSON.parse(text) as { sentiment?: string; return_date?: string | null };
     return {
       category: parsed.sentiment ?? "neutral",
@@ -233,15 +234,53 @@ const repliesJoinQuery = () =>
 export const repliesRouter = new Hono();
 
 repliesRouter.get("/replies", async (c) => {
-  const rows = await repliesJoinQuery().orderBy(replies.receivedAt);
-  return c.json(rows.map(formatReply));
+  const page = Math.max(1, parseInt(c.req.query("page") ?? "1", 10) || 1);
+  const limit = Math.min(200, Math.max(1, parseInt(c.req.query("limit") ?? "50", 10) || 50));
+  const offset = (page - 1) * limit;
+
+  const [countRow] = await db.select({ total: count() }).from(replies);
+  const total = Number(countRow?.total ?? 0);
+
+  const rows = await repliesJoinQuery()
+    .orderBy(replies.receivedAt)
+    .limit(limit)
+    .offset(offset);
+
+  return c.json({
+    data: rows.map(formatReply),
+    total,
+    page,
+    limit,
+    total_pages: Math.ceil(total / limit),
+  });
 });
 
 repliesRouter.get("/replies/flagged", async (c) => {
+  const page = Math.max(1, parseInt(c.req.query("page") ?? "1", 10) || 1);
+  const limit = Math.min(200, Math.max(1, parseInt(c.req.query("limit") ?? "50", 10) || 50));
+  const offset = (page - 1) * limit;
+
+  const flaggedWhere = and(isNull(replies.resolvedAt), inArray(replies.category, ["positive", "neutral"]));
+
+  const [countRow] = await db
+    .select({ total: count() })
+    .from(replies)
+    .where(flaggedWhere);
+  const total = Number(countRow?.total ?? 0);
+
   const rows = await repliesJoinQuery()
-    .where(and(isNull(replies.resolvedAt), inArray(replies.category, ["positive", "neutral"])))
-    .orderBy(replies.receivedAt);
-  return c.json(rows.map(formatReply));
+    .where(flaggedWhere)
+    .orderBy(replies.receivedAt)
+    .limit(limit)
+    .offset(offset);
+
+  return c.json({
+    data: rows.map(formatReply),
+    total,
+    page,
+    limit,
+    total_pages: Math.ceil(total / limit),
+  });
 });
 
 repliesRouter.patch("/replies/:id/resolve", async (c) => {
@@ -388,6 +427,9 @@ repliesRouter.post("/webhooks/ses/reply", async (c) => {
     .insert(replies)
     .values({ emailEventId, body: replyBody, sentiment, category })
     .returning();
+  if (!reply) {
+    return c.json({ error: "Failed to record reply" }, 500);
+  }
 
   await db
     .update(emailEvents)
@@ -401,7 +443,7 @@ repliesRouter.post("/webhooks/ses/reply", async (c) => {
         .delete(followUps)
         .where(and(eq(followUps.leadId, lead.id), eq(followUps.campaignId, campaignId), isNull(followUps.sentAt)));
     } else if (category === "negative") {
-      await db.insert(suppressionList).values({ email: fromEmail, reason: "manual" }).onConflictDoNothing();
+      await db.insert(suppressionList).values({ email: fromEmail, campaignId, reason: "manual" }).onConflictDoNothing();
       await db
         .delete(followUps)
         .where(and(eq(followUps.leadId, lead.id), eq(followUps.campaignId, campaignId), isNull(followUps.sentAt)));

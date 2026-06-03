@@ -27,7 +27,8 @@
       "Bash(git diff *)",
       "mcp__ide__getDiagnostics",
       "Bash(docker exec *)",
-      "Bash(dir C:\\\\Users\\\\jachi\\\\Desktop\\\\MarketingTool\\\\backend *)"
+      "Bash(dir C:\\\\Users\\\\jachi\\\\Desktop\\\\MarketingTool\\\\backend *)",
+      "Bash(git add *)"
     ]
   }
 }
