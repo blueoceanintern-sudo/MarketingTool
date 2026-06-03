@@ -2,7 +2,7 @@ import cron from "node-cron";
 import { db } from "../db";
 import { followUps, leads, emailEvents, emailDrafts, riskFlags, scrapeJobs, campaigns, replies, companies } from "../db/schema";
 import { eq, and, isNull, lte, isNotNull, lt, or, inArray, notInArray } from "drizzle-orm";
-import { sendDraft, sendFollowUpEmail, getTotalSent } from "../services/sender";
+import { sendDraft, sendFollowUpEmail, getTotalSent, getWarmupWeek, getDailyCap } from "../services/sender";
 import { runScrapeJob } from "../services/scraping/runScrapeJob";
 import { enrichLead } from "../services/enrichment/orchestrator";
 import { generateDraftsForCampaign } from "../services/drafting/orchestrator";
@@ -14,8 +14,8 @@ const MAX_FOLLOW_UP_ATTEMPTS = 3;
 // warmup-tracker  — midnight daily
 // ---------------------------------------------------------------------------
 cron.schedule("0 0 * * *", async () => {
-  const totalSent = await getTotalSent();
-  console.log(`[warmup-tracker] total sent all-time: ${totalSent}`);
+  const [totalSent, week, dailyCap] = await Promise.all([getTotalSent(), getWarmupWeek(), getDailyCap()]);
+  console.log(`[warmup-tracker] total sent all-time: ${totalSent} | warm-up week ${week} → daily cap ${dailyCap}`);
 });
 
 // ---------------------------------------------------------------------------
@@ -75,6 +75,7 @@ export async function runFollowUpSender() {
         draftId: draft.id,
         toEmail: draft.leadEmail,
         leadId: draft.leadId,
+        campaignId: draft.campaignId,
         isVerified: draft.isVerified,
         hasRiskFlags: !!flag,
       });
