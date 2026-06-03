@@ -153,7 +153,8 @@ Return only valid JSON. No explanation, no preamble, no markdown fences.
       system: systemPrompt,
       messages: [{ role: "user", content: `<reply>\n${body}\n</reply>` }],
     });
-    const text = response.content[0].type === "text" ? response.content[0].text : "";
+    const first = response.content[0];
+    const text = first?.type === "text" ? first.text : "";
     const parsed = JSON.parse(text) as { sentiment?: string; return_date?: string | null };
     return {
       category: parsed.sentiment ?? "neutral",
@@ -426,6 +427,9 @@ repliesRouter.post("/webhooks/ses/reply", async (c) => {
     .insert(replies)
     .values({ emailEventId, body: replyBody, sentiment, category })
     .returning();
+  if (!reply) {
+    return c.json({ error: "Failed to record reply" }, 500);
+  }
 
   await db
     .update(emailEvents)
