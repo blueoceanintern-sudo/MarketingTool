@@ -54,6 +54,8 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
       role: leads.role,
       companyName: companies.name,
       industry: companies.industry,
+      companySize: companies.companySize,
+      location: companies.location,
     })
     .from(campaignLeads)
     .innerJoin(leads, eq(campaignLeads.leadId, leads.id))
@@ -74,6 +76,8 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
       role: lead.role ?? undefined,
       companyName: lead.companyName,
       industry: lead.industry,
+      companySize: lead.companySize,
+      location: lead.location,
     },
     campaign: campaignContext,
   }));

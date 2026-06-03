@@ -111,6 +111,8 @@ cron.schedule("0 9 * * *", async () => {
         leadRole: leads.role,
         companyName: companies.name,
         companyIndustry: companies.industry,
+        companySize: companies.companySize,
+        companyLocation: companies.location,
         originalSubject: emailDrafts.subject,
       })
       .from(followUps)
@@ -169,11 +171,12 @@ cron.schedule("0 9 * * *", async () => {
           .limit(1);
         if (!campaignRow) continue;
 
-        // Subjects from already-sent follow-ups for this lead+campaign (attempts < current)
+        // Angle tags from already-sent follow-ups for this lead+campaign (attempts < current).
+        // These tell the next email which operational angles have already been used.
         const prevFollowUps =
           fu.attemptNumber > 1
             ? await db
-                .select({ subject: followUps.subject, attemptNumber: followUps.attemptNumber })
+                .select({ angleTag: followUps.angleTag, attemptNumber: followUps.attemptNumber })
                 .from(followUps)
                 .where(
                   and(
@@ -186,12 +189,9 @@ cron.schedule("0 9 * * *", async () => {
                 .orderBy(asc(followUps.attemptNumber))
             : [];
 
-        // Build ordered chain: [original email, followup 1, followup 2, ...]
-        const previousSubjects: string[] = [];
-        if (fu.originalSubject) previousSubjects.push(fu.originalSubject);
-        for (const prev of prevFollowUps) {
-          if (prev.subject) previousSubjects.push(prev.subject);
-        }
+        const previousAngleTags = prevFollowUps
+          .filter((p) => p.angleTag !== null)
+          .map((p) => p.angleTag as string);
 
         batchRequests.push({
           followUpId: fu.id,
@@ -203,10 +203,13 @@ cron.schedule("0 9 * * *", async () => {
             role: fu.leadRole ?? undefined,
             companyName: fu.companyName,
             industry: fu.companyIndustry,
+            companySize: fu.companySize ?? undefined,
+            location: fu.companyLocation ?? undefined,
           },
           campaign: campaignRow,
           attemptNumber: fu.attemptNumber,
-          previousSubjects,
+          originalSubject: fu.originalSubject ?? "",
+          previousAngleTags,
         });
       }
 
@@ -214,7 +217,10 @@ cron.schedule("0 9 * * *", async () => {
         try {
           const generated = await generateFollowUpBatch(batchRequests);
           for (const gen of generated) {
-            await db.update(followUps).set({ subject: gen.subject, body: gen.body }).where(eq(followUps.id, gen.followUpId));
+            await db
+              .update(followUps)
+              .set({ subject: gen.subject, body: gen.body, angleTag: gen.angleTag })
+              .where(eq(followUps.id, gen.followUpId));
             contentMap.set(gen.followUpId, { subject: gen.subject, body: gen.body });
           }
         } catch (err) {
