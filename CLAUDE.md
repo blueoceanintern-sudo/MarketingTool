@@ -34,7 +34,7 @@ API, one draft per lead/campaign) + orchestrator; sender (SES, warm-up cap, hard
 follow-up send); all 6 cron workers; SNS/SES webhook signature verification.
 
 **Not built:** security middleware (API-key auth, rate limiting, SSRF, CSV-injection
-sanitization); env-driven CORS; `campaign-assigner`; `source-registry`/Tavily;
+sanitization); env-driven CORS; `campaign-assigner`;
 `improver` (self-updating templates); admin erase + audit-log routes; monorepo migration;
 DB migrations not yet generated/applied. Details in `docs/roadmap.md`.
 
