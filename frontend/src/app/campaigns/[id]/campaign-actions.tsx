@@ -1,14 +1,15 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  getCampaign,
   triggerCampaignScrape,
   triggerCampaignDraftGeneration,
   updateCampaignStatus,
   type CampaignStatus,
 } from "@/lib/api";
+import { keys } from "@/lib/queries";
+import { useJobEvents } from "@/lib/job-events";
 
 interface Props {
   campaignId: string;
@@ -16,95 +17,87 @@ interface Props {
 }
 
 export default function CampaignActions({ campaignId, status }: Props) {
-  const router = useRouter();
-  const [scraping, setScraping] = useState(false);
-  const [drafting, setDrafting] = useState(false);
+  const queryClient = useQueryClient();
+  const [running, setRunning] = useState<"scrape" | "drafts" | null>(null);
   const [busyStatus, setBusyStatus] = useState<CampaignStatus | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  useEffect(() => {
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, []);
-
-  async function handleScrape() {
-    setScraping(true);
-    setMessage(null);
-    if (pollRef.current) clearInterval(pollRef.current);
-
-    const { ok, error } = await triggerCampaignScrape(campaignId);
-    if (!ok) {
-      setScraping(false);
-      setMessage(error ?? "Scrape failed");
-      return;
+  // Scrape and draft generation are async backend jobs. We fire the trigger,
+  // then wait for the SSE completion event (which also invalidates the queries,
+  // so the tiles and leads table refresh on their own).
+  useJobEvents((event) => {
+    if (event.kind === "scrape" && event.campaignId === campaignId && running === "scrape") {
+      setRunning(null);
+      setMessage(
+        event.status === "complete"
+          ? "Scrape complete."
+          : event.status === "blocked"
+            ? "Scrape blocked (CAPTCHA or robots.txt)."
+            : "Scrape failed.",
+      );
+    } else if (event.kind === "drafts" && event.campaignId === campaignId && running === "drafts") {
+      setRunning(null);
+      setMessage(
+        event.generated > 0
+          ? `${event.generated} new draft${event.generated !== 1 ? "s" : ""} added to Review Queue.`
+          : "Draft generation complete — check the Review Queue.",
+      );
     }
+  });
 
-    const before = await getCampaign(campaignId);
-    const beforeCount = before?.leads_count ?? 0;
-    setMessage("Scraping…");
-
-    let tries = 0;
-    pollRef.current = setInterval(async () => {
-      tries++;
-      const updated = await getCampaign(campaignId);
-      const newCount = updated?.leads_count ?? beforeCount;
-      const done = newCount > beforeCount || tries >= 10;
-      if (done) {
-        clearInterval(pollRef.current!);
-        pollRef.current = null;
-        setScraping(false);
-        const diff = newCount - beforeCount;
-        setMessage("Done");
-        router.refresh();
+  const scrapeMutation = useMutation({
+    mutationFn: () => triggerCampaignScrape(campaignId),
+    onSuccess: ({ ok, error }) => {
+      if (!ok) {
+        setMessage(error ?? "Scrape failed");
+        return;
       }
-    }, 3000);
+      setMessage("Scraping…");
+      setRunning("scrape");
+    },
+  });
+
+  const draftMutation = useMutation({
+    mutationFn: () => triggerCampaignDraftGeneration(campaignId),
+    onSuccess: ({ ok, error }) => {
+      if (!ok) {
+        setMessage(error ?? "Draft generation failed");
+        return;
+      }
+      setMessage("Generating drafts — Batch API in progress…");
+      setRunning("drafts");
+    },
+  });
+
+  const statusMutation = useMutation({
+    mutationFn: (vars: { next: CampaignStatus; label: string }) => updateCampaignStatus(campaignId, vars.next),
+    onSettled: () => setBusyStatus(null),
+    onSuccess: ({ ok, error }, vars) => {
+      if (!ok) {
+        setMessage(error ?? `Could not ${vars.label.toLowerCase()} campaign`);
+        return;
+      }
+      queryClient.invalidateQueries({ queryKey: keys.campaigns });
+    },
+  });
+
+  const scraping = scrapeMutation.isPending || running === "scrape";
+  const drafting = draftMutation.isPending || running === "drafts";
+
+  function handleScrape() {
+    setMessage(null);
+    scrapeMutation.mutate();
   }
 
-  async function handleGenerateDrafts() {
-    setDrafting(true);
+  function handleGenerateDrafts() {
     setMessage(null);
-    if (pollRef.current) clearInterval(pollRef.current);
-
-    const { ok, error } = await triggerCampaignDraftGeneration(campaignId);
-    if (!ok) {
-      setDrafting(false);
-      setMessage(error ?? "Draft generation failed");
-      return;
-    }
-
-    const before = await getCampaign(campaignId);
-    const beforePending = before?.drafts_pending ?? 0;
-    setMessage("Generating drafts — Batch API in progress…");
-
-    let tries = 0;
-    pollRef.current = setInterval(async () => {
-      tries++;
-      const updated = await getCampaign(campaignId);
-      const newPending = updated?.drafts_pending ?? beforePending;
-      const done = newPending > beforePending || tries >= 20;
-      if (done) {
-        clearInterval(pollRef.current!);
-        pollRef.current = null;
-        setDrafting(false);
-        const diff = newPending - beforePending;
-        setMessage(diff > 0 ? `${diff} new draft${diff !== 1 ? "s" : ""} added to Review Queue.` : "Draft generation complete — check the Review Queue.");
-        router.refresh();
-      }
-    }, 3000);
+    draftMutation.mutate();
   }
 
-  async function handleStatusChange(next: CampaignStatus, label: string) {
+  function handleStatusChange(next: CampaignStatus, label: string) {
     setBusyStatus(next);
     setMessage(null);
-    const { ok, error } = await updateCampaignStatus(campaignId, next);
-    setBusyStatus(null);
-    if (!ok) {
-      setMessage(error ?? `Could not ${label.toLowerCase()} campaign`);
-      return;
-    }
-    router.refresh();
+    statusMutation.mutate({ next, label });
   }
 
   return (
