@@ -31,7 +31,7 @@ Compressible element (include if it strengthens the email, cut only if the value
 - Avoid generic pleasantries and formal filler in greetings or signoffs — no "Hope you're well" or "Best regards."
 - Address the contact by first name in the greeting.
 - Prefer short sentences. Do not exceed 25 words per sentence.
-- 120 words maximum in the email body, excluding greeting and signature.
+- 125 words maximum in the email body, excluding greeting and signature.
 - No excessive punctuation, urgency language, or spam-trigger phrasing such as "Quick question..." or "Don't miss out".
 
 **Subject line rules:**
@@ -60,7 +60,7 @@ Return only this JSON — no explanation, no preamble:
   "confidenceScore": <integer 0-100>
 }
 
-confidenceScore reflects how well the email fits the lead and campaign context. A score below 60 indicates the role or industry is a weak match for the selected pain point and the email should be reviewed before sending.`;
+confidenceScore is your 0–100 self-assessment across four equally weighted factors (25 points each): (1) pain point-to-role fit — is the selected pain point a realistic daily concern for someone in this role at a company in this industry; (2) campaign-goal alignment — does the email follow the campaign's stated objective; (3) personalisation quality — how specific and contextually relevant is the email to this lead; (4) length compliance — is the body under 125 words. Sum all four. A score below 60 indicates a weak match and the email should be reviewed before sending.`;
 
 const FOLLOWUP_1_SYSTEM_PROMPT = `You are an expert B2B cold email copywriter.
 Your job is to write the second email in a cold outbound sequence.
@@ -177,7 +177,7 @@ Return only valid JSON — no explanation, no preamble:
   "confidenceScore": <integer 0-100>
 }
 
-confidenceScore reflects how well the new angle fits the lead's role and campaign context. A score below 60 indicates a weak angle match and the email should be reviewed before sending.`;
+confidenceScore is your 0–100 self-assessment across four equally weighted factors (25 points each): (1) angle-to-role fit — is the new angle a realistic daily concern for someone in this role and industry; (2) angle novelty — is it genuinely distinct from all previous_angle_tags; (3) tone compliance — does the email avoid sounding like a reminder, guilt-trip, or chase email; (4) length compliance — is the body under 90 words. Sum all four. A score below 60 indicates a weak angle match or tone risk and the email should be reviewed.`;
 
 const FOLLOWUP_2_SYSTEM_PROMPT = `You are an expert B2B cold email copywriter.
 Your job is to write the third email in a cold outbound sequence.
@@ -288,7 +288,7 @@ Return only valid JSON — no explanation, no preamble:
   "confidenceScore": <integer 0-100>
 }
 
-confidenceScore reflects how well the new angle fits the lead's role and campaign context. A score below 60 indicates a weak angle match and the email should be reviewed before sending.`;
+confidenceScore is your 0–100 self-assessment across four equally weighted factors (25 points each): (1) angle-to-role fit — is the new angle a realistic daily concern for someone in this role and industry; (2) angle novelty — is it genuinely distinct from all previous_angle_tags; (3) tone compliance — does the email remain calm, non-repetitive, and non-persistent; (4) length compliance — is the body under 85 words. Sum all four. A score below 60 indicates a weak angle match or tone risk and the email should be reviewed.`;
 
 const BREAKUP_SYSTEM_PROMPT = `You are an expert B2B cold email copywriter.
 Your job is to write the final email in a cold outbound sequence.
@@ -392,7 +392,7 @@ Return only valid JSON — no explanation, no preamble:
   "confidenceScore": <integer 0-100>
 }
 
-confidenceScore reflects how naturally the exit email fits the lead and sequence context. A score below 60 indicates the tone or value reminder may feel forced and the email should be reviewed before sending.`;
+confidenceScore is your 0–100 self-assessment across four equally weighted factors (25 points each): (1) tone quality — is the email genuinely calm, respectful, and pressure-free; (2) value reminder — is the one restatement broad, descriptive, and angle-neutral; (3) exit quality — does the CTA feel like an open door rather than a request or final warning; (4) length compliance — is the body under 70 words. Sum all four. A score below 60 indicates forced tone or positioning and the email should be reviewed.`;
 
 async function seed() {
   // Update existing template to initial type with new prompt
