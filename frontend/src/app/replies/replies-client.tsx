@@ -1,8 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Reply, Sentiment } from "@/lib/api";
 import { resolveReply } from "@/lib/api";
+import { repliesOptions, keys } from "@/lib/queries";
 import BookDemoModal from "@/components/book-demo-modal";
 import Pagination from "@/components/pagination";
 
@@ -20,17 +22,22 @@ function formatDate(iso: string) {
   });
 }
 
-interface Props {
-  initialReplies: Reply[];
-}
-
-export default function RepliesClient({ initialReplies }: Props) {
-  const replies = initialReplies;
+export default function RepliesClient() {
+  const queryClient = useQueryClient();
+  const { data: replies = [] } = useQuery(repliesOptions());
   const [selected, setSelected] = useState<Reply | null>(replies[0] ?? null);
   const [filter, setFilter] = useState<"all" | Sentiment>("all");
   const [resolved, setResolved] = useState<Set<string>>(new Set());
   const [demoModal, setDemoModal] = useState<Reply | null>(null);
   const [page, setPage] = useState(1);
+
+  const resolveMutation = useMutation({
+    mutationFn: (id: string) => resolveReply(id),
+    onSuccess: (_ok, id) => {
+      setResolved((prev) => new Set(prev).add(id));
+      queryClient.invalidateQueries({ queryKey: keys.replies });
+    },
+  });
 
   const allVisible = filter === "all" ? replies : replies.filter((r) => r.sentiment === filter);
   const totalPages = Math.ceil(allVisible.length / REPLIES_PER_PAGE);
@@ -196,11 +203,9 @@ export default function RepliesClient({ initialReplies }: Props) {
                   )}
                   {!resolved.has(selected.id) && (
                     <button
-                      onClick={async () => {
-                        await resolveReply(selected.id);
-                        setResolved((prev) => new Set(prev).add(selected.id));
-                      }}
-                      className="flex items-center gap-2 px-5 py-2.5 border border-grey-200 text-grey-700 text-[14px] font-semibold rounded-lg hover:bg-grey-50 transition-colors"
+                      onClick={() => resolveMutation.mutate(selected.id)}
+                      disabled={resolveMutation.isPending}
+                      className="flex items-center gap-2 px-5 py-2.5 border border-grey-200 text-grey-700 text-[14px] font-semibold rounded-lg hover:bg-grey-50 transition-colors disabled:opacity-60"
                     >
                       <span className="material-symbols-outlined text-[18px]">check_circle</span>
                       Mark Resolved

@@ -1,74 +1,67 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useEffect, useState, type SubmitEvent } from "react";
-import { addLeadToCampaign, getCampaigns, removeLeadFromCampaign, type Campaign } from "@/lib/api";
+import { useState, type SubmitEvent } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { addLeadToCampaign, removeLeadFromCampaign } from "@/lib/api";
+import { campaignsOptions, keys } from "@/lib/queries";
 
 interface Props {
   leadId: string;
   leadName: string;
   currentCampaignId: string;
-  onRemoved?: (leadId: string) => void;
 }
 
 type Mode = "add" | "remove";
 
-export default function LeadActions({ leadId, leadName, currentCampaignId, onRemoved }: Props) {
-  const router = useRouter();
+export default function LeadActions({ leadId, leadName, currentCampaignId }: Props) {
+  const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("add");
   const [targetCampaignId, setTargetCampaignId] = useState<string>("");
-  const [campaigns, setCampaigns] = useState<Campaign[] | null>(null);
   const [removeReason, setRemoveReason] = useState<string>("");
 
-  useEffect(() => {
-    if (!open || campaigns !== null) return;
-    void getCampaigns().then((list) => {
-      // For "add", exclude the current campaign + completed campaigns
-      const eligible = list.filter((c) => c.id !== currentCampaignId && c.status !== "complete");
-      setCampaigns(eligible);
-      if (eligible[0]) setTargetCampaignId(eligible[0].id);
-    });
-  }, [open, campaigns, currentCampaignId]);
+  // Only fetch the campaign list when the modal is open. For "add", exclude the
+  // current campaign and completed campaigns.
+  const { data: allCampaigns, isLoading } = useQuery({ ...campaignsOptions(), enabled: open });
+  const eligible = (allCampaigns ?? []).filter((c) => c.id !== currentCampaignId && c.status !== "complete");
+  const noTargets = allCampaigns !== undefined && eligible.length === 0;
+  const selectedTarget = targetCampaignId || eligible[0]?.id || "";
 
   function closeModal() {
     setOpen(false);
     setError(null);
     setMode("add");
     setRemoveReason("");
+    setTargetCampaignId("");
   }
 
-  async function handleSubmit(e: SubmitEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setSubmitting(true);
-    setError(null);
-    let result: { ok: boolean; error?: string };
-    if (mode === "add") {
-      if (!targetCampaignId) {
-        setError("Pick a campaign to add the lead to.");
-        setSubmitting(false);
-        return;
+  const applyMutation = useMutation({
+    mutationFn: async () => {
+      let result: { ok: boolean; error?: string };
+      if (mode === "add") {
+        if (!selectedTarget) throw new Error("Pick a campaign to add the lead to.");
+        result = await addLeadToCampaign(leadId, selectedTarget);
+      } else {
+        result = await removeLeadFromCampaign(leadId, currentCampaignId, removeReason || undefined);
       }
-      result = await addLeadToCampaign(leadId, targetCampaignId);
-    } else {
-      result = await removeLeadFromCampaign(leadId, currentCampaignId, removeReason || undefined);
-    }
-    setSubmitting(false);
-    if (!result.ok) {
-      setError(result.error ?? "Update failed");
-      return;
-    }
-    closeModal();
-    if (mode === "remove" && onRemoved) {
-      onRemoved(leadId);
-    } else {
-      router.refresh();
-    }
-  }
+      if (!result.ok) throw new Error(result.error ?? "Update failed");
+    },
+    onSuccess: () => {
+      closeModal();
+      // Refetch this campaign's leads + counts (and the target campaign on add).
+      queryClient.invalidateQueries({ queryKey: keys.campaigns });
+    },
+    onError: (err) => {
+      setError(err instanceof Error ? err.message : "Update failed");
+    },
+  });
 
-  const noTargets = campaigns !== null && campaigns.length === 0;
+  function handleSubmit(e: SubmitEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setError(null);
+    applyMutation.mutate();
+  }
 
   return (
     <>
@@ -108,14 +101,14 @@ export default function LeadActions({ leadId, leadName, currentCampaignId, onRem
                   </p>
                   {mode === "add" && (
                     <select
-                      value={targetCampaignId}
+                      value={selectedTarget}
                       onChange={(e) => setTargetCampaignId(e.target.value)}
-                      disabled={campaigns === null || noTargets}
+                      disabled={isLoading || noTargets}
                       className="mt-2 w-full border border-grey-200 rounded-lg px-3 py-2 text-[13px] bg-white"
                     >
-                      {campaigns === null && <option>Loading…</option>}
+                      {isLoading && <option>Loading…</option>}
                       {noTargets && <option>No other eligible campaigns</option>}
-                      {campaigns?.map((c) => (
+                      {eligible.map((c) => (
                         <option key={c.id} value={c.id}>
                           {c.name} ({c.status})
                         </option>
@@ -167,10 +160,10 @@ export default function LeadActions({ leadId, leadName, currentCampaignId, onRem
                 </button>
                 <button
                   type="submit"
-                  disabled={submitting || (mode === "add" && (noTargets || campaigns === null))}
+                  disabled={applyMutation.isPending || (mode === "add" && (noTargets || isLoading))}
                   className="px-6 py-2 bg-primary text-white rounded-lg text-[13px] font-semibold disabled:opacity-60"
                 >
-                  {submitting ? "Applying…" : "Apply"}
+                  {applyMutation.isPending ? "Applying…" : "Apply"}
                 </button>
               </div>
             </form>

@@ -1,10 +1,18 @@
-import { getPromptTemplates, getTemplateEngagement } from "@/lib/api";
+import { dehydrate, HydrationBoundary } from "@tanstack/react-query";
+import { getQueryClient } from "@/lib/query-client";
+import { templatesOptions, templateEngagementOptions } from "@/lib/queries";
 import TemplatesClient from "./templates-client";
 
 export default async function TemplatesPage() {
-  const [templates, engagement] = await Promise.all([
-    getPromptTemplates(),
-    getTemplateEngagement(),
+  const queryClient = getQueryClient();
+  await Promise.all([
+    queryClient.prefetchQuery(templatesOptions()),
+    queryClient.prefetchQuery(templateEngagementOptions()),
   ]);
-  return <TemplatesClient initialTemplates={templates} initialEngagement={engagement} />;
+
+  return (
+    <HydrationBoundary state={dehydrate(queryClient)}>
+      <TemplatesClient />
+    </HydrationBoundary>
+  );
 }

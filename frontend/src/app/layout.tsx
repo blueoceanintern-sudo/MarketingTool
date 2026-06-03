@@ -4,6 +4,7 @@ import { ReactNode } from "react";
 import { Toaster } from "sonner";
 import AppSidebar from "@/components/sidebar";
 import ProfileHeader from "@/components/profile-header";
+import Providers from "@/components/providers";
 
 const dmSans = DM_Sans({
   subsets: ["latin"],
@@ -33,6 +34,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         />
       </head>
       <body className="bg-background text-foreground antialiased">
+        <Providers>
         <AppSidebar />
         <header className="fixed top-0 right-0 left-[220px] h-16 bg-white border-b border-grey-100 z-40 flex items-center justify-between px-4 sm:px-6 lg:px-10">
           <div className="flex items-center bg-grey-50 border border-grey-100 rounded-lg px-3 py-1.5 w-80 gap-2">
@@ -61,6 +63,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <main className="ml-[220px] pt-16 min-h-screen">
           {children}
         </main>
+        </Providers>
         <Toaster richColors position="top-right" closeButton />
       </body>
     </html>

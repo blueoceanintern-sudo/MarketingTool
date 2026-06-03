@@ -1,8 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Reply } from "@/lib/api";
 import { bookDemo } from "@/lib/api";
+import { keys } from "@/lib/queries";
 
 interface Props {
   reply: Reply;
@@ -13,26 +15,31 @@ interface Props {
 const REPS = ["Alice Tan", "Ben Okafor", "Clara Singh", "David Mur"];
 
 export default function BookDemoModal({ reply, onClose, onBooked }: Props) {
+  const queryClient = useQueryClient();
   const [assignee, setAssignee] = useState(REPS[0]);
-  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setSubmitting(true);
-    setError("");
-    const result = await bookDemo({
-      lead_id: reply.lead_id,
-      campaign_id: reply.campaign_id,
-      reply_id: reply.id,
-      assigned_to: assignee,
-    });
-    setSubmitting(false);
-    if (result) {
+  const bookMutation = useMutation({
+    mutationFn: async () => {
+      const result = await bookDemo({
+        lead_id: reply.lead_id,
+        campaign_id: reply.campaign_id,
+        reply_id: reply.id,
+        assigned_to: assignee,
+      });
+      if (!result) throw new Error("Failed to book demo. Please try again.");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: keys.demos });
       onBooked();
-    } else {
-      setError("Failed to book demo. Please try again.");
-    }
+    },
+    onError: (err) => setError(err instanceof Error ? err.message : "Failed to book demo. Please try again."),
+  });
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    bookMutation.mutate();
   }
 
   return (
@@ -104,10 +111,10 @@ export default function BookDemoModal({ reply, onClose, onBooked }: Props) {
             </button>
             <button
               type="submit"
-              disabled={submitting}
+              disabled={bookMutation.isPending}
               className="flex-1 py-2.5 bg-success text-white rounded-lg text-[14px] font-semibold shadow-[0_1px_3px_rgba(27,45,91,0.08)] disabled:opacity-60 active:scale-[0.98] transition-transform"
             >
-              {submitting ? "Booking…" : "Confirm Demo"}
+              {bookMutation.isPending ? "Booking…" : "Confirm Demo"}
             </button>
           </div>
         </form>

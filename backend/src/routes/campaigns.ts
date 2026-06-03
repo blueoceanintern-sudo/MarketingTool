@@ -5,6 +5,7 @@ import { eq, and, isNotNull, count } from "drizzle-orm";
 import { runScrapeJob } from "../services/scraping/runScrapeJob";
 import { generateDraftsForCampaign } from "../services/drafting/orchestrator";
 import { discoverSources, getDirectoryConfig } from "../services/sourceRegistry";
+import { emitJobEvent } from "../services/events";
 
 type CampaignStatus = "draft" | "active" | "paused" | "complete";
 
@@ -321,8 +322,11 @@ campaignsRouter.post("/:id/scrape", async (c) => {
     .returning();
 
   const jobId = job!.id;
-  void runScrapeJob(jobId, campaign.id).catch((err) => {
+  const scrapeCampaignId = campaign.id;
+  void runScrapeJob(jobId, scrapeCampaignId).catch((err) => {
     console.error(`[scrape] job ${jobId} failed:`, err);
+    // runScrapeJob emits on its own terminal paths; this covers an unexpected throw.
+    void emitJobEvent({ kind: "scrape", campaignId: scrapeCampaignId, status: "failed" });
   });
 
   return c.json({ scrape_job_id: jobId, status: "queued" }, 201);
@@ -347,16 +351,19 @@ campaignsRouter.post("/:id/drafts/generate", async (c) => {
   // pulls its description / pain_points / call_to_action straight from the
   // row inside the orchestrator, so emails are anchored on this campaign's
   // goal rather than a generic role-based message.
-  void generateDraftsForCampaign(campaign.id)
+  const draftCampaignId = campaign.id;
+  void generateDraftsForCampaign(draftCampaignId)
     .then((result) => {
       console.log(
-        `[drafting] campaign ${campaign.id}: generated=${result.generated}` +
+        `[drafting] campaign ${draftCampaignId}: generated=${result.generated}` +
           (result.skipped_no_eligible ? " (no eligible leads)" : "") +
           (result.errors.length ? ` errors=${result.errors.join("; ")}` : ""),
       );
+      void emitJobEvent({ kind: "drafts", campaignId: draftCampaignId, generated: result.generated });
     })
     .catch((err) => {
-      console.error(`[drafting] campaign ${campaign.id} failed:`, err);
+      console.error(`[drafting] campaign ${draftCampaignId} failed:`, err);
+      void emitJobEvent({ kind: "drafts", campaignId: draftCampaignId, generated: 0 });
     });
 
   return c.json({ message: "Draft generation queued", campaign_id: campaign.id }, 202);
