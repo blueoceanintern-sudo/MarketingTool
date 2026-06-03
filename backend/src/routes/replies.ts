@@ -3,7 +3,7 @@ import PostalMime from "postal-mime";
 import { createVerify } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { db } from "../db";
-import { replies, emailEvents, leads, companies, emailDrafts, campaigns, suppressionList, followUps, demos } from "../db/schema";
+import { replies, emailEvents, leads, companies, emailDrafts, campaigns, suppressionList, followUps, demos, riskFlags } from "../db/schema";
 import { count, eq, and, isNull, inArray, asc } from "drizzle-orm";
 
 // ── SNS types ─────────────────────────────────────────────────────────────────
@@ -91,7 +91,7 @@ const anthropic = new Anthropic();
 
 async function classifyReply(body: string): Promise<{ category: string; return_date: string | null }> {
   const currentDate = new Date().toISOString().split("T")[0];
-  const systemPrompt = `You are classifying replies to cold marketing emails. Your job is to categorise the reply into exactly one of four classes and extract any return date if present.
+  const systemPrompt = `You are classifying replies to cold marketing emails. Your job is to categorise the reply into exactly one of five classes and extract any return date if present.
 
 Current date: ${currentDate}
 
@@ -107,6 +107,10 @@ Note: polite phrasing does not override a clear rejection. "Thanks, but we're no
 out_of_office — the reply is an automated out-of-office or vacation message, not a human response.
 Examples: "I am out of the office until...", "I will be back on...", "I'm on leave", "Auto-reply: away until..."
 
+hostile — the reply contains a legal threat, cease-and-desist language, explicit accusations of harassment, threats of regulatory complaint, or demands for legal action.
+Examples: "I will report you to the relevant authorities", "This is harassment — I am forwarding this to our legal team", "Cease and desist immediately", "Stop contacting me or I will file a complaint", "You are violating GDPR/PDPA/CAN-SPAM — our lawyers will be in touch"
+Note: hostile takes priority over negative even when both signals are present. A legal threat is always hostile regardless of polite framing.
+
 neutral — the reply does not clearly fit any of the above. Includes replies that are ambiguous, challenging, or acknowledge receipt without indicating interest or disinterest.
 Examples: "Who are you?", "How did you get my email?", "What company is this?", "Who referred you?", "OK", "Thanks", "Noted", "Got it"
 Note: "Thanks" and similar pleasantries without any engagement signal are neutral, not positive.
@@ -114,12 +118,14 @@ Note: "Thanks" and similar pleasantries without any engagement signal are neutra
 ## Priority order
 
 When a reply contains multiple signals, apply this priority:
-1. negative — always wins if present
-2. out_of_office — wins over positive and neutral
-3. positive
-4. neutral
+1. hostile — always wins if present
+2. negative — wins over out_of_office, positive, and neutral
+3. out_of_office — wins over positive and neutral
+4. positive
+5. neutral
 
 Example: "I'm out until June 20. Not interested." → negative
+Example: "Stop emailing me or I'll report this to the authorities." → hostile
 Example: "Out of office until July 1. Please reach out to my colleague instead." → out_of_office
 Example: "Thanks, but we're not interested." → negative
 Example: "Please send pricing." → positive
@@ -133,7 +139,7 @@ If the class is out_of_office, extract the return date if one is explicitly stat
 1. Classify the reply into exactly one class, even if multiple signals are present. Follow the priority order above.
 2. Ignore all quoted original email text below any reply divider (e.g. "On [date] wrote:", "-----Original Message-----"). Classify only the new reply content.
 3. Unsubscribe requests, delivery failures, and mailbox errors are always negative regardless of tone.
-4. Polite tone does not override clear rejection intent.
+4. Polite tone does not override a legal threat — classify as hostile if legal language is present.
 5. Requests for pricing, details, or further information are always positive regardless of brevity.
 6. When in doubt, classify as neutral.
 
@@ -142,7 +148,7 @@ If the class is out_of_office, extract the return date if one is explicitly stat
 Return only valid JSON. No explanation, no preamble, no markdown fences.
 
 {
-  "sentiment": "positive" | "negative" | "out_of_office" | "neutral",
+  "sentiment": "positive" | "negative" | "out_of_office" | "hostile" | "neutral",
   "return_date": "YYYY-MM-DD" | null
 }`;
 
@@ -165,9 +171,11 @@ Return only valid JSON. No explanation, no preamble, no markdown fences.
   }
 }
 
-function categoryToSentiment(category: string): "positive" | "negative" | "neutral" {
+function categoryToSentiment(category: string): "positive" | "negative" | "neutral" | "out_of_office" | "hostile" {
   if (category === "positive") return "positive";
   if (category === "negative") return "negative";
+  if (category === "out_of_office") return "out_of_office";
+  if (category === "hostile") return "hostile";
   return "neutral";
 }
 
@@ -201,7 +209,7 @@ function formatReply(row: {
     category:      row.category,
     received_at:   row.receivedAt.toISOString(),
     resolved_at:   row.resolvedAt?.toISOString() ?? null,
-    is_flagged:    (row.category === "positive" || row.category === "neutral") && row.resolvedAt === null,
+    is_flagged:    (row.category === "positive" || row.category === "neutral" || row.category === "hostile") && row.resolvedAt === null,
   };
 }
 
@@ -439,6 +447,12 @@ repliesRouter.post("/webhooks/ses/reply", async (c) => {
   if (campaignId) {
     if (category === "positive") {
       await db.insert(demos).values({ leadId: lead.id, campaignId, replyId: reply.id });
+      await db
+        .delete(followUps)
+        .where(and(eq(followUps.leadId, lead.id), eq(followUps.campaignId, campaignId), isNull(followUps.sentAt)));
+    } else if (category === "hostile") {
+      await db.insert(riskFlags).values({ leadId: lead.id, flagType: "hostile_interaction" });
+      await db.insert(suppressionList).values({ email: fromEmail, campaignId, reason: "hostile" }).onConflictDoNothing();
       await db
         .delete(followUps)
         .where(and(eq(followUps.leadId, lead.id), eq(followUps.campaignId, campaignId), isNull(followUps.sentAt)));
