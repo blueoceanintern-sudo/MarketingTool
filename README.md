@@ -322,6 +322,24 @@ bun run db:migrate           # apply any new Drizzle migrations
 # restart your process manager (systemd / pm2 / etc.)
 ```
 
+### Process separation (production)
+
+In production the HTTP server and background workers must run as **separate processes** so their Postgres connection pools don't compete and cron activity can't delay HTTP responses.
+
+`src/index.ts` currently imports `"./workers"` for dev convenience. Before deploying, remove that import and manage two processes with your process manager:
+
+```bash
+# Process 1 — HTTP server
+bun run src/index.ts
+
+# Process 2 — background workers (cron jobs)
+bun run workers
+```
+
+Both processes will open independent Postgres connection pools. If Process 2 crashes, the HTTP server keeps serving normally, and vice versa.
+
+> **TODO before first production deploy:** remove `import "./workers"` from `src/index.ts`.
+
 ### Email domain hardening (one-time, before first SES send)
 
 Configure SPF + DKIM + DMARC on the sending domain in the AWS SES console
@@ -361,4 +379,4 @@ All routes prefixed `/api/v1`.
 - Suppression list checked before every send
 - One-click unsubscribe in every email
 - Market legal flags: SG → PDPA, AU → Privacy Act, US → CAN-SPAM
-- No re-contact within 90 days of prior outreach
+- Suppression list checked before every send — suppressed leads are never re-contacted

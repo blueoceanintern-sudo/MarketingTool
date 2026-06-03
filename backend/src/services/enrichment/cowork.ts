@@ -10,40 +10,79 @@ import type { EnrichmentInput, EnrichmentProvider, ProviderResult } from "./type
 
 const MIN_INTERVAL_MS = 2_000;
 const DEFAULT_DAILY_CAP = 100;
+const AGENT_TIMEOUT_MS = 60_000;
 
 let lastRunAt = 0;
 let dailyCount = 0;
 let dailyWindowStart = startOfUtcDay();
 
-const SYSTEM_PROMPT = `You are a B2B research agent. Your job is to extract publicly listed
-institution and contact information from official websites and public registries.
+const SYSTEM_PROMPT = `You are a B2B lead enrichment agent.
 
-Rules:
-- Only use information you can directly read on the page. Never fabricate fields.
-- Prefer official sources: the institution's own .edu / .gov / corporate site.
-- Never collect personal social profiles, private data, or anything behind login.
-- When you have enough information OR no further progress is possible, call the "finish" tool.
-- The "finish" result must match this exact shape:
-  {
-    "institution": {
-      "name": string,
-      "type": string,           // e.g. "private_school", "university", "training_provider", "unknown"
-      "registration_id": string | null,
-      "size": "small" | "medium" | "large" | "unknown",
-      "website": string | null,
-      "region": "SG" | "AU" | "US"
-    },
-    "contact": {
-      "full_name": string | null,
-      "first_name": string | null,
-      "role": string | null,
-      "email": string | null,
-      "email_status": "verified" | "pattern_guessed" | "not_found"
-    }
-  }
-- email_status = "verified" only when the email is explicitly listed on an official page.
-- email_status = "pattern_guessed" when you inferred it from a domain pattern.
-- email_status = "not_found" when no email could be located.`;
+Given a partial lead record, fill only fields that are null, empty, or missing.
+
+PROCESS
+
+1. Identify missing fields.
+2. Use provided company information and public sources to fill them.
+3. Preserve all existing values exactly.
+4. Return all valid contacts found.
+5. Stop when no reliable information remains.
+
+ALLOWED SOURCES
+
+* Company website
+* Team/About pages
+* Contact pages
+* Staff directories
+* Press releases
+* LinkedIn profiles
+* LinkedIn company pages
+* Professional biographies
+
+RULES
+
+* Never overwrite existing values.
+* Never fabricate information.
+* Only record information explicitly found in a source.
+* Leave unresolved fields as null.
+* Accuracy > completeness.
+
+COMPANY MATCHING
+
+Before enriching a contact, verify they belong to the target company.
+
+Accept a contact only if at least one is true:
+
+* Listed on the company website.
+* Current employment shown on LinkedIn.
+* Email domain matches the company domain.
+* Biography explicitly links them to the company.
+* Multiple sources confirm affiliation.
+
+Do NOT match based solely on:
+
+* Name similarity.
+* Company name similarity.
+* Search result ranking.
+
+If multiple companies share the same or a similar name:
+
+* Verify using company domain, LinkedIn company page, location, or industry.
+* Reject ambiguous matches.
+
+VALIDATION
+
+* Prefer the most recent information available.
+* Verify title, company, and contact details are consistent across sources.
+* Ignore outdated employment information.
+
+EMAILS
+
+* Record only verified emails.
+* Generate pattern_guessed emails only if a real email from the same domain establishes the format.
+
+When you have enough information OR no further progress is possible, call the "finish" tool.
+The "finish" result must use the same JSON schema as the input record, with missing fields filled where confidently verified.`;
 
 interface AgentResult {
   institution?: Partial<{
@@ -73,11 +112,12 @@ export const coworkProvider: EnrichmentProvider = {
     const driver = await launchBrowser();
     try {
       const task = buildTask(input);
-      const { result } = await runBrowserAgent<AgentResult>({
-        driver,
-        systemPrompt: SYSTEM_PROMPT,
-        task,
-      });
+      const { result } = await Promise.race([
+        runBrowserAgent<AgentResult>({ driver, systemPrompt: SYSTEM_PROMPT, task }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("cowork browser agent timed out")), AGENT_TIMEOUT_MS)
+        ),
+      ]);
       if (!result) return null;
 
       return {
@@ -121,19 +161,37 @@ function startOfUtcDay(): number {
   return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
 }
 
-function buildTask(input: EnrichmentInput): string {
+function buildRecord(input: EnrichmentInput): object {
   const { seed, market } = input;
-  return `Find institution and contact details for this organisation.
+  return {
+    institution: {
+      name: seed.companyName ?? null,
+      type: null,
+      registration_id: null,
+      size: null,
+      website: seed.companyWebsite ?? null,
+      region: market,
+    },
+    contact: {
+      full_name: [seed.firstName, seed.lastName].filter(Boolean).join(" ") || null,
+      first_name: seed.firstName ?? null,
+      role: seed.role ?? null,
+      email: seed.email ?? null,
+      email_status: seed.email ? "pattern_guessed" : null,
+    },
+    meta: {
+      industry: seed.industry ?? null,
+      market,
+    },
+  };
+}
 
-Target:
-- Company / institution name: ${seed.companyName}
-- Industry: ${seed.industry ?? "unknown"}
-- Market / region: ${market}
-- Existing contact name: ${[seed.firstName, seed.lastName].filter(Boolean).join(" ") || "unknown"}
-- Existing role: ${seed.role ?? "unknown"}
-- Existing email: ${seed.email ?? "unknown"}
-- Known website: ${seed.companyWebsite ?? "unknown"}
-
-Start by navigating to the most likely official site or public registry for this institution in ${market}.
-Once you have enough fields, call "finish" with the structured result.`;
+function buildTask(input: EnrichmentInput): string {
+  const record = buildRecord(input);
+  const websiteHint = input.seed.companyWebsite
+    ? `Start by navigating to: ${input.seed.companyWebsite}\n\n`
+    : "";
+  const prompt = `${websiteHint}INPUT:\n${JSON.stringify(record, null, 2)}\n\nOUTPUT:\nReturn raw JSON only using the same schema, with missing fields filled where confidently verified.`;
+  console.log(`[cowork] built task for lead ${input.leadId}`);
+  return prompt;
 }

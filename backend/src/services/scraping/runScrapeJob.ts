@@ -67,6 +67,7 @@ async function persistScrapedLead(
         industry: "Unknown",
         companySize: "small",
         location: campaignGeo,
+        source: scraped.website,
       })
       .returning();
     company = inserted!;
