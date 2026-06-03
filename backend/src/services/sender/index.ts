@@ -1,7 +1,7 @@
 import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
 import { db } from "../../db";
 import { suppressionList, emailDrafts, emailEvents, campaigns, leads } from "../../db/schema";
-import { eq, and, isNotNull, count, gte } from "drizzle-orm";
+import { eq, and, isNotNull, count, gte, min } from "drizzle-orm";
 
 import { buildEmailHtml } from "../../templates/outreachEmail";
 
@@ -47,16 +47,38 @@ async function getTodayCountFromDB(): Promise<number> {
   return Number(row?.total ?? 0);
 }
 
-function getDailyCap(totalSent: number): number {
-  if (totalSent < 50) return 50;
-  if (totalSent < 250) return 200;
-  if (totalSent < 750) return 500;
+// Warm-up ramp is calendar-week based, counting from the first successful send.
+// Week 1 = days 0–6, week 2 = days 7–13, etc. The warmup-tracker worker reports
+// the current week/cap nightly; the sender enforces it via getDailyCap(), so the
+// week-based ramp has a single source of truth.
+async function getFirstSentAt(): Promise<Date | null> {
+  const [row] = await db.select({ first: min(emailEvents.sentAt) }).from(emailEvents).where(isNotNull(emailEvents.sentAt));
+  const first = row?.first;
+  if (!first) return null;
+  return first instanceof Date ? first : new Date(first);
+}
+
+export async function getWarmupWeek(): Promise<number> {
+  const first = await getFirstSentAt();
+  if (!first) return 1;
+  const weeksElapsed = Math.floor((Date.now() - first.getTime()) / (7 * 24 * 60 * 60 * 1000));
+  return weeksElapsed + 1;
+}
+
+function dailyCapForWeek(week: number): number {
+  if (week <= 1) return 50;
+  if (week === 2) return 200;
+  if (week === 3) return 500;
   return 1000;
+}
+
+export async function getDailyCap(): Promise<number> {
+  return dailyCapForWeek(await getWarmupWeek());
 }
 
 export async function shouldQueueForReview(confidenceScore: number): Promise<boolean> {
   const totalSent = await getTotalSentFromDB();
-  if (totalSent < 500) return true;
+  if (totalSent < 50) return true;
   return confidenceScore < 70;
 }
 
@@ -102,8 +124,8 @@ export async function sendDraft(payload: SendPayload): Promise<SendResult> {
 
   if (!isVerified) return { draftId, status: "blocked", reason: "unverified_email" };
 
-  const [totalSent, todayCount] = await Promise.all([getTotalSentFromDB(), getTodayCountFromDB()]);
-  if (todayCount >= getDailyCap(totalSent)) {
+  const [dailyCap, todayCount] = await Promise.all([getDailyCap(), getTodayCountFromDB()]);
+  if (todayCount >= dailyCap) {
     return { draftId, status: "queued", reason: "daily_cap_reached" };
   }
 
@@ -130,12 +152,26 @@ export async function sendDraft(payload: SendPayload): Promise<SendResult> {
   }
 
   const fromAddress = process.env.AWS_SES_FROM_ADDRESS;
-  if (!fromAddress) throw new Error("AWS_SES_FROM_ADDRESS is required");
+  if (!fromAddress) return { draftId, status: "blocked", reason: "ses_not_configured" };
 
   const apiBase = getApiBase();
   const unsubscribeUrl = `${apiBase}/unsubscribe?id=${leadId}&campaign=${campaignId}`;
   const textBody = `${draft.body}\n\nTo unsubscribe: ${unsubscribeUrl}`;
   const htmlBody = buildEmailHtml(draft.body, leadId, apiBase, campaignId);
+
+  // SES_DRY_RUN=true skips the actual SES call — use this to test the full
+  // pipeline locally without AWS credentials.
+  if (process.env.SES_DRY_RUN === "true") {
+    const fakeMessageId = `dry-run-${Date.now()}`;
+    const now = new Date();
+    await Promise.all([
+      db.insert(emailEvents).values({ draftId, leadId, sesMessageId: `<${fakeMessageId}@dry-run.local>`, sentAt: now }),
+      db.update(emailDrafts).set({ status: "sent" }).where(eq(emailDrafts.id, draftId)),
+      db.update(leads).set({ lastContactedAt: now }).where(eq(leads.id, leadId)),
+    ]);
+    console.log(`[sender:dry-run] draft ${draftId} → ${toEmail} | subject: "${draft.subject}"`);
+    return { draftId, status: "sent", messageId: fakeMessageId };
+  }
 
   const command = new SendEmailCommand({
     Source: fromAddress,
@@ -151,7 +187,6 @@ export async function sendDraft(payload: SendPayload): Promise<SendResult> {
 
   const response = await getSesClient().send(command);
   const messageId = response.MessageId;
-  // Store as full Message-ID header format so In-Reply-To matching works directly.
   const sesMessageId = messageId ? `<${messageId}@email.amazonses.com>` : null;
 
   const now = new Date();
@@ -188,7 +223,7 @@ export async function sendFollowUpEmail(payload: FollowUpPayload): Promise<SendR
   const [suppressed] = await db
     .select({ id: suppressionList.id })
     .from(suppressionList)
-    .where(eq(suppressionList.email, toEmail))
+    .where(and(eq(suppressionList.email, toEmail), eq(suppressionList.campaignId, campaignId)))
     .limit(1);
   if (suppressed) return { draftId: originalDraftId, status: "blocked", reason: "suppression_list" };
 
@@ -201,8 +236,8 @@ export async function sendFollowUpEmail(payload: FollowUpPayload): Promise<SendR
 
   if (!isVerified) return { draftId: originalDraftId, status: "blocked", reason: "unverified_email" };
 
-  const [totalSent, todayCount] = await Promise.all([getTotalSentFromDB(), getTodayCountFromDB()]);
-  if (todayCount >= getDailyCap(totalSent)) {
+  const [dailyCap, todayCount] = await Promise.all([getDailyCap(), getTodayCountFromDB()]);
+  if (todayCount >= dailyCap) {
     return { draftId: originalDraftId, status: "queued", reason: "daily_cap_reached" };
   }
 
@@ -217,12 +252,23 @@ export async function sendFollowUpEmail(payload: FollowUpPayload): Promise<SendR
   }
 
   const fromAddress = process.env.AWS_SES_FROM_ADDRESS;
-  if (!fromAddress) throw new Error("AWS_SES_FROM_ADDRESS is required");
+  if (!fromAddress) return { draftId: originalDraftId, status: "blocked", reason: "ses_not_configured" };
 
   const apiBase = getApiBase();
-  const unsubscribeUrl = `${apiBase}/unsubscribe?id=${leadId}`;
+  const unsubscribeUrl = `${apiBase}/unsubscribe?id=${leadId}&campaign=${campaignId}`;
   const textBody = `${body}\n\nTo unsubscribe: ${unsubscribeUrl}`;
-  const htmlBody = buildEmailHtml(body, leadId, apiBase);
+  const htmlBody = buildEmailHtml(body, leadId, apiBase, campaignId);
+
+  if (process.env.SES_DRY_RUN === "true") {
+    const fakeMessageId = `dry-run-${Date.now()}`;
+    const now = new Date();
+    await Promise.all([
+      db.insert(emailEvents).values({ draftId: originalDraftId, leadId, sesMessageId: `<${fakeMessageId}@dry-run.local>`, sentAt: now }),
+      db.update(leads).set({ lastContactedAt: now }).where(eq(leads.id, leadId)),
+    ]);
+    console.log(`[sender:dry-run] follow-up → ${toEmail} | subject: "${subject}"`);
+    return { draftId: originalDraftId, status: "sent", messageId: fakeMessageId };
+  }
 
   const command = new SendEmailCommand({
     Source: fromAddress,

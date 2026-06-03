@@ -106,7 +106,7 @@ adminRouter.post("/registry/sources/import", async (c) => {
     return c.json({ error: "CSV must have a header row and at least one data row" }, 400);
   }
 
-  const headers = parseCSVLine(lines[0]).map((h) => h.trim().toLowerCase().replace(/^"|"$/g, ""));
+  const headers = parseCSVLine(lines[0]!).map((h) => h.trim().toLowerCase().replace(/^"|"$/g, ""));
   const requiredCols = ["name", "vertical", "geo", "url", "scraper_type"];
   const missingCols = requiredCols.filter((col) => !headers.includes(col));
   if (missingCols.length > 0) {
@@ -118,11 +118,15 @@ adminRouter.post("/registry/sources/import", async (c) => {
 
   for (let i = 1; i < lines.length; i++) {
     const rowNum = i + 1;
-    const values = parseCSVLine(lines[i]);
+    const values = parseCSVLine(lines[i]!);
     const record: Record<string, string> = {};
     headers.forEach((h, idx) => { record[h] = (values[idx] ?? "").trim().replace(/^"|"$/g, ""); });
 
-    const { name, vertical, geo, url, scraper_type } = record;
+    const name = record.name ?? "";
+    const vertical = record.vertical ?? "";
+    const geo = record.geo ?? "";
+    const url = record.url ?? "";
+    const scraper_type = record.scraper_type ?? "";
     const missingFields = ["name", "vertical", "geo", "url", "scraper_type", "legal_flag", "active"].filter((f) => !record[f] && record[f] !== "0" && record[f] !== "false");
     if (missingFields.length > 0) {
       errors.push({ row: rowNum, reason: `Missing required fields: ${missingFields.join(", ")}` });

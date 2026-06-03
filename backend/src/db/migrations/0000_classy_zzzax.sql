@@ -8,7 +8,7 @@ CREATE TYPE "public"."flag_type" AS ENUM('duplicate', 'unverified_email', 'missi
 CREATE TYPE "public"."lead_status" AS ENUM('new', 'contacted', 'replied', 'converted', 'suppressed');--> statement-breakpoint
 CREATE TYPE "public"."scrape_job_status" AS ENUM('queued', 'running', 'complete', 'failed', 'blocked');--> statement-breakpoint
 CREATE TYPE "public"."scraper_type" AS ENUM('crawl4ai', 'cheerio', 'api');--> statement-breakpoint
-CREATE TYPE "public"."sentiment" AS ENUM('positive', 'negative', 'neutral');--> statement-breakpoint
+CREATE TYPE "public"."sentiment" AS ENUM('positive', 'negative', 'neutral', 'out_of_office');--> statement-breakpoint
 CREATE TYPE "public"."suppression_reason" AS ENUM('unsubscribed', 'spam_complaint', 'hostile', 'manual');--> statement-breakpoint
 CREATE TABLE "audit_log" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
@@ -83,6 +83,7 @@ CREATE TABLE "email_events" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"draft_id" uuid NOT NULL,
 	"lead_id" uuid NOT NULL,
+	"ses_message_id" text,
 	"sent_at" timestamp,
 	"opened_at" timestamp,
 	"replied_at" timestamp,
@@ -111,7 +112,9 @@ CREATE TABLE "follow_ups" (
 	"attempt_number" integer NOT NULL,
 	"scheduled_at" timestamp NOT NULL,
 	"sent_at" timestamp,
-	"draft_id" uuid
+	"draft_id" uuid,
+	"subject" text,
+	"body" text
 );
 --> statement-breakpoint
 CREATE TABLE "leads" (

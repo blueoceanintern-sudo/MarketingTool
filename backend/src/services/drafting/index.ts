@@ -241,9 +241,12 @@ export async function generateDraftsBatch(requests: DraftRequest[]): Promise<Dra
 
   const client = new Anthropic({ apiKey });
 
+  // Batch API custom_id has a 64-character limit. Three UUIDs joined by colons
+  // would be 110 chars, so we use the request index instead and look up the
+  // original lead/campaign data by position when parsing results.
   const batch = await client.messages.batches.create({
-    requests: requests.map((req) => ({
-      custom_id: `${req.leadId}:${req.campaignId}:${template.id}`,
+    requests: requests.map((req, i) => ({
+      custom_id: String(i),
       params: {
         model: "claude-haiku-4-5",
         max_tokens: 400,
@@ -253,20 +256,32 @@ export async function generateDraftsBatch(requests: DraftRequest[]): Promise<Dra
     })),
   });
 
+  console.log(`[drafting] batch ${batch.id}: submitted ${requests.length} request(s), polling...`);
   let status = batch.processing_status;
   while (status !== "ended") {
     await new Promise((r) => setTimeout(r, 5000));
     const updated = await client.messages.batches.retrieve(batch.id);
     status = updated.processing_status;
+    if (status !== "ended") console.log(`[drafting] batch ${batch.id}: status=${status}, waiting...`);
   }
+
+  console.log(`[drafting] batch ${batch.id}: complete`);
 
   const results: DraftResult[] = [];
 
   for await (const result of await client.messages.batches.results(batch.id)) {
-    const [leadId, campaignId, templateId] = result.custom_id.split(":") as [string, string, string];
+    const idx = parseInt(result.custom_id, 10);
+    const req = requests[idx];
+
+    if (!req) {
+      console.error(`[drafting] batch result index ${idx} out of range — skipping`);
+      continue;
+    }
+
+    const { leadId, campaignId } = req;
 
     if (result.result.type !== "succeeded") {
-      console.error(`Draft failed for ${result.custom_id}:`, result.result);
+      console.error(`Draft failed for lead ${leadId}:`, result.result);
       continue;
     }
 
@@ -275,7 +290,7 @@ export async function generateDraftsBatch(requests: DraftRequest[]): Promise<Dra
 
     try {
       const { subject, body, confidenceScore } = parseResponse(text.text);
-      results.push({ leadId, campaignId, templateId, subject, body, confidenceScore });
+      results.push({ leadId, campaignId, templateId: template.id, subject, body, confidenceScore });
     } catch (err) {
       console.error(`Failed to parse draft for ${result.custom_id}:`, err);
     }
