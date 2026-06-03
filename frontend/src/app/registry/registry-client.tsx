@@ -1,18 +1,22 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   createRegistrySource,
   importRegistrySources,
   triggerDiscovery,
-  type ActiveCombination,
-  type DirectoryConfig,
   type RegistryImportResult,
   type ScraperType,
-  type SourceRegistry,
 } from "@/lib/api";
+import {
+  registrySourcesOptions,
+  directoryConfigsOptions,
+  activeCombinationsOptions,
+  keys,
+} from "@/lib/queries";
+import { useJobEvents } from "@/lib/job-events";
 
 const scraperTypeLabel: Record<ScraperType, string> = {
   cheerio: "Cheerio (static HTML)",
@@ -39,24 +43,18 @@ MOE Schools Directory,education,SG,https://moe.gov.sg/schools,cheerio,true,true
 ACECQA Provider List,childcare,AU,https://www.acecqa.gov.au/providers,crawl4ai,false,true
 US Daycare Registry,childcare,US,https://childcare.gov/index/registry,cheerio,false,false`;
 
-interface Props {
-  initialSources: SourceRegistry[];
-  directoryConfigs: DirectoryConfig[];
-  activeCombinations: ActiveCombination[];
-}
-
-export default function RegistryClient({ initialSources, directoryConfigs, activeCombinations }: Props) {
-  const router = useRouter();
-  const [sources, setSources] = useState(initialSources);
+export default function RegistryClient() {
+  const queryClient = useQueryClient();
+  const { data: sources = [] } = useQuery(registrySourcesOptions());
+  const { data: directoryConfigs = [] } = useQuery(directoryConfigsOptions());
+  const { data: activeCombinations = [] } = useQuery(activeCombinationsOptions());
   const [refreshing, setRefreshing] = useState<string | null>(null);
   const [geoFilter, setGeoFilter] = useState<string>("all");
   const [verticalFilter, setVerticalFilter] = useState<string>("all");
   const [activeOnly, setActiveOnly] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-  const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<RegistryImportResult | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -68,6 +66,40 @@ export default function RegistryClient({ initialSources, directoryConfigs, activ
     scraper_type: "cheerio" as ScraperType,
     legal_flag: false,
     active: true,
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async () => {
+      const { source, error } = await createRegistrySource({
+        name: form.name.trim(),
+        vertical: form.vertical.trim(),
+        geo: form.geo.trim().toUpperCase(),
+        url: form.url.trim(),
+        scraper_type: form.scraper_type,
+        legal_flag: form.legal_flag,
+        active: form.active,
+      });
+      if (error || !source) throw new Error(error ?? "Failed to add source");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: keys.registry });
+      setShowAddModal(false);
+      setForm({ name: "", vertical: "", geo: "SG", url: "", scraper_type: "cheerio", legal_flag: false, active: true });
+    },
+    onError: (err) => setFormError(err instanceof Error ? err.message : "Failed to add source"),
+  });
+
+  const importMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const { result, error } = await importRegistrySources(file);
+      if (error || !result) throw new Error(error ?? "Import failed");
+      return result;
+    },
+    onSuccess: (result) => {
+      setImportResult(result);
+      if (result.imported > 0) queryClient.invalidateQueries({ queryKey: keys.registry });
+    },
+    onError: (err) => setImportError(err instanceof Error ? err.message : "Import failed"),
   });
 
   const geos = useMemo(() => Array.from(new Set(sources.map((s) => s.geo))).sort(), [sources]);
@@ -82,42 +114,20 @@ export default function RegistryClient({ initialSources, directoryConfigs, activ
     });
   }, [sources, geoFilter, verticalFilter, activeOnly]);
 
-  async function handleCreate(e: React.FormEvent) {
+  function handleCreate(e: React.FormEvent) {
     e.preventDefault();
-    setSubmitting(true);
     setFormError(null);
-    const { source, error } = await createRegistrySource({
-      name: form.name.trim(),
-      vertical: form.vertical.trim(),
-      geo: form.geo.trim().toUpperCase(),
-      url: form.url.trim(),
-      scraper_type: form.scraper_type,
-      legal_flag: form.legal_flag,
-      active: form.active,
-    });
-    setSubmitting(false);
-    if (error || !source) { setFormError(error ?? "Failed to add source"); return; }
-    setSources((prev) => [source, ...prev]);
-    setShowAddModal(false);
-    setForm({ name: "", vertical: "", geo: "SG", url: "", scraper_type: "cheerio", legal_flag: false, active: true });
+    createMutation.mutate();
   }
 
-  async function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
+  function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     setShowImportModal(false);
-    setImporting(true);
     setImportResult(null);
     setImportError(null);
-    const { result, error } = await importRegistrySources(file);
-    setImporting(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
-    if (error || !result) { setImportError(error ?? "Import failed"); return; }
-    setImportResult(result);
-    if (result.imported > 0) {
-      const fresh = await import("@/lib/api").then((m) => m.getRegistrySources());
-      setSources(fresh);
-    }
+    importMutation.mutate(file);
   }
 
   function downloadTemplate() {
@@ -128,13 +138,23 @@ export default function RegistryClient({ initialSources, directoryConfigs, activ
     a.click();
   }
 
+  // Discovery is an async backend job. When it finishes it emits an SSE event
+  // that (a) invalidates the registry queries globally and (b) lets us clear the
+  // "Refreshing…" state here. Only one refresh runs at a time (cooldown), so any
+  // discovery event clears it.
+  useJobEvents((event) => {
+    if (event.kind === "discovery") {
+      setRefreshing(null);
+    }
+  });
+
   async function handleRefresh(vertical: string, geo: string, domains: string[]) {
     const key = `${vertical}:${geo}`;
     setRefreshing(key);
     const result = await triggerDiscovery(vertical, geo);
-    setRefreshing(null);
 
     if (!result.ok) {
+      setRefreshing(null);
       if (result.retryAfter) {
         toast.warning(result.error ?? "Rate-limited", {
           description: `Try again in ${result.retryAfter}s.`,
@@ -145,13 +165,11 @@ export default function RegistryClient({ initialSources, directoryConfigs, activ
       return;
     }
 
+    // Leave "Refreshing…" on until the discovery completion event arrives.
     toast.info(result.message ?? `Discovering sources for ${key}`, {
       description: domains.length ? `Searching: ${domains.join(", ")}` : undefined,
       duration: 8000,
     });
-
-    // Re-fetch sources after ~10s so the table reflects new rows
-    setTimeout(() => router.refresh(), 10_000);
   }
 
   // Coverage rows shown in the "Auto-discovery coverage" card:
@@ -191,11 +209,11 @@ export default function RegistryClient({ initialSources, directoryConfigs, activ
           <button
             type="button"
             onClick={() => setShowImportModal(true)}
-            disabled={importing}
+            disabled={importMutation.isPending}
             className="flex items-center gap-2 px-5 py-2 border border-grey-200 bg-white text-primary rounded-lg text-[14px] font-semibold hover:bg-grey-50 disabled:opacity-50"
           >
             <span className="material-symbols-outlined text-[20px]">upload_file</span>
-            {importing ? "Importing…" : "Import CSV"}
+            {importMutation.isPending ? "Importing…" : "Import CSV"}
           </button>
           <button
             type="button"
@@ -551,8 +569,8 @@ export default function RegistryClient({ initialSources, directoryConfigs, activ
                 <button type="button" onClick={() => setShowAddModal(false)} className="px-4 py-2 border rounded-lg">
                   Cancel
                 </button>
-                <button type="submit" disabled={submitting} className="px-6 py-2 bg-primary text-white rounded-lg">
-                  {submitting ? "Adding…" : "Add Source"}
+                <button type="submit" disabled={createMutation.isPending} className="px-6 py-2 bg-primary text-white rounded-lg">
+                  {createMutation.isPending ? "Adding…" : "Add Source"}
                 </button>
               </div>
             </form>

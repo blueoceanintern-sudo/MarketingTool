@@ -1,56 +1,54 @@
 "use client";
 
 import { useMemo, useState, type SubmitEvent } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   createPromptTemplate,
   deletePromptTemplate,
   updatePromptTemplate,
   type PromptTemplate,
-  type TemplateEngagement,
 } from "@/lib/api";
-
-interface Props {
-  initialTemplates: PromptTemplate[];
-  initialEngagement: TemplateEngagement[];
-}
+import { templatesOptions, templateEngagementOptions, keys } from "@/lib/queries";
 
 type ModalMode = { type: "create"; from?: PromptTemplate } | { type: "edit"; template: PromptTemplate } | null;
 
-export default function TemplatesClient({ initialTemplates, initialEngagement }: Props) {
-  const [templates, setTemplates] = useState(initialTemplates);
-  const [engagement, setEngagement] = useState(initialEngagement);
+export default function TemplatesClient() {
+  const queryClient = useQueryClient();
+  const { data: templates = [] } = useQuery(templatesOptions());
+  const { data: engagement = [] } = useQuery(templateEngagementOptions());
   const [modal, setModal] = useState<ModalMode>(null);
   const [error, setError] = useState<string | null>(null);
 
   const engagementById = useMemo(() => new Map(engagement.map((e) => [e.id, e])), [engagement]);
   const templatesById = useMemo(() => new Map(templates.map((t) => [t.id, t])), [templates]);
 
-  async function refreshEngagement() {
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001"}/api/v1/analytics/templates`, {
-      cache: "no-store",
-    });
-    if (res.ok) setEngagement((await res.json()) as TemplateEngagement[]);
-  }
+  const toggleMutation = useMutation({
+    mutationFn: async (template: PromptTemplate) => {
+      const { template: updated, error: err } = await updatePromptTemplate(template.id, { active: !template.active });
+      if (err || !updated) throw new Error(err ?? "Update failed");
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.templates }),
+    onError: (err) => setError(err instanceof Error ? err.message : "Update failed"),
+  });
 
-  async function handleToggleActive(template: PromptTemplate) {
+  const deleteMutation = useMutation({
+    mutationFn: async (template: PromptTemplate) => {
+      const { ok, error: err } = await deletePromptTemplate(template.id);
+      if (!ok) throw new Error(err ?? "Delete failed");
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.templates }),
+    onError: (err) => setError(err instanceof Error ? err.message : "Delete failed"),
+  });
+
+  function handleToggleActive(template: PromptTemplate) {
     setError(null);
-    const { template: updated, error: err } = await updatePromptTemplate(template.id, { active: !template.active });
-    if (err || !updated) {
-      setError(err ?? "Update failed");
-      return;
-    }
-    setTemplates((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+    toggleMutation.mutate(template);
   }
 
-  async function handleDelete(template: PromptTemplate) {
+  function handleDelete(template: PromptTemplate) {
     if (!confirm(`Delete template "${template.name}"? This cannot be undone.`)) return;
     setError(null);
-    const { ok, error: err } = await deletePromptTemplate(template.id);
-    if (!ok) {
-      setError(err ?? "Delete failed");
-      return;
-    }
-    setTemplates((prev) => prev.filter((t) => t.id !== template.id));
+    deleteMutation.mutate(template);
   }
 
   return (
@@ -175,21 +173,7 @@ export default function TemplatesClient({ initialTemplates, initialEngagement }:
         )}
       </div>
 
-      {modal && (
-        <TemplateModal
-          mode={modal}
-          onClose={() => setModal(null)}
-          onCreated={(t) => {
-            setTemplates((prev) => [t, ...prev]);
-            void refreshEngagement();
-            setModal(null);
-          }}
-          onUpdated={(t) => {
-            setTemplates((prev) => prev.map((x) => (x.id === t.id ? t : x)));
-            setModal(null);
-          }}
-        />
-      )}
+      {modal && <TemplateModal mode={modal} onClose={() => setModal(null)} />}
     </div>
   );
 }
@@ -197,50 +181,53 @@ export default function TemplatesClient({ initialTemplates, initialEngagement }:
 interface ModalProps {
   mode: NonNullable<ModalMode>;
   onClose: () => void;
-  onCreated: (t: PromptTemplate) => void;
-  onUpdated: (t: PromptTemplate) => void;
 }
 
-function TemplateModal({ mode, onClose, onCreated, onUpdated }: ModalProps) {
+function TemplateModal({ mode, onClose }: ModalProps) {
+  const queryClient = useQueryClient();
   const initial = mode.type === "edit" ? mode.template : mode.from;
   const [name, setName] = useState(initial?.name ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [systemPrompt, setSystemPrompt] = useState(initial?.system_prompt ?? "");
   const [weight, setWeight] = useState(initial?.weight ?? 1);
   const [active, setActive] = useState(initial?.active ?? true);
-  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const isEdit = mode.type === "edit";
 
-  async function handleSubmit(e: SubmitEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setSubmitting(true);
-    setError(null);
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      if (isEdit) {
+        const { template, error: err } = await updatePromptTemplate(mode.template.id, {
+          name: name.trim(),
+          description: description.trim() || null,
+          weight,
+          active,
+        });
+        if (err || !template) throw new Error(err ?? "Update failed");
+      } else {
+        const { template, error: err } = await createPromptTemplate({
+          name: name.trim(),
+          description: description.trim() || null,
+          system_prompt: systemPrompt,
+          weight,
+          active,
+          parent_template_id: mode.type === "create" && mode.from ? mode.from.id : null,
+        });
+        if (err || !template) throw new Error(err ?? "Create failed");
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: keys.templates });
+      onClose();
+    },
+    onError: (err) => setError(err instanceof Error ? err.message : "Save failed"),
+  });
 
-    if (isEdit) {
-      const { template, error: err } = await updatePromptTemplate(mode.template.id, {
-        name: name.trim(),
-        description: description.trim() || null,
-        weight,
-        active,
-      });
-      setSubmitting(false);
-      if (err || !template) { setError(err ?? "Update failed"); return; }
-      onUpdated(template);
-    } else {
-      const { template, error: err } = await createPromptTemplate({
-        name: name.trim(),
-        description: description.trim() || null,
-        system_prompt: systemPrompt,
-        weight,
-        active,
-        parent_template_id: mode.type === "create" && mode.from ? mode.from.id : null,
-      });
-      setSubmitting(false);
-      if (err || !template) { setError(err ?? "Create failed"); return; }
-      onCreated(template);
-    }
+  function handleSubmit(e: SubmitEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setError(null);
+    saveMutation.mutate();
   }
 
   const title = isEdit
@@ -331,10 +318,10 @@ function TemplateModal({ mode, onClose, onCreated, onUpdated }: ModalProps) {
             </button>
             <button
               type="submit"
-              disabled={submitting}
+              disabled={saveMutation.isPending}
               className="px-6 py-2 bg-primary text-white rounded-lg text-[13px] font-semibold disabled:opacity-60"
             >
-              {submitting ? "Saving…" : isEdit ? "Save metadata" : "Create"}
+              {saveMutation.isPending ? "Saving…" : isEdit ? "Save metadata" : "Create"}
             </button>
           </div>
         </form>
