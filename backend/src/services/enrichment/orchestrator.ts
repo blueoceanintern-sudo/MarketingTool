@@ -289,6 +289,7 @@ async function persist(record: EnrichmentRecord, campaignId: string | null): Pro
         ...(first_name ? { firstName: first_name } : {}),
         ...(lastName ? { lastName } : {}),
         ...(role ? { role } : {}),
+        ...(record.contact.email ? { email: record.contact.email } : {}),
         emailStatus: record.contact.email_status,
         enrichmentSource: record.enrichment_source,
         routing: record.routing,
