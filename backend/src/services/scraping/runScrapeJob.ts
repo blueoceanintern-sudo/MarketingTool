@@ -5,6 +5,7 @@ import { scrapeWithFallback } from "../scrapers/crawl4aiScraper";
 import { scrapeWebsite } from "../scrapers/cheerioScraper";
 import { isValidLeadEmail } from "../scrapers/emailFilter";
 import { emitJobEvent } from "../events";
+import { enrichLead } from "../enrichment/orchestrator";
 
 function parseGeographies(geography: string): string[] {
   return geography
@@ -24,16 +25,19 @@ async function scrapeSourceUrl(
   return { leads, scraper: "cheerio" };
 }
 
+// Returns the new leadId if a brand-new lead was inserted, null otherwise
+// (existing lead linked, skipped, or invalid email).
 async function persistScrapedLead(
   campaignId: string,
   scraped: { company?: string; email?: string; website: string },
   campaignGeo: string,
+  campaignVertical: string,
   scraperUsed: "crawl4ai" | "cheerio"
-) {
-  if (!scraped.email) return false;
+): Promise<string | null> {
+  if (!scraped.email) return null;
 
   const email = scraped.email.trim().toLowerCase();
-  if (!isValidLeadEmail(email)) return false;
+  if (!isValidLeadEmail(email)) return null;
 
   // Reuse the existing lead row if we've seen this email before — m:n means
   // the same person can be in multiple campaigns. We add a campaign_leads
@@ -45,16 +49,18 @@ async function persistScrapedLead(
       .from(campaignLeadExclusions)
       .where(and(eq(campaignLeadExclusions.leadId, existing.id), eq(campaignLeadExclusions.campaignId, campaignId)))
       .limit(1);
-    if (excluded) return false; // excluded from this campaign — do not re-add
+    if (excluded) return null; // excluded from this campaign — do not re-add
 
     const [existingLink] = await db
       .select({ leadId: campaignLeads.leadId })
       .from(campaignLeads)
       .where(and(eq(campaignLeads.leadId, existing.id), eq(campaignLeads.campaignId, campaignId)))
       .limit(1);
-    if (existingLink) return false; // already a member of this campaign
+    if (existingLink) return null; // already a member of this campaign
+
     await db.insert(campaignLeads).values({ leadId: existing.id, campaignId, source: "scrape" });
-    return true;
+    // Existing lead — don't re-enrich, return null so we don't double-count.
+    return null;
   }
 
   const companyName = scraped.company?.trim() || new URL(scraped.website).hostname;
@@ -64,10 +70,15 @@ async function persistScrapedLead(
     const [inserted] = await db
       .insert(companies)
       .values({
+        // industry seeds from the campaign vertical that surfaced this company —
+        // the one signal we actually have at scrape time. size is left unknown
+        // for enrichment to fill; we don't guess it here.
         name: companyName,
-        industry: "Unknown",
-        companySize: "small",
+        industry: campaignVertical,
+        companySize: "unknown",
         location: campaignGeo,
+        // source holds the website URL — used by enrichment as the mandatory
+        // navigation target for the Cowork browser agent.
         source: scraped.website,
       })
       .returning();
@@ -91,9 +102,10 @@ async function persistScrapedLead(
 
   if (lead) {
     await db.insert(campaignLeads).values({ leadId: lead.id, campaignId, source: "scrape" });
+    return lead.id;
   }
 
-  return true;
+  return null;
 }
 
 export async function runScrapeJob(jobId: string, campaignId: string): Promise<void> {
@@ -139,18 +151,18 @@ export async function runScrapeJob(jobId: string, campaignId: string): Promise<v
 
   let leadsScraped = 0;
   const errors: string[] = [];
+  const newLeadIds: string[] = [];
 
   for (const source of sources) {
     try {
       const result = await scrapeSourceUrl(source.url, source.scraperType);
       let savedForSource = 0;
       for (const lead of result.leads) {
-        const saved = await persistScrapedLead(campaignId, lead, source.geo, result.scraper);
-        if (saved) {
+        const newLeadId = await persistScrapedLead(campaignId, lead, source.geo, campaign.vertical, result.scraper);
+        if (newLeadId !== null) {
+          newLeadIds.push(newLeadId);
           savedForSource++;
           leadsScraped++;
-          // Fire-and-forget per-insert progress so the frontend can grow the
-          // leads table live; the client throttles the resulting refetches.
           void emitJobEvent({ kind: "scrape_progress", campaignId, leadsScraped });
         }
       }
@@ -185,4 +197,24 @@ export async function runScrapeJob(jobId: string, campaignId: string): Promise<v
     })
     .where(eq(scrapeJobs.id, jobId));
   await emitJobEvent({ kind: "scrape", campaignId, status, leadsScraped });
+
+  // Fire enrichment for every brand-new lead immediately after the scrape
+  // completes. Each call is fire-and-forget; we track how many succeed to
+  // emit a single enrichment_complete event the frontend toasts on.
+  if (newLeadIds.length > 0) {
+    console.log(`[scrape] queuing enrichment for ${newLeadIds.length} new lead(s)`);
+    let enriched = 0;
+    const enrichPromises = newLeadIds.map((leadId) =>
+      enrichLead(leadId)
+        .then(() => { enriched++; })
+        .catch((err) => {
+          console.error(`[scrape] enrichment failed for lead ${leadId}:`, err);
+        })
+    );
+    // Wait for all enrichment to finish then emit a single SSE event.
+    void Promise.all(enrichPromises).then(() => {
+      console.log(`[scrape] enrichment complete: ${enriched}/${newLeadIds.length} succeeded`);
+      void emitJobEvent({ kind: "enrichment_complete", campaignId, count: enriched });
+    });
+  }
 }

@@ -22,7 +22,7 @@ export const normalizeGeo = (s: string): string => s.trim().toUpperCase();
 export const companies = pgTable("companies", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
-  industry: text("industry").notNull(),
+  industry: text("industry"),
   companySize: companySizeEnum("company_size").notNull(),
   location: text("location").notNull(),
   source: text("source"),
