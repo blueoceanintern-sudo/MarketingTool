@@ -62,6 +62,17 @@ interface DraftRequest {
   campaign?: CampaignContext;
 }
 
+function weightedRandom<T extends { weight: number }>(items: T[]): T | undefined {
+  const total = items.reduce((sum, item) => sum + item.weight, 0);
+  if (total === 0) return items[0];
+  let rand = Math.random() * total;
+  for (const item of items) {
+    rand -= item.weight;
+    if (rand <= 0) return item;
+  }
+  return items[items.length - 1];
+}
+
 function buildLeadBlock(lead: LeadContext): string {
   const name = [lead.firstName, lead.lastName].filter(Boolean).join(" ") || "Unknown";
   return `## Lead data
@@ -149,14 +160,22 @@ export async function generateFollowUpBatch(requests: FollowUpRequest[]): Promis
   ] as TemplateType[];
 
   const templateRows = await db
-    .select({ id: promptTemplates.id, systemPrompt: promptTemplates.systemPrompt, templateType: promptTemplates.templateType })
+    .select({ id: promptTemplates.id, systemPrompt: promptTemplates.systemPrompt, templateType: promptTemplates.templateType, weight: promptTemplates.weight })
     .from(promptTemplates)
     .where(and(eq(promptTemplates.active, true), inArray(promptTemplates.templateType, neededTypes)));
 
-  const templateByType = new Map(templateRows.map((t) => [t.templateType, t]));
+  const templatesByType = new Map<TemplateType, typeof templateRows>();
+  for (const row of templateRows) {
+    const key = row.templateType as TemplateType;
+    if (!templatesByType.has(key)) templatesByType.set(key, []);
+    templatesByType.get(key)!.push(row);
+  }
 
+  const templateByType = new Map<TemplateType, typeof templateRows[number]>();
   for (const type of neededTypes) {
-    if (!templateByType.has(type)) throw new Error(`No active prompt template for type: ${type}`);
+    const pool = templatesByType.get(type);
+    if (!pool || pool.length === 0) throw new Error(`No active prompt template for type: ${type}`);
+    templateByType.set(type, weightedRandom(pool)!);
   }
 
   const client = new Anthropic({ apiKey });
@@ -241,60 +260,39 @@ export async function generateDraftsBatch(requests: DraftRequest[]): Promise<Dra
 
   const client = new Anthropic({ apiKey });
 
-  // Batch API custom_id has a 64-character limit. Three UUIDs joined by colons
-  // would be 110 chars, so we use the request index instead and look up the
-  // original lead/campaign data by position when parsing results.
-  const batch = await client.messages.batches.create({
-    requests: requests.map((req, i) => ({
-      custom_id: String(i),
-      params: {
+  console.log(`[drafting] generating ${requests.length} draft(s) (sync)`);
+
+  const settled = await Promise.allSettled(
+    requests.map((req) =>
+      client.messages.create({
         model: "claude-haiku-4-5",
         max_tokens: 400,
         system: [{ type: "text" as const, text: template.systemPrompt, cache_control: { type: "ephemeral" as const } }],
         messages: [{ role: "user" as const, content: buildUserPrompt(req.lead, req.campaign) }],
-      },
-    })),
-  });
-
-  console.log(`[drafting] batch ${batch.id}: submitted ${requests.length} request(s), polling...`);
-  let status = batch.processing_status;
-  while (status !== "ended") {
-    await new Promise((r) => setTimeout(r, 5000));
-    const updated = await client.messages.batches.retrieve(batch.id);
-    status = updated.processing_status;
-    if (status !== "ended") console.log(`[drafting] batch ${batch.id}: status=${status}, waiting...`);
-  }
-
-  console.log(`[drafting] batch ${batch.id}: complete`);
+      }).then((msg) => ({ req, msg }))
+    ),
+  );
 
   const results: DraftResult[] = [];
 
-  for await (const result of await client.messages.batches.results(batch.id)) {
-    const idx = parseInt(result.custom_id, 10);
-    const req = requests[idx];
-
-    if (!req) {
-      console.error(`[drafting] batch result index ${idx} out of range — skipping`);
+  for (const outcome of settled) {
+    if (outcome.status === "rejected") {
+      console.error(`[drafting] API call failed:`, outcome.reason);
       continue;
     }
 
-    const { leadId, campaignId } = req;
-
-    if (result.result.type !== "succeeded") {
-      console.error(`Draft failed for lead ${leadId}:`, result.result);
-      continue;
-    }
-
-    const text = result.result.message.content.find((b) => b.type === "text");
+    const { req, msg } = outcome.value;
+    const text = msg.content.find((b) => b.type === "text");
     if (!text || text.type !== "text") continue;
 
     try {
       const { subject, body, confidenceScore } = parseResponse(text.text);
-      results.push({ leadId, campaignId, templateId: template.id, subject, body, confidenceScore });
+      results.push({ leadId: req.leadId, campaignId: req.campaignId, templateId: template.id, subject, body, confidenceScore });
     } catch (err) {
-      console.error(`Failed to parse draft for ${result.custom_id}:`, err);
+      console.error(`[drafting] failed to parse draft for lead ${req.leadId}:`, err);
     }
   }
 
+  console.log(`[drafting] done: ${results.length}/${requests.length} succeeded`);
   return results;
 }

@@ -394,57 +394,52 @@ Return only valid JSON — no explanation, no preamble:
 
 confidenceScore is your 0–100 self-assessment across four equally weighted factors (25 points each): (1) tone quality — is the email genuinely calm, respectful, and pressure-free; (2) value reminder — is the one restatement broad, descriptive, and angle-neutral; (3) exit quality — does the CTA feel like an open door rather than a request or final warning; (4) length compliance — is the body under 70 words. Sum all four. A score below 60 indicates forced tone or positioning and the email should be reviewed.`;
 
-async function seed() {
-  // Update existing template to initial type with new prompt
-  await db
-    .update(promptTemplates)
-    .set({
-      name: "Initial outreach",
-      description: "Ski-jump structure cold email anchored in one campaign pain point.",
-      systemPrompt: INITIAL_SYSTEM_PROMPT,
-      templateType: "initial",
-      updatedAt: new Date(),
-    })
-    .where(eq(promptTemplates.id, "f324d4a8-ee2e-4144-bc8f-a7ca2606a072"));
+const TEMPLATES = [
+  {
+    name: "Initial outreach",
+    description: "Ski-jump structure cold email anchored in one campaign pain point.",
+    systemPrompt: INITIAL_SYSTEM_PROMPT,
+    templateType: "initial" as const,
+    weight: 5,
+  },
+  {
+    name: "Follow-up 1: New angle",
+    description: "Light nudge introducing one new operational angle not yet covered.",
+    systemPrompt: FOLLOWUP_1_SYSTEM_PROMPT,
+    templateType: "followup_1" as const,
+    weight: 5,
+  },
+  {
+    name: "Follow-up 2: Reframe",
+    description: "Reframes value from a genuinely distinct operational perspective.",
+    systemPrompt: FOLLOWUP_2_SYSTEM_PROMPT,
+    templateType: "followup_2" as const,
+    weight: 5,
+  },
+  {
+    name: "Break-up: Graceful exit",
+    description: "Final email that preserves goodwill and leaves the door open.",
+    systemPrompt: BREAKUP_SYSTEM_PROMPT,
+    templateType: "breakup" as const,
+    weight: 5,
+  },
+];
 
-  // Insert follow-up templates (skip if already present by name)
+async function seed() {
   const existing = await db.select({ name: promptTemplates.name }).from(promptTemplates);
   const names = new Set(existing.map((r) => r.name));
 
-  if (!names.has("Follow-up 1: New angle")) {
-    await db.insert(promptTemplates).values({
-      name: "Follow-up 1: New angle",
-      description: "Light nudge introducing one new operational angle not yet covered.",
-      systemPrompt: FOLLOWUP_1_SYSTEM_PROMPT,
-      templateType: "followup_1",
-      active: true,
-      createdBy: "system",
-    });
-    console.log("Inserted followup_1 template");
-  }
-
-  if (!names.has("Follow-up 2: Reframe")) {
-    await db.insert(promptTemplates).values({
-      name: "Follow-up 2: Reframe",
-      description: "Reframes value from a genuinely distinct operational perspective.",
-      systemPrompt: FOLLOWUP_2_SYSTEM_PROMPT,
-      templateType: "followup_2",
-      active: true,
-      createdBy: "system",
-    });
-    console.log("Inserted followup_2 template");
-  }
-
-  if (!names.has("Break-up: Graceful exit")) {
-    await db.insert(promptTemplates).values({
-      name: "Break-up: Graceful exit",
-      description: "Final email that preserves goodwill and leaves the door open.",
-      systemPrompt: BREAKUP_SYSTEM_PROMPT,
-      templateType: "breakup",
-      active: true,
-      createdBy: "system",
-    });
-    console.log("Inserted breakup template");
+  for (const tmpl of TEMPLATES) {
+    if (names.has(tmpl.name)) {
+      await db
+        .update(promptTemplates)
+        .set({ systemPrompt: tmpl.systemPrompt, description: tmpl.description, weight: tmpl.weight, updatedAt: new Date() })
+        .where(eq(promptTemplates.name, tmpl.name));
+      console.log(`Updated: ${tmpl.name}`);
+    } else {
+      await db.insert(promptTemplates).values({ ...tmpl, active: true, createdBy: "system" });
+      console.log(`Inserted: ${tmpl.name}`);
+    }
   }
 
   console.log("Seed complete.");
