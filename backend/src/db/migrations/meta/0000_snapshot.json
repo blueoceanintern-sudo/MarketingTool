@@ -1,5 +1,5 @@
 {
-  "id": "fbc3217c-6a25-4b38-bb24-371a9b2d469f",
+  "id": "1185f398-0503-40e1-be70-c9f3d2353b73",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -62,6 +62,101 @@
       "indexes": {},
       "foreignKeys": {},
       "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.campaign_lead_exclusions": {
+      "name": "campaign_lead_exclusions",
+      "schema": "",
+      "columns": {
+        "lead_id": {
+          "name": "lead_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "campaign_id": {
+          "name": "campaign_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "excluded_at": {
+          "name": "excluded_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "excluded_by": {
+          "name": "excluded_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "campaign_lead_exclusions_campaign_id_idx": {
+          "name": "campaign_lead_exclusions_campaign_id_idx",
+          "columns": [
+            {
+              "expression": "campaign_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "campaign_lead_exclusions_lead_id_leads_id_fk": {
+          "name": "campaign_lead_exclusions_lead_id_leads_id_fk",
+          "tableFrom": "campaign_lead_exclusions",
+          "tableTo": "leads",
+          "columnsFrom": [
+            "lead_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "campaign_lead_exclusions_campaign_id_campaigns_id_fk": {
+          "name": "campaign_lead_exclusions_campaign_id_campaigns_id_fk",
+          "tableFrom": "campaign_lead_exclusions",
+          "tableTo": "campaigns",
+          "columnsFrom": [
+            "campaign_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "campaign_lead_exclusions_lead_id_campaign_id_pk": {
+          "name": "campaign_lead_exclusions_lead_id_campaign_id_pk",
+          "columns": [
+            "lead_id",
+            "campaign_id"
+          ]
+        }
+      },
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
@@ -276,6 +371,12 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
@@ -838,6 +939,12 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
+        },
+        "angle_tag": {
+          "name": "angle_tag",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {},
@@ -1057,6 +1164,13 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "template_type": {
+          "name": "template_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'initial'"
         },
         "weight": {
           "name": "weight",
@@ -1465,6 +1579,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "campaign_id": {
+          "name": "campaign_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
         "reason": {
           "name": "reason",
           "type": "suppression_reason",
@@ -1480,15 +1600,46 @@
           "default": "now()"
         }
       },
-      "indexes": {},
-      "foreignKeys": {},
+      "indexes": {
+        "suppression_list_campaign_id_idx": {
+          "name": "suppression_list_campaign_id_idx",
+          "columns": [
+            {
+              "expression": "campaign_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "suppression_list_campaign_id_campaigns_id_fk": {
+          "name": "suppression_list_campaign_id_campaigns_id_fk",
+          "tableFrom": "suppression_list",
+          "tableTo": "campaigns",
+          "columnsFrom": [
+            "campaign_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
-        "suppression_list_email_unique": {
-          "name": "suppression_list_email_unique",
+        "suppression_list_email_campaign_unique": {
+          "name": "suppression_list_email_campaign_unique",
           "nullsNotDistinct": false,
           "columns": [
-            "email"
+            "email",
+            "campaign_id"
           ]
         }
       },
@@ -1614,8 +1765,6 @@
       "schema": "public",
       "values": [
         "unsubscribed",
-        "spam_complaint",
-        "hostile",
         "manual"
       ]
     }
