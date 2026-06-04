@@ -4,6 +4,7 @@ import { campaigns, campaignLeads, emailDrafts, emailEvents, scrapeJobs, sourceR
 import { eq, and, isNotNull, count } from "drizzle-orm";
 import { runScrapeJob } from "../services/scraping/runScrapeJob";
 import { generateDraftsForCampaign } from "../services/drafting/orchestrator";
+import { enrichLead } from "../services/enrichment/orchestrator";
 import { discoverSources, getDirectoryConfig } from "../services/sourceRegistry";
 import { emitJobEvent } from "../services/events";
 
@@ -330,6 +331,30 @@ campaignsRouter.post("/:id/scrape", async (c) => {
   });
 
   return c.json({ scrape_job_id: jobId, status: "queued" }, 201);
+});
+
+campaignsRouter.post("/:id/enrich", async (c) => {
+  const campaignId = c.req.param("id");
+  const [campaign] = await db.select().from(campaigns).where(eq(campaigns.id, campaignId)).limit(1);
+  if (!campaign) return c.json({ error: "Campaign not found" }, 404);
+  if (campaign.status === "complete") return c.json({ error: "Cannot enrich a completed campaign" }, 400);
+
+  const rows = await db
+    .select({ leadId: campaignLeads.leadId })
+    .from(campaignLeads)
+    .where(eq(campaignLeads.campaignId, campaignId));
+
+  const leadIds = rows.map((r) => r.leadId);
+  if (leadIds.length === 0) return c.json({ message: "No leads to enrich", count: 0 });
+
+  void (async () => {
+    const results = await Promise.allSettled(leadIds.map((id) => enrichLead(id)));
+    const enriched = results.filter((r) => r.status === "fulfilled").length;
+    console.log(`[enrich] campaign ${campaignId}: ${enriched}/${leadIds.length} succeeded`);
+    await emitJobEvent({ kind: "enrichment_complete", campaignId, count: enriched });
+  })();
+
+  return c.json({ message: "Enrichment started", count: leadIds.length }, 202);
 });
 
 campaignsRouter.post("/:id/drafts/generate", async (c) => {
