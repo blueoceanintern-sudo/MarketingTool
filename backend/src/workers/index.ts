@@ -496,6 +496,7 @@ cron.schedule("0 6 * * 1", async () => {
     .where(
       and(
         eq(promptTemplates.active, true),
+        eq(promptTemplates.templateType, "initial"),
         lt(promptTemplates.generationDepth, 2),
         gte(promptTemplates.sendCount, 50),
       ),
