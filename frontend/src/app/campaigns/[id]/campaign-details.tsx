@@ -1,8 +1,9 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState, type SubmitEvent } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { updateCampaign, type Campaign } from "@/lib/api";
+import { keys } from "@/lib/queries";
 
 interface Props {
   campaign: Campaign;
@@ -16,10 +17,9 @@ const sizeLabel: Record<string, string> = {
 };
 
 export default function CampaignDetails({ campaign }: Props) {
-  const router = useRouter();
+  const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [form, setForm] = useState({
     name: campaign.name,
@@ -45,30 +45,36 @@ export default function CampaignDetails({ campaign }: Props) {
     setEditing(true);
   }
 
-  async function handleSave(e: SubmitEvent<HTMLFormElement>) {
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const painPoints = form.pain_points
+        .split("\n")
+        .map((p) => p.trim())
+        .filter(Boolean);
+      const { error } = await updateCampaign(campaign.id, {
+        name: form.name.trim(),
+        vertical: form.vertical.trim(),
+        geography: form.geography.split(",").map((g) => g.trim().toUpperCase()).filter(Boolean),
+        company_size_target: form.company_size_target,
+        description: form.description.trim() || null,
+        pain_points: painPoints,
+        call_to_action: form.call_to_action.trim() || null,
+      });
+      if (error) throw new Error(error);
+    },
+    onSuccess: () => {
+      setEditing(false);
+      queryClient.invalidateQueries({ queryKey: keys.campaigns });
+    },
+    onError: (err) => {
+      setFormError(err instanceof Error ? err.message : "Failed to save campaign");
+    },
+  });
+
+  function handleSave(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault();
-    setSaving(true);
     setFormError(null);
-    const painPoints = form.pain_points
-      .split("\n")
-      .map((p) => p.trim())
-      .filter(Boolean);
-    const { error } = await updateCampaign(campaign.id, {
-      name: form.name.trim(),
-      vertical: form.vertical.trim(),
-      geography: form.geography.split(",").map((g) => g.trim().toUpperCase()).filter(Boolean),
-      company_size_target: form.company_size_target,
-      description: form.description.trim() || null,
-      pain_points: painPoints,
-      call_to_action: form.call_to_action.trim() || null,
-    });
-    setSaving(false);
-    if (error) {
-      setFormError(error);
-      return;
-    }
-    setEditing(false);
-    router.refresh();
+    saveMutation.mutate();
   }
 
   const hasContext =
@@ -263,10 +269,10 @@ export default function CampaignDetails({ campaign }: Props) {
                 </button>
                 <button
                   type="submit"
-                  disabled={saving}
+                  disabled={saveMutation.isPending}
                   className="px-6 py-2 bg-primary text-white rounded-lg disabled:opacity-60"
                 >
-                  {saving ? "Saving…" : "Save"}
+                  {saveMutation.isPending ? "Saving…" : "Save"}
                 </button>
               </div>
             </form>

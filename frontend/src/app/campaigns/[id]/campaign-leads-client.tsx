@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import type { Lead } from "@/lib/api";
-import { getCampaignLeadsPaginated } from "@/lib/api";
+import { campaignLeadsOptions } from "@/lib/queries";
 import LeadActions from "./lead-actions";
 import Pagination from "@/components/pagination";
 
@@ -29,70 +30,32 @@ function initials(lead: Lead) {
 }
 
 interface Props {
-  initialLeads: Lead[];
-  initialTotal: number;
-  initialPage: number;
-  initialTotalPages: number;
   campaignId: string;
+  initialPage: number;
 }
 
-export default function CampaignLeadsClient({
-  initialLeads,
-  initialTotal,
-  initialPage,
-  initialTotalPages,
-  campaignId,
-}: Props) {
-  const removedIds = useRef<Set<string>>(new Set());
-  const [leads, setLeads] = useState(initialLeads);
-  const [total, setTotal] = useState(initialTotal);
+export default function CampaignLeadsClient({ campaignId, initialPage }: Props) {
   const [page, setPage] = useState(initialPage);
-  const [totalPages, setTotalPages] = useState(initialTotalPages);
-  const [isLoading, setIsLoading] = useState(false);
 
-  // Sync first-page data when the server passes fresh initialLeads (e.g. after scrape).
-  useEffect(() => {
-    if (page === 1) {
-      setLeads(initialLeads.filter((l) => !removedIds.current.has(l.id)));
-      setTotal(initialTotal);
-      setTotalPages(initialTotalPages);
-    }
-  }, [initialLeads, initialTotal, initialTotalPages, page]);
+  // keepPreviousData keeps the current page visible while the next one loads.
+  // Lead add/remove (in LeadActions) invalidates the campaign queries, which
+  // refetches this list automatically.
+  const { data, isFetching } = useQuery({
+    ...campaignLeadsOptions(campaignId, page, LEADS_PER_PAGE),
+    placeholderData: keepPreviousData,
+  });
 
-  async function goToPage(newPage: number) {
-    setIsLoading(true);
-    const result = await getCampaignLeadsPaginated(campaignId, { page: newPage, limit: LEADS_PER_PAGE });
-    setLeads(result.data.filter((l) => !removedIds.current.has(l.id)));
-    setTotal(result.total);
-    setPage(result.page);
-    setTotalPages(result.total_pages);
-    setIsLoading(false);
-  }
-
-  function handleRemoved(leadId: string) {
-    removedIds.current.add(leadId);
-    setLeads((prev) => prev.filter((l) => l.id !== leadId));
-    setTotal((prev) => Math.max(0, prev - 1));
-  }
+  const leads = data?.data ?? [];
+  const total = data?.total ?? 0;
+  const totalPages = data?.total_pages ?? 0;
 
   const start = total === 0 ? 0 : (page - 1) * LEADS_PER_PAGE + 1;
   const end = Math.min(page * LEADS_PER_PAGE, total);
 
   return (
     <>
-      {/* Total Leads KPI tile */}
-      <div className="bg-white p-6 rounded-lg shadow-[0_1px_3px_rgba(27,45,91,0.08)] border border-grey-100 mb-8">
-        <div className="flex justify-between items-start mb-4">
-          <div className="p-2 bg-ocean-wash text-primary rounded-lg">
-            <span className="material-symbols-outlined">group</span>
-          </div>
-        </div>
-        <p className="text-[13px] text-grey-500 mb-1">Total Leads</p>
-        <h3 className="text-[28px] font-bold text-primary font-mono">{total.toLocaleString()}</h3>
-      </div>
-
       {/* Leads table card */}
-      <div className={`bg-white rounded-lg shadow-[0_1px_3px_rgba(27,45,91,0.08)] border border-grey-100 overflow-hidden transition-opacity duration-150 ${isLoading ? "opacity-60" : ""}`}>
+      <div className={`bg-white rounded-lg shadow-[0_1px_3px_rgba(27,45,91,0.08)] border border-grey-100 overflow-hidden transition-opacity duration-150 ${isFetching ? "opacity-60" : ""}`}>
         <div className="px-6 py-4 border-b border-grey-100 bg-grey-50 flex items-center justify-between">
           <h3 className="text-[14px] font-semibold text-primary">Leads</h3>
           {total > 0 && (
@@ -102,7 +65,7 @@ export default function CampaignLeadsClient({
           )}
         </div>
 
-        {leads.length === 0 && !isLoading ? (
+        {leads.length === 0 && !isFetching ? (
           <div className="px-6 py-12 text-center text-grey-400 text-[14px]">No leads for this campaign yet.</div>
         ) : (
           <div className="overflow-x-auto">
@@ -156,7 +119,6 @@ export default function CampaignLeadsClient({
                           leadId={lead.id}
                           leadName={[lead.first_name, lead.last_name].filter(Boolean).join(" ") || lead.email}
                           currentCampaignId={campaignId}
-                          onRemoved={handleRemoved}
                         />
                       </td>
                     </tr>
@@ -173,7 +135,7 @@ export default function CampaignLeadsClient({
             <Pagination
               page={page}
               totalPages={totalPages}
-              onPageChange={goToPage}
+              onPageChange={setPage}
             />
           </div>
         )}

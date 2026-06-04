@@ -1,19 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Draft } from "@/lib/api";
 import { approveDraft, editDraft, rejectDraft } from "@/lib/api";
+import { draftQueueOptions, draftsByStatusOptions, keys } from "@/lib/queries";
 import Pagination from "@/components/pagination";
 
 const DRAFTS_PER_PAGE = 50;
 
 type Tab = "queue" | "scheduled" | "sent";
-
-interface Props {
-  initialQueue: Draft[];
-  initialScheduled: Draft[];
-  initialSent: Draft[];
-}
 
 function confidenceLabel(score: number) {
   if (score >= 75) return { label: "High", className: "bg-success-bg text-success", barClass: "bg-success" };
@@ -141,12 +137,13 @@ function DraftsTable({ drafts, emptyMessage }: { drafts: Draft[]; emptyMessage: 
 
 // ── Review queue (unchanged logic, new props shape) ───────────────────────────
 
-function ReviewQueue({ initialDrafts }: { initialDrafts: Draft[] }) {
-  const pending = initialDrafts.filter((d) => d.status === "pending_review");
-  const [drafts, setDrafts] = useState<Draft[]>(pending);
+function ReviewQueue() {
+  const queryClient = useQueryClient();
+  const { data: queueData } = useQuery(draftQueueOptions());
+  const drafts = (queueData ?? []).filter((d) => d.status === "pending_review");
+
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [bodyEdits, setBodyEdits] = useState<Record<string, string>>({});
-  const [submitting, setSubmitting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
@@ -157,7 +154,22 @@ function ReviewQueue({ initialDrafts }: { initialDrafts: Draft[] }) {
   const selected = drafts[selectedIdx];
   const selectedBody = selected ? (bodyEdits[selected.id] ?? selected.body) : "";
 
-  const persistBody = useCallback(async (draft: Draft, body: string) => {
+  // Drop a draft from the cached queue and refresh the scheduled/sent lists.
+  const removeFromQueue = useCallback(
+    (id: string) => {
+      queryClient.setQueryData<Draft[]>(draftQueueOptions().queryKey, (old) =>
+        (old ?? []).filter((d) => d.id !== id),
+      );
+      queryClient.invalidateQueries({ queryKey: keys.drafts });
+    },
+    [queryClient],
+  );
+
+  // Debounced auto-save writes straight to the cache (background save, not a
+  // user-triggered action) so the textarea stays responsive. Plain function
+  // (not useCallback) — the effect below already re-runs on the edits it cares
+  // about, and the React Compiler can't preserve an async manual-memo wrapper.
+  async function persistBody(draft: Draft, body: string) {
     if (body === draft.body) return;
     setSaving(true);
     setSaveError(null);
@@ -167,61 +179,67 @@ function ReviewQueue({ initialDrafts }: { initialDrafts: Draft[] }) {
       setSaveError(error ?? "Failed to save");
       return;
     }
-    setDrafts((prev) => prev.map((d) => (d.id === updated.id ? updated : d)));
+    queryClient.setQueryData<Draft[]>(draftQueueOptions().queryKey, (old) =>
+      (old ?? []).map((d) => (d.id === updated.id ? updated : d)),
+    );
     setBodyEdits((prev) => {
       const next = { ...prev };
       delete next[draft.id];
       return next;
     });
     setLastSaved(new Date());
-  }, []);
+  }
 
-  useEffect(() => {
-    if (!selected) return;
-    const body = bodyEdits[selected.id];
-    if (body === undefined || body === selected.body) return;
-
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      void persistBody(selected, body);
-    }, 800);
-
-    return () => {
+  // The debounce is scheduled from the textarea's onChange; this just clears a
+  // pending timer on unmount.
+  useEffect(
+    () => () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
-    };
-  }, [bodyEdits, selected, persistBody]);
+    },
+    [],
+  );
+
+  const approveMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const ok = await approveDraft(id);
+      if (!ok) throw new Error("Could not approve — check the backend is running.");
+    },
+    onSuccess: (_data, id) => {
+      removeFromQueue(id);
+      setSelectedIdx(0);
+      setShowReject(false);
+    },
+    onError: (err) => setSaveError(err instanceof Error ? err.message : "Could not approve"),
+  });
+
+  const rejectMutation = useMutation({
+    mutationFn: async ({ id, reason }: { id: string; reason: string }) => {
+      const ok = await rejectDraft(id, reason);
+      if (!ok) throw new Error("Could not reject — check the backend is running.");
+    },
+    onSuccess: (_data, { id }) => {
+      removeFromQueue(id);
+      setSelectedIdx(0);
+      setRejectReason("");
+      setShowReject(false);
+    },
+    onError: (err) => setSaveError(err instanceof Error ? err.message : "Could not reject"),
+  });
+
+  const submitting = approveMutation.isPending || rejectMutation.isPending;
 
   async function handleApprove() {
     if (!selected) return;
-    setSubmitting(true);
     const body = bodyEdits[selected.id];
     if (body !== undefined && body !== selected.body) {
       await persistBody(selected, body);
     }
-    const ok = await approveDraft(selected.id);
-    setSubmitting(false);
-    if (!ok) {
-      setSaveError("Could not approve — check the backend is running.");
-      return;
-    }
-    setDrafts((prev) => prev.filter((d) => d.id !== selected.id));
-    setSelectedIdx(0);
-    setShowReject(false);
+    approveMutation.mutate(selected.id);
   }
 
-  async function handleReject() {
+  function handleReject() {
     if (!selected) return;
-    setSubmitting(true);
-    const ok = await rejectDraft(selected.id, rejectReason);
-    setSubmitting(false);
-    if (!ok) {
-      setSaveError("Could not reject — check the backend is running.");
-      return;
-    }
-    setDrafts((prev) => prev.filter((d) => d.id !== selected.id));
-    setSelectedIdx(0);
-    setRejectReason("");
-    setShowReject(false);
+    rejectMutation.mutate({ id: selected.id, reason: rejectReason });
   }
 
   if (drafts.length === 0) {
@@ -294,9 +312,14 @@ function ReviewQueue({ initialDrafts }: { initialDrafts: Draft[] }) {
                         className="flex-1 p-6 font-mono text-[13px] bg-transparent border-none focus:outline-none resize-none min-h-[300px]"
                         spellCheck={false}
                         value={selectedBody}
-                        onChange={(e) =>
-                          setBodyEdits((prev) => ({ ...prev, [selected.id]: e.target.value }))
-                        }
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setBodyEdits((prev) => ({ ...prev, [selected.id]: value }));
+                          if (saveTimer.current) clearTimeout(saveTimer.current);
+                          saveTimer.current = setTimeout(() => {
+                            void persistBody(selected, value);
+                          }, 800);
+                        }}
                       />
                       <div className="px-4 py-2 border-t border-grey-100 text-[11px] text-grey-500">
                         Words: <span className={wc > 125 ? "text-danger" : "text-primary"}>{wc}</span>/125
@@ -371,13 +394,16 @@ function ReviewQueue({ initialDrafts }: { initialDrafts: Draft[] }) {
 
 // ── Root tabbed component ─────────────────────────────────────────────────────
 
-export default function DraftsClient({ initialQueue, initialScheduled, initialSent }: Props) {
+export default function DraftsClient() {
   const [tab, setTab] = useState<Tab>("queue");
+  const { data: queue = [] } = useQuery(draftQueueOptions());
+  const { data: scheduled = [] } = useQuery(draftsByStatusOptions("scheduled"));
+  const { data: sent = [] } = useQuery(draftsByStatusOptions("sent"));
 
   const tabs: { key: Tab; label: string; count: number }[] = [
-    { key: "queue", label: "Review Queue", count: initialQueue.length },
-    { key: "scheduled", label: "Scheduled", count: initialScheduled.length },
-    { key: "sent", label: "Sent", count: initialSent.length },
+    { key: "queue", label: "Review Queue", count: queue.length },
+    { key: "scheduled", label: "Scheduled", count: scheduled.length },
+    { key: "sent", label: "Sent", count: sent.length },
   ];
 
   return (
@@ -409,12 +435,12 @@ export default function DraftsClient({ initialQueue, initialScheduled, initialSe
       </div>
 
       <div className="flex-1 overflow-hidden">
-        {tab === "queue" && <ReviewQueue initialDrafts={initialQueue} />}
+        {tab === "queue" && <ReviewQueue />}
         {tab === "scheduled" && (
-          <DraftsTable drafts={initialScheduled} emptyMessage="No drafts scheduled for sending." />
+          <DraftsTable drafts={scheduled} emptyMessage="No drafts scheduled for sending." />
         )}
         {tab === "sent" && (
-          <DraftsTable drafts={initialSent} emptyMessage="No emails sent yet." />
+          <DraftsTable drafts={sent} emptyMessage="No emails sent yet." />
         )}
       </div>
     </div>

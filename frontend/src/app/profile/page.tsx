@@ -1,25 +1,27 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState, useSyncExternalStore, type SubmitEvent } from "react";
 import {
-  loadProfile,
   saveProfile,
+  subscribeProfile,
+  getProfileSnapshot,
   type RepProfile,
 } from "@/components/profile-header";
 
 export default function ProfilePage() {
-  const [profile, setProfile] = useState<RepProfile | null>(null);
+  // null on the server / during hydration, then the stored profile on the client
+  // — no effect+setState needed.
+  const stored = useSyncExternalStore(subscribeProfile, getProfileSnapshot, () => null);
+  if (!stored) return null;
+  return <ProfileForm initial={stored} />;
+}
+
+function ProfileForm({ initial }: { initial: RepProfile }) {
+  const [profile, setProfile] = useState<RepProfile>(initial);
   const [saved, setSaved] = useState(false);
 
-  useEffect(() => {
-    setProfile(loadProfile());
-  }, []);
-
-  if (!profile) return null;
-
-  function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!profile) return;
     saveProfile(profile);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -37,7 +39,7 @@ export default function ProfilePage() {
           Display name
           <input
             value={profile.name}
-            onChange={(e) => setProfile((p) => (p ? { ...p, name: e.target.value } : p))}
+            onChange={(e) => setProfile((p) => ({ ...p, name: e.target.value }))}
             className="border border-grey-200 rounded-lg px-3 py-2"
           />
         </label>
@@ -46,7 +48,7 @@ export default function ProfilePage() {
           <input
             type="email"
             value={profile.email}
-            onChange={(e) => setProfile((p) => (p ? { ...p, email: e.target.value } : p))}
+            onChange={(e) => setProfile((p) => ({ ...p, email: e.target.value }))}
             className="border border-grey-200 rounded-lg px-3 py-2"
           />
         </label>
@@ -54,14 +56,14 @@ export default function ProfilePage() {
           Role
           <input
             value={profile.role}
-            onChange={(e) => setProfile((p) => (p ? { ...p, role: e.target.value } : p))}
+            onChange={(e) => setProfile((p) => ({ ...p, role: e.target.value }))}
             className="border border-grey-200 rounded-lg px-3 py-2"
           />
         </label>
         <button type="submit" className="px-6 py-2 bg-primary text-white rounded-lg font-semibold text-[14px]">
           Save profile
         </button>
-        {saved && <p className="text-success text-[13px]">Saved. Refresh other tabs to see updates in the header.</p>}
+        {saved && <p className="text-success text-[13px]">Saved — the header updates automatically.</p>}
       </form>
     </div>
   );
