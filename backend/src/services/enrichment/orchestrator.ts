@@ -39,7 +39,15 @@ export async function enrichLead(leadId: string): Promise<EnrichmentRecord> {
 
   let primarySource: EnrichmentSource = "manual";
   const institution: Partial<EnrichmentInstitution> = {};
-  const contact: Partial<EnrichmentContact> = {};
+  // Seed contact with whatever the scraper already found so enrichment always
+  // produces a record — providers upgrade fields rather than starting from scratch.
+  const contact: Partial<EnrichmentContact> = {
+    email: input.seed.email ?? undefined,
+    email_status: input.seed.email ? "pattern_guessed" : undefined,
+    full_name: [input.seed.firstName, input.seed.lastName].filter(Boolean).join(" ") || undefined,
+    first_name: input.seed.firstName ?? undefined,
+    role: input.seed.role ?? undefined,
+  };
 
   for (const provider of PROVIDERS) {
     const result = await provider.enrich(input).catch((err) => {
@@ -54,8 +62,8 @@ export async function enrichLead(leadId: string): Promise<EnrichmentRecord> {
     if (contact.email_status === "verified") break;
   }
 
-  if (primarySource === "manual" && !contact.email) {
-    throw new Error(`[enrichment] all providers returned no data for lead ${leadId}`);
+  if (!contact.email) {
+    throw new Error(`[enrichment] no email available for lead ${leadId} — skipping`);
   }
 
   const finalInstitution = finalizeInstitution(institution, input);
@@ -249,6 +257,18 @@ function computeRouting(
 }
 
 async function persist(record: EnrichmentRecord, campaignId: string | null): Promise<void> {
+  const { first_name, full_name, role } = record.contact;
+
+  // Derive last name from full_name by removing first_name prefix
+  let lastName: string | null = null;
+  if (full_name && first_name) {
+    const rest = full_name.slice(first_name.length).trim();
+    lastName = rest || null;
+  } else if (full_name && !first_name) {
+    const spaceIdx = full_name.indexOf(" ");
+    lastName = spaceIdx !== -1 ? full_name.slice(spaceIdx + 1).trim() : null;
+  }
+
   await db.transaction(async (tx) => {
     await tx.insert(enrichmentRecords).values({
       leadId: record.lead_id,
@@ -266,6 +286,9 @@ async function persist(record: EnrichmentRecord, campaignId: string | null): Pro
     await tx
       .update(leads)
       .set({
+        ...(first_name ? { firstName: first_name } : {}),
+        ...(lastName ? { lastName } : {}),
+        ...(role ? { role } : {}),
         emailStatus: record.contact.email_status,
         enrichmentSource: record.enrichment_source,
         routing: record.routing,

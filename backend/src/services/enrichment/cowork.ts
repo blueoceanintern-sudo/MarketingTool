@@ -7,6 +7,7 @@ import type { EnrichmentInput, EnrichmentProvider, ProviderResult } from "./type
 // and returns a structured ProviderResult matching PRD §5.4.
 //
 // Rate limit: min 2s between runs, hard daily cap from COWORK_DAILY_RUN_CAP.
+// Requires companyWebsite — returns null immediately if absent.
 
 const MIN_INTERVAL_MS = 2_000;
 const DEFAULT_DAILY_CAP = 100;
@@ -18,19 +19,20 @@ let dailyWindowStart = startOfUtcDay();
 
 const SYSTEM_PROMPT = `You are a B2B lead enrichment agent.
 
-Given a partial lead record, fill only fields that are null, empty, or missing.
+Given a partial lead record, find and fill in as much accurate information as possible. You may update any field if you find better or more accurate data from a reliable source.
 
 PROCESS
 
-1. Identify missing fields.
-2. Use provided company information and public sources to fill them.
-3. Preserve all existing values exactly.
-4. Return all valid contacts found.
-5. Stop when no reliable information remains.
+1. Navigate to the company website provided — this is mandatory as the first step.
+2. Identify any missing or potentially outdated fields.
+3. Search team pages, about pages, contact pages, and staff directories.
+4. Update fields with the most accurate and current information you find.
+5. Return all valid contacts found.
+6. Stop when no reliable information remains or you have exhausted available pages.
 
 ALLOWED SOURCES
 
-* Company website
+* Company website (mandatory first stop)
 * Team/About pages
 * Contact pages
 * Staff directories
@@ -41,9 +43,9 @@ ALLOWED SOURCES
 
 RULES
 
-* Never overwrite existing values.
-* Never fabricate information.
-* Only record information explicitly found in a source.
+* Always start by navigating to the company website.
+* Update any field where you find more accurate or complete data.
+* Never fabricate information — only record what you explicitly find in a source.
 * Leave unresolved fields as null.
 * Accuracy > completeness.
 
@@ -82,7 +84,7 @@ EMAILS
 * Generate pattern_guessed emails only if a real email from the same domain establishes the format.
 
 When you have enough information OR no further progress is possible, call the "finish" tool.
-The "finish" result must use the same JSON schema as the input record, with missing fields filled where confidently verified.`;
+The "finish" result must use the same JSON schema as the input record, with fields updated where confidently verified.`;
 
 interface AgentResult {
   institution?: Partial<{
@@ -106,6 +108,12 @@ export const coworkProvider: EnrichmentProvider = {
   name: "cowork_claude",
 
   async enrich(input: EnrichmentInput): Promise<ProviderResult | null> {
+    // Website is mandatory — without it the agent has no starting point.
+    if (!input.seed.companyWebsite) {
+      console.warn(`[cowork] skipping lead ${input.leadId} — no companyWebsite`);
+      return null;
+    }
+
     if (!shouldRun()) return null;
     await throttle();
 
@@ -169,7 +177,7 @@ function buildRecord(input: EnrichmentInput): object {
       type: null,
       registration_id: null,
       size: null,
-      website: seed.companyWebsite ?? null,
+      website: seed.companyWebsite,
       region: market,
     },
     contact: {
@@ -188,10 +196,14 @@ function buildRecord(input: EnrichmentInput): object {
 
 function buildTask(input: EnrichmentInput): string {
   const record = buildRecord(input);
-  const websiteHint = input.seed.companyWebsite
-    ? `Start by navigating to: ${input.seed.companyWebsite}\n\n`
-    : "";
-  const prompt = `${websiteHint}INPUT:\n${JSON.stringify(record, null, 2)}\n\nOUTPUT:\nReturn raw JSON only using the same schema, with missing fields filled where confidently verified.`;
+  // Website is guaranteed non-null here (checked in enrich() above).
+  const prompt = `Start by navigating to: ${input.seed.companyWebsite!}
+
+INPUT:
+${JSON.stringify(record, null, 2)}
+
+OUTPUT:
+Return raw JSON only using the same schema, with fields updated where confidently verified.`;
   console.log(`[cowork] built task for lead ${input.leadId}`);
   return prompt;
 }

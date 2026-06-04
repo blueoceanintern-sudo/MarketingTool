@@ -5,6 +5,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   triggerCampaignScrape,
   triggerCampaignDraftGeneration,
+  triggerCampaignEnrich,
   updateCampaignStatus,
   type CampaignStatus,
 } from "@/lib/api";
@@ -18,7 +19,7 @@ interface Props {
 
 export default function CampaignActions({ campaignId, status }: Props) {
   const queryClient = useQueryClient();
-  const [running, setRunning] = useState<"scrape" | "drafts" | null>(null);
+  const [running, setRunning] = useState<"scrape" | "enrich" | "drafts" | null>(null);
   const [busyStatus, setBusyStatus] = useState<CampaignStatus | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -35,6 +36,9 @@ export default function CampaignActions({ campaignId, status }: Props) {
             ? "Scrape blocked (CAPTCHA or robots.txt)."
             : "Scrape failed.",
       );
+    } else if (event.kind === "enrichment_complete" && event.campaignId === campaignId && running === "enrich") {
+      setRunning(null);
+      setMessage(`Enrichment complete — ${event.count} lead${event.count === 1 ? "" : "s"} enriched.`);
     } else if (event.kind === "drafts" && event.campaignId === campaignId && running === "drafts") {
       setRunning(null);
       setMessage(
@@ -54,6 +58,18 @@ export default function CampaignActions({ campaignId, status }: Props) {
       }
       setMessage("Scraping…");
       setRunning("scrape");
+    },
+  });
+
+  const enrichMutation = useMutation({
+    mutationFn: () => triggerCampaignEnrich(campaignId),
+    onSuccess: ({ ok, count, error }) => {
+      if (!ok) {
+        setMessage(error ?? "Enrichment failed");
+        return;
+      }
+      setMessage(`Enriching ${count} lead${count === 1 ? "" : "s"}…`);
+      setRunning("enrich");
     },
   });
 
@@ -82,11 +98,17 @@ export default function CampaignActions({ campaignId, status }: Props) {
   });
 
   const scraping = scrapeMutation.isPending || running === "scrape";
+  const enriching = enrichMutation.isPending || running === "enrich";
   const drafting = draftMutation.isPending || running === "drafts";
 
   function handleScrape() {
     setMessage(null);
     scrapeMutation.mutate();
+  }
+
+  function handleEnrich() {
+    setMessage(null);
+    enrichMutation.mutate();
   }
 
   function handleGenerateDrafts() {
@@ -115,8 +137,18 @@ export default function CampaignActions({ campaignId, status }: Props) {
 
         <button
           type="button"
+          onClick={handleEnrich}
+          disabled={enriching || scraping || drafting || status === "complete"}
+          className="flex items-center gap-2 px-3 py-2 border border-primary text-primary rounded-lg text-[13px] font-semibold disabled:opacity-60"
+        >
+          <span className="material-symbols-outlined text-[18px]">manage_search</span>
+          {enriching ? "Enriching…" : "Enrich Leads"}
+        </button>
+
+        <button
+          type="button"
           onClick={handleGenerateDrafts}
-          disabled={drafting || scraping || status === "complete" || status === "draft"}
+          disabled={drafting || scraping || enriching || status === "complete" || status === "draft"}
           title={status === "draft" ? "Activate the campaign before generating drafts" : undefined}
           className="flex items-center gap-2 px-3 py-2 border border-primary text-primary rounded-lg text-[13px] font-semibold disabled:opacity-60"
         >

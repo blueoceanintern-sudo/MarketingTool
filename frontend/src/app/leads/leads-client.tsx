@@ -167,13 +167,6 @@ export default function LeadsClient({
       <div className="bg-white rounded-lg border border-grey-100 overflow-hidden">
         <div className="px-5 py-4 border-b border-grey-100 bg-grey-50 flex flex-wrap gap-3 items-center justify-between">
           <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => enrichMutation.mutate()}
-              disabled={enrichMutation.isPending}
-              className="px-3 py-1.5 bg-primary text-white text-[13px] font-medium rounded hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {enrichMutation.isPending ? "Enriching…" : "Enrich Leads"}
-            </button>
             <select
               value={statusFilter}
               onChange={(e) => navigate({ status: e.target.value, page: 1 })}
@@ -229,18 +222,16 @@ export default function LeadsClient({
                 <tr className="text-left">
                   <th className="px-6 py-4 text-[14px] font-semibold">Name</th>
                   <th className="px-4 py-4 text-[14px] font-semibold">Company</th>
-                  <th className="px-4 py-4 text-[14px] font-semibold">Email</th>
-                  <th className="px-4 py-4 text-[14px] font-semibold">Email Status</th>
-                  <th className="px-4 py-4 text-[14px] font-semibold">Routing</th>
-                  <th className="px-4 py-4 text-[14px] font-semibold" title="Which provider filled in the lead's institution/contact details">Enrichment Source</th>
                   <th className="px-4 py-4 text-[14px] font-semibold">Campaign</th>
+                  <th className="px-4 py-4 text-[14px] font-semibold">Email</th>
+                  <th className="px-4 py-4 text-[14px] font-semibold text-center">Verified</th>
+                  <th className="px-4 py-4 text-[14px] font-semibold">Routing</th>
                   <th className="px-4 py-4 text-[14px] font-semibold">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-grey-100">
                 {data.map((lead) => {
                   const badge = statusConfig[lead.status];
-                  const emailBadge = lead.email_status ? emailStatusConfig[lead.email_status] : null;
                   const routeBadge = lead.routing ? routingConfig[lead.routing] : null;
                   return (
                     <tr
@@ -252,24 +243,6 @@ export default function LeadsClient({
                         {lead.first_name} {lead.last_name}
                       </td>
                       <td className="px-4 py-3 text-[13px]">{lead.company_name}</td>
-                      <td className="px-4 py-3 text-[13px] font-mono">{lead.email}</td>
-                      <td className="px-4 py-3">
-                        {emailBadge ? (
-                          <span className={`px-2 py-0.5 text-xs font-bold rounded-full ${emailBadge.className}`}>
-                            {emailBadge.label}
-                          </span>
-                        ) : <span className="text-grey-400 text-xs">—</span>}
-                      </td>
-                      <td className="px-4 py-3">
-                        {routeBadge ? (
-                          <span className={`px-2 py-0.5 text-xs font-bold rounded-full ${routeBadge.className}`}>
-                            {routeBadge.label}
-                          </span>
-                        ) : <span className="text-grey-400 text-xs">—</span>}
-                      </td>
-                      <td className="px-4 py-3 text-[12px] text-grey-500">
-                        {lead.enrichment_source ? sourceLabel[lead.enrichment_source] : "—"}
-                      </td>
                       <td className="px-4 py-3 text-[12px] text-grey-500">
                         {lead.campaigns.length === 0 ? (
                           "—"
@@ -285,6 +258,23 @@ export default function LeadsClient({
                             ))}
                           </div>
                         )}
+                      </td>
+                      <td className="px-4 py-3 text-[13px] font-mono">{lead.email}</td>
+                      <td className="px-4 py-3 text-center">
+                        {lead.is_verified ? (
+                          <span className="material-symbols-outlined text-success text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>
+                            verified
+                          </span>
+                        ) : (
+                          <span className="material-symbols-outlined text-grey-300 text-[18px]">verified</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        {routeBadge ? (
+                          <span className={`px-2 py-0.5 text-xs font-bold rounded-full ${routeBadge.className}`}>
+                            {routeBadge.label}
+                          </span>
+                        ) : <span className="text-grey-400 text-xs">—</span>}
                       </td>
                       <td className="px-4 py-3">
                         <span className={`px-2 py-0.5 text-xs font-bold rounded-full ${badge.className}`}>

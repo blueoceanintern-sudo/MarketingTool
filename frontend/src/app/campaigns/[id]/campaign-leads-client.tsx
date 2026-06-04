@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import type { Lead } from "@/lib/api";
 import { campaignLeadsOptions } from "@/lib/queries";
+import { useJobEvents } from "@/lib/job-events";
 import LeadActions from "./lead-actions";
 import Pagination from "@/components/pagination";
 
@@ -36,10 +37,8 @@ interface Props {
 
 export default function CampaignLeadsClient({ campaignId, initialPage }: Props) {
   const [page, setPage] = useState(initialPage);
+  const [toast, setToast] = useState<string | null>(null);
 
-  // keepPreviousData keeps the current page visible while the next one loads.
-  // Lead add/remove (in LeadActions) invalidates the campaign queries, which
-  // refetches this list automatically.
   const { data, isFetching } = useQuery({
     ...campaignLeadsOptions(campaignId, page, LEADS_PER_PAGE),
     placeholderData: keepPreviousData,
@@ -52,17 +51,34 @@ export default function CampaignLeadsClient({ campaignId, initialPage }: Props) 
   const start = total === 0 ? 0 : (page - 1) * LEADS_PER_PAGE + 1;
   const end = Math.min(page * LEADS_PER_PAGE, total);
 
+  function showToast(message: string) {
+    setToast(message);
+    setTimeout(() => setToast(null), 4000);
+  }
+
+  // Listen for enrichment_complete SSE events scoped to this campaign.
+  useJobEvents((event) => {
+    if (event.kind === "enrichment_complete" && event.campaignId === campaignId) {
+      showToast(
+        event.count > 0
+          ? `${event.count} lead${event.count !== 1 ? "s" : ""} enriched.`
+          : "Enrichment complete — no leads updated.",
+      );
+    }
+  });
+
   return (
     <>
-      {/* Leads table card */}
       <div className={`bg-white rounded-lg shadow-[0_1px_3px_rgba(27,45,91,0.08)] border border-grey-100 overflow-hidden transition-opacity duration-150 ${isFetching ? "opacity-60" : ""}`}>
         <div className="px-6 py-4 border-b border-grey-100 bg-grey-50 flex items-center justify-between">
           <h3 className="text-[14px] font-semibold text-primary">Leads</h3>
-          {total > 0 && (
-            <p className="text-[13px] text-grey-500">
-              {total === 0 ? "" : `${start}–${end} of ${total.toLocaleString()}`}
-            </p>
-          )}
+          <div className="flex items-center gap-3">
+            {total > 0 && (
+              <p className="text-[13px] text-grey-500">
+                {`${start}–${end} of ${total.toLocaleString()}`}
+              </p>
+            )}
+          </div>
         </div>
 
         {leads.length === 0 && !isFetching ? (
@@ -74,9 +90,9 @@ export default function CampaignLeadsClient({ campaignId, initialPage }: Props) 
                 <tr className="bg-grey-50 border-b border-grey-100">
                   <th className="px-6 py-3 text-[14px] font-semibold text-grey-700">Name</th>
                   <th className="px-6 py-3 text-[14px] font-semibold text-grey-700">Company</th>
-                  <th className="px-6 py-3 text-[14px] font-semibold text-grey-700">Role</th>
+                  <th className="px-6 py-3 text-[14px] font-semibold text-grey-700">Campaign</th>
                   <th className="px-6 py-3 text-[14px] font-semibold text-grey-700">Email</th>
-                  <th className="px-4 py-3 text-[14px] font-semibold text-grey-700 text-center">Verified</th>
+                  <th className="px-6 py-3 text-[14px] font-semibold text-grey-700">Role</th>
                   <th className="px-6 py-3 text-[14px] font-semibold text-grey-700">Status</th>
                   <th className="px-2 py-3 text-[14px] font-semibold text-grey-700 text-right pr-6"></th>
                 </tr>
@@ -98,17 +114,19 @@ export default function CampaignLeadsClient({ campaignId, initialPage }: Props) 
                         </div>
                       </td>
                       <td className="px-6 py-4 text-[13px] text-grey-700">{lead.company_name}</td>
-                      <td className="px-6 py-4 text-[13px] text-grey-500">{lead.role}</td>
-                      <td className="px-6 py-4 text-[13px] font-mono text-ocean-light">{lead.email}</td>
-                      <td className="px-4 py-4 text-center">
-                        {lead.is_verified ? (
-                          <span className="material-symbols-outlined text-success text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>
-                            verified
-                          </span>
-                        ) : (
-                          <span className="material-symbols-outlined text-grey-300 text-[18px]">verified</span>
+                      <td className="px-6 py-4 text-[13px] text-grey-500">
+                        {lead.campaigns.length === 0 ? "—" : (
+                          <div className="flex flex-wrap gap-1">
+                            {lead.campaigns.map((c) => (
+                              <span key={c.id} className="inline-flex items-center px-2 py-0.5 rounded-full bg-ocean-wash text-primary text-[11px] font-medium">
+                                {c.name}
+                              </span>
+                            ))}
+                          </div>
                         )}
                       </td>
+                      <td className="px-6 py-4 text-[13px] font-mono text-ocean-light">{lead.email}</td>
+                      <td className="px-6 py-4 text-[13px] text-grey-500">{lead.role}</td>
                       <td className="px-6 py-4">
                         <span className={`px-2.5 py-0.5 rounded-full text-[13px] font-medium ${badge.className}`}>
                           {badge.label}
@@ -140,6 +158,16 @@ export default function CampaignLeadsClient({ campaignId, initialPage }: Props) 
           </div>
         )}
       </div>
+
+      {/* Toast notification — appears at bottom of page when enrichment completes */}
+      {toast && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 bg-primary text-white px-4 py-3 rounded-lg shadow-lg text-[14px] max-w-xs animate-fade-in">
+          <span className="material-symbols-outlined text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>
+            check_circle
+          </span>
+          {toast}
+        </div>
+      )}
     </>
   );
 }
