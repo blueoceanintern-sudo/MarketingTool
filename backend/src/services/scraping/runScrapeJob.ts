@@ -29,7 +29,7 @@ async function scrapeSourceUrl(
 // (existing lead linked, skipped, or invalid email).
 async function persistScrapedLead(
   campaignId: string,
-  scraped: { company?: string; email?: string; website: string },
+  scraped: { company?: string; email?: string; website: string; firstName?: string; lastName?: string; role?: string },
   campaignGeo: string,
   campaignVertical: string,
   scraperUsed: "crawl4ai" | "cheerio"
@@ -91,9 +91,9 @@ async function persistScrapedLead(
   const [lead] = await db.insert(leads).values({
     companyId: company.id,
     email,
-    firstName: null,
-    lastName: null,
-    role: null,
+    firstName: scraped.firstName ?? null,
+    lastName: scraped.lastName ?? null,
+    role: scraped.role ?? null,
     isVerified: false,
     emailStatus: "pattern_guessed",
     scraperUsed,

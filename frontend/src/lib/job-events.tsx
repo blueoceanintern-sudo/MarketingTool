@@ -65,7 +65,10 @@ export function JobEventsProvider({ children }: { children: ReactNode }) {
         }
         case "enrichment_complete":
           queryClient.invalidateQueries({ queryKey: keys.campaigns });
-          queryClient.invalidateQueries({ queryKey: ["campaigns", event.campaignId, "leads"] });
+          queryClient.invalidateQueries({ queryKey: keys.leads });
+          if (event.campaignId) {
+            queryClient.invalidateQueries({ queryKey: ["campaigns", event.campaignId, "leads"] });
+          }
           break;
         case "drafts":
           queryClient.invalidateQueries({ queryKey: keys.campaigns });
