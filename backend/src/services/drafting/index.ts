@@ -63,7 +63,6 @@ interface DraftRequest {
   campaign?: CampaignContext;
 }
 
-const BURN_IN_THRESHOLD = 50;
 const NEGATIVE_RATE_THRESHOLD = 0.05;
 const NEGATIVE_FILTER_MIN_SENDS = 30;
 
@@ -104,11 +103,9 @@ function thompsonSample<T extends { sendCount: number; positiveIntentCount: numb
   );
   const pool = eligible.length > 0 ? eligible : items;
 
-  // Phase A — burn-in: pick uniformly among templates that haven't hit 50 sends yet.
-  const burnIn = pool.filter((t) => t.sendCount < BURN_IN_THRESHOLD);
-  if (burnIn.length > 0) return burnIn[Math.floor(Math.random() * burnIn.length)];
-
-  // Phase B — Thompson Sampling: sample from Beta(positiveIntentCount+1, nonPositive+1).
+  // Thompson Sampling for all templates. New templates (sendCount=0) start with
+  // Beta(1,1) — a uniform distribution — so they compete naturally with high
+  // uncertainty and get explored without starving proven performers.
   let best: T | undefined;
   let bestSample = -1;
   for (const item of pool) {
