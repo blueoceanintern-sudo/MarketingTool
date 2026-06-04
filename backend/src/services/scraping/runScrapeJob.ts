@@ -4,6 +4,7 @@ import { campaigns, campaignLeads, campaignLeadExclusions, companies, leads, scr
 import { scrapeWithFallback } from "../scrapers/crawl4aiScraper";
 import { scrapeWebsite } from "../scrapers/cheerioScraper";
 import { isValidLeadEmail } from "../scrapers/emailFilter";
+import { emitJobEvent } from "../events";
 
 function parseGeographies(geography: string): string[] {
   return geography
@@ -102,6 +103,7 @@ export async function runScrapeJob(jobId: string, campaignId: string): Promise<v
       .update(scrapeJobs)
       .set({ status: "failed", errorMessage: "Campaign not found", completedAt: new Date() })
       .where(eq(scrapeJobs.id, jobId));
+    await emitJobEvent({ kind: "scrape", campaignId, status: "failed" });
     return;
   }
 
@@ -131,6 +133,7 @@ export async function runScrapeJob(jobId: string, campaignId: string): Promise<v
         completedAt: new Date(),
       })
       .where(eq(scrapeJobs.id, jobId));
+    await emitJobEvent({ kind: "scrape", campaignId, status: "failed" });
     return;
   }
 
@@ -146,6 +149,9 @@ export async function runScrapeJob(jobId: string, campaignId: string): Promise<v
         if (saved) {
           savedForSource++;
           leadsScraped++;
+          // Fire-and-forget per-insert progress so the frontend can grow the
+          // leads table live; the client throttles the resulting refetches.
+          void emitJobEvent({ kind: "scrape_progress", campaignId, leadsScraped });
         }
       }
       console.log(`[scrape] ${source.name} → scraper=${result.scraper}, found=${result.leads.length}, saved=${savedForSource}`);
@@ -162,6 +168,7 @@ export async function runScrapeJob(jobId: string, campaignId: string): Promise<v
             completedAt: new Date(),
           })
           .where(eq(scrapeJobs.id, jobId));
+        await emitJobEvent({ kind: "scrape", campaignId, status: "blocked", leadsScraped });
         return;
       }
     }
@@ -177,4 +184,5 @@ export async function runScrapeJob(jobId: string, campaignId: string): Promise<v
       completedAt: new Date(),
     })
     .where(eq(scrapeJobs.id, jobId));
+  await emitJobEvent({ kind: "scrape", campaignId, status, leadsScraped });
 }

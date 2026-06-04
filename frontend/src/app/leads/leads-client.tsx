@@ -1,19 +1,17 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import {
-  getLeadEnrichment,
   triggerEnrichment,
-  type Campaign,
   type EmailStatus,
-  type EnrichmentRecord,
   type EnrichmentRouting,
   type EnrichmentSource,
   type Lead,
-  type LeadsSummary,
   type LeadStatus,
 } from "@/lib/api";
+import { leadsOptions, leadEnrichmentOptions, campaignsOptions, keys, type LeadsParams } from "@/lib/queries";
 import Pagination from "@/components/pagination";
 
 const statusConfig: Record<LeadStatus, { label: string; className: string }> = {
@@ -43,50 +41,69 @@ const sourceLabel: Record<EnrichmentSource, string> = {
 };
 
 interface Props {
-  data: Lead[];
-  total: number;
   page: number;
-  limit: number;
-  totalPages: number;
-  summary: LeadsSummary;
   statusFilter: string;
   emailStatusFilter: string;
   routingFilter: string;
   campaignIdFilter: string;
-  allCampaigns: Campaign[];
 }
 
 export default function LeadsClient({
-  data,
-  total,
   page,
-  totalPages,
-  summary,
   statusFilter,
   emailStatusFilter,
   routingFilter,
   campaignIdFilter,
-  allCampaigns,
 }: Props) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [isPending, startTransition] = useTransition();
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
-  const [enriching, setEnriching] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
-  async function handleEnrich() {
-    setEnriching(true);
-    const result = await triggerEnrichment();
-    setEnriching(false);
-    if (result === null) {
-      setToast("Failed to start enrichment — check server logs.");
-    } else if (result.queued === 0) {
-      setToast("No scraped leads to enrich.");
-    } else {
-      setToast(`Enrichment started for ${result.queued} lead${result.queued === 1 ? "" : "s"}.`);
-    }
+  // Build the same params object the server prefetched with, so the query key
+  // matches and hydration is reused (no refetch on first paint).
+  const params: LeadsParams = {
+    page,
+    limit: 50,
+    status: statusFilter || undefined,
+    email_status: emailStatusFilter || undefined,
+    routing: routingFilter || undefined,
+    campaign_id: campaignIdFilter || undefined,
+  };
+
+  const { data: leadsResult, isFetching } = useQuery({
+    ...leadsOptions(params),
+    placeholderData: keepPreviousData,
+  });
+  const { data: allCampaigns = [] } = useQuery(campaignsOptions());
+
+  const data = leadsResult?.data ?? [];
+  const total = leadsResult?.total ?? 0;
+  const totalPages = leadsResult?.total_pages ?? 0;
+  const summary = leadsResult?.summary ?? { verified: 0, auto_queue: 0, rep_review: 0 };
+
+  function showToast(message: string) {
+    setToast(message);
     setTimeout(() => setToast(null), 4000);
   }
+
+  const enrichMutation = useMutation({
+    mutationFn: () => triggerEnrichment(),
+    onSuccess: (result) => {
+      if (result === null) {
+        showToast("Failed to start enrichment — check server logs.");
+      } else if (result.queued === 0) {
+        showToast("No scraped leads to enrich.");
+      } else {
+        showToast(`Enrichment started for ${result.queued} lead${result.queued === 1 ? "" : "s"}.`);
+        // Enrichment runs in the background; refetch the list so newly enriched
+        // leads surface once the worker finishes and the user refocuses.
+        queryClient.invalidateQueries({ queryKey: keys.leads });
+      }
+    },
+    onError: () => showToast("Failed to start enrichment — check server logs."),
+  });
 
   function navigate(updates: Record<string, string | number | null>) {
     const sp = new URLSearchParams();
@@ -122,7 +139,7 @@ export default function LeadsClient({
   }
 
   return (
-    <div className={`p-4 sm:p-6 lg:p-10 max-w-[1600px] mx-auto transition-opacity duration-150 ${isPending ? "opacity-60" : ""}`}>
+    <div className={`p-4 sm:p-6 lg:p-10 max-w-[1600px] mx-auto transition-opacity duration-150 ${isPending || isFetching ? "opacity-60" : ""}`}>
       <div className="mb-8">
         <h1 className="text-[20px] font-bold text-primary">All Leads</h1>
         <p className="text-[13px] text-grey-500 mt-1">{total.toLocaleString()} leads total</p>
@@ -151,11 +168,11 @@ export default function LeadsClient({
         <div className="px-5 py-4 border-b border-grey-100 bg-grey-50 flex flex-wrap gap-3 items-center justify-between">
           <div className="flex flex-wrap gap-2">
             <button
-              onClick={handleEnrich}
-              disabled={enriching}
+              onClick={() => enrichMutation.mutate()}
+              disabled={enrichMutation.isPending}
               className="px-3 py-1.5 bg-primary text-white text-[13px] font-medium rounded hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {enriching ? "Enriching…" : "Enrich Leads"}
+              {enrichMutation.isPending ? "Enriching…" : "Enrich Leads"}
             </button>
             <select
               value={statusFilter}
@@ -310,20 +327,7 @@ export default function LeadsClient({
 }
 
 function EnrichmentDrawer({ lead, onClose }: { lead: Lead; onClose: () => void }) {
-  const [record, setRecord] = useState<EnrichmentRecord | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    getLeadEnrichment(lead.id).then((r) => {
-      if (!cancelled) {
-        setRecord(r);
-        setLoading(false);
-      }
-    });
-    return () => { cancelled = true; };
-  }, [lead.id]);
+  const { data: record, isLoading: loading } = useQuery(leadEnrichmentOptions(lead.id));
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>

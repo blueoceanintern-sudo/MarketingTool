@@ -6,6 +6,8 @@ import { repliesRouter } from "./routes/replies";
 import { demosRouter } from "./routes/demos";
 import { analyticsRouter } from "./routes/analytics";
 import { adminRouter } from "./routes/admin";
+import { eventsRouter } from "./routes/events";
+import { startJobEventListener } from "./services/events";
 import "./workers";
 
 import { Hono } from "hono";
@@ -33,6 +35,10 @@ app.route("/api/v1", repliesRouter);
 app.route("/api/v1/demos", demosRouter);
 app.route("/api/v1/analytics", analyticsRouter);
 app.route("/api/v1", adminRouter);
+app.route("/api/v1", eventsRouter);
+
+// Start the Postgres LISTEN connection that fans job events out to SSE clients.
+void startJobEventListener();
 
 app.get("/", (c) => c.text("Backend running"));
 

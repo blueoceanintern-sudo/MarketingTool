@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 
 const STORAGE_KEY = "bo_rep_profile";
+const CHANGE_EVENT = "bo-profile-change";
 
 export interface RepProfile {
   name: string;
@@ -30,14 +31,38 @@ export function loadProfile(): RepProfile {
 
 export function saveProfile(profile: RepProfile) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(profile));
+  // `storage` only fires in other tabs; dispatch our own event so the header
+  // updates in this tab too.
+  window.dispatchEvent(new Event(CHANGE_EVENT));
+}
+
+// ── External-store glue (SSR-safe reads without effect/setState) ──────────────
+export function subscribeProfile(callback: () => void) {
+  window.addEventListener("storage", callback);
+  window.addEventListener(CHANGE_EVENT, callback);
+  return () => {
+    window.removeEventListener("storage", callback);
+    window.removeEventListener(CHANGE_EVENT, callback);
+  };
+}
+
+// getSnapshot must return a cached reference when unchanged, or React loops.
+let cachedRaw: string | null | undefined;
+let cachedProfile: RepProfile = DEFAULT_PROFILE;
+export function getProfileSnapshot(): RepProfile {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (raw === cachedRaw) return cachedProfile;
+  cachedRaw = raw;
+  cachedProfile = loadProfile();
+  return cachedProfile;
+}
+
+export function getServerProfile(): RepProfile {
+  return DEFAULT_PROFILE;
 }
 
 export default function ProfileHeader() {
-  const [profile, setProfile] = useState<RepProfile>(DEFAULT_PROFILE);
-
-  useEffect(() => {
-    setProfile(loadProfile());
-  }, []);
+  const profile = useSyncExternalStore(subscribeProfile, getProfileSnapshot, getServerProfile);
 
   const initials = profile.name
     .split(" ")

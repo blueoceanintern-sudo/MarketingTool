@@ -4,6 +4,7 @@ import { sourceRegistry, suppressionList, promptTemplates, emailDrafts, campaign
 import { eq, and, inArray } from "drizzle-orm";
 import { logAudit } from "../services/audit/log";
 import { DIRECTORY_CONFIGS, discoverSources, getDirectoryConfig } from "../services/sourceRegistry";
+import { emitJobEvent } from "../services/events";
 
 // ---------------------------------------------------------------------------
 // CSV helpers (used by /registry/sources/import)
@@ -232,9 +233,12 @@ adminRouter.post("/registry/discover", async (c) => {
     .where(and(eq(campaigns.vertical, vertical), eq(campaigns.status, "active")))
     .limit(1);
 
-  void discoverSources(vertical, geo, anyCampaign?.id ?? null).catch((err) => {
-    console.error(`[discovery] manual refresh ${key} failed:`, err);
-  });
+  void discoverSources(vertical, geo, anyCampaign?.id ?? null)
+    .then((inserted) => emitJobEvent({ kind: "discovery", vertical, geo, inserted }))
+    .catch((err) => {
+      console.error(`[discovery] manual refresh ${key} failed:`, err);
+      void emitJobEvent({ kind: "discovery", vertical, geo, inserted: 0 });
+    });
 
   await logAudit({
     actor: "user",

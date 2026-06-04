@@ -4,7 +4,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, type SubmitEvent } from "react";
 import { toast } from "sonner";
-import { createCampaign, type Campaign, type CampaignStatus } from "@/lib/api";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { createCampaign, type CampaignStatus } from "@/lib/api";
+import { campaignsOptions, keys } from "@/lib/queries";
 
 const statusConfig: Record<CampaignStatus, { label: string; className: string }> = {
   active: { label: "Active", className: "bg-success-bg text-success" },
@@ -17,17 +19,13 @@ function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString("en-SG", { day: "numeric", month: "short", year: "numeric" });
 }
 
-interface Props {
-  initialCampaigns: Campaign[];
-}
-
-export default function CampaignsClient({ initialCampaigns }: Props) {
+export default function CampaignsClient() {
   const router = useRouter();
-  const [campaigns, setCampaigns] = useState(initialCampaigns);
+  const queryClient = useQueryClient();
+  const { data: campaigns = [] } = useQuery(campaignsOptions());
   const [statusFilter, setStatusFilter] = useState<CampaignStatus | "all">("all");
   const [showModal, setShowModal] = useState(false);
   const [modalStep, setModalStep] = useState<1 | 2>(1);
-  const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [form, setForm] = useState({
     name: "",
@@ -79,50 +77,57 @@ export default function CampaignsClient({ initialCampaigns }: Props) {
   const totalSent = campaigns.reduce((s, c) => s + c.sent, 0);
   const totalPending = campaigns.reduce((s, c) => s + c.drafts_pending, 0);
 
-  async function handleCreate(e: SubmitEvent<HTMLFormElement>) {
+  const createMutation = useMutation({
+    mutationFn: async () => {
+      const painPoints = form.pain_points
+        .split("\n")
+        .map((p) => p.trim())
+        .filter(Boolean);
+      const { campaign, discovery, error } = await createCampaign({
+        name: form.name.trim(),
+        vertical: form.vertical.trim(),
+        geography: form.geography.split(",").map((g) => g.trim().toUpperCase()).filter(Boolean),
+        company_size_target: form.company_size_target,
+        status: "draft",
+        description: form.description.trim() || null,
+        pain_points: painPoints,
+        call_to_action: form.call_to_action.trim() || null,
+      });
+      if (error || !campaign) throw new Error(error ?? "Failed to create campaign");
+      return { campaign, discovery };
+    },
+    onSuccess: ({ campaign, discovery }) => {
+      queryClient.invalidateQueries({ queryKey: keys.campaigns });
+      setShowModal(false);
+      resetForm();
+
+      // Surface auto-discovery outcome. already_seeded is the silent case
+      // (source pool already exists) — no toast needed there.
+      if (discovery?.status === "triggered") {
+        toast.info(discovery.message, {
+          description: discovery.domains.length
+            ? `Searching: ${discovery.domains.join(", ")}`
+            : undefined,
+          duration: 8000,
+        });
+      } else if (discovery?.status === "skipped_no_config") {
+        toast.warning(discovery.message, {
+          action: { label: "Open Registry", onClick: () => router.push("/registry") },
+          duration: 10000,
+        });
+      }
+
+      router.push(`/campaigns/${campaign.id}`);
+    },
+    onError: (err) => {
+      setFormError(err instanceof Error ? err.message : "Failed to create campaign");
+    },
+  });
+
+  function handleCreate(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault();
-    setSubmitting(true);
     setFormError(null);
-    const painPoints = form.pain_points
-      .split("\n")
-      .map((p) => p.trim())
-      .filter(Boolean);
-    const { campaign, discovery, error } = await createCampaign({
-      name: form.name.trim(),
-      vertical: form.vertical.trim(),
-      geography: form.geography.split(",").map((g) => g.trim().toUpperCase()).filter(Boolean),
-      company_size_target: form.company_size_target,
-      status: "draft",
-      description: form.description.trim() || null,
-      pain_points: painPoints,
-      call_to_action: form.call_to_action.trim() || null,
-    });
-    setSubmitting(false);
-    if (error || !campaign) {
-      setFormError(error ?? "Failed to create campaign");
-      return;
-    }
-    setCampaigns((prev) => [campaign, ...prev]);
-    setShowModal(false);
-    resetForm();
-
-    // Surface auto-discovery outcome. already_seeded is the silent case
-    // (source pool already exists) — no toast needed there.
-    if (discovery?.status === "triggered") {
-      toast.info(discovery.message, {
-        description: discovery.domains.length
-          ? `Searching: ${discovery.domains.join(", ")}`
-          : undefined,
-        duration: 8000,
-      });
-    } else if (discovery?.status === "skipped_no_config") {
-      toast.warning(discovery.message, {
-        action: { label: "Open Registry", onClick: () => router.push("/registry") },
-        duration: 10000,
-      });
-    }
-
-    router.push(`/campaigns/${campaign.id}`);
+    createMutation.mutate();
   }
 
   return (
@@ -331,8 +336,8 @@ export default function CampaignsClient({ initialCampaigns }: Props) {
                     <button type="button" onClick={closeModal} className="px-4 py-2 border rounded-lg">
                       Cancel
                     </button>
-                    <button type="submit" disabled={submitting} className="px-6 py-2 bg-primary text-white rounded-lg">
-                      {submitting ? "Creating…" : "Create"}
+                    <button type="submit" disabled={createMutation.isPending} className="px-6 py-2 bg-primary text-white rounded-lg">
+                      {createMutation.isPending ? "Creating…" : "Create"}
                     </button>
                   </div>
                 </div>
