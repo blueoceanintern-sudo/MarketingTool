@@ -1,7 +1,7 @@
 import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
 import { db } from "../../db";
-import { suppressionList, emailDrafts, emailEvents, campaigns, leads } from "../../db/schema";
-import { eq, and, isNotNull, count, gte, min } from "drizzle-orm";
+import { suppressionList, emailDrafts, emailEvents, campaigns, leads, promptTemplates } from "../../db/schema";
+import { eq, and, isNotNull, count, gte, min, sql } from "drizzle-orm";
 
 import { buildEmailHtml } from "../../templates/outreachEmail";
 
@@ -167,7 +167,8 @@ export async function sendDraft(payload: SendPayload): Promise<SendResult> {
     await Promise.all([
       db.insert(emailEvents).values({ draftId, leadId, sesMessageId: `<${fakeMessageId}@dry-run.local>`, sentAt: now }),
       db.update(emailDrafts).set({ status: "sent" }).where(eq(emailDrafts.id, draftId)),
-      db.update(leads).set({ lastContactedAt: now }).where(eq(leads.id, leadId)),
+      db.update(leads).set({ lastContactedAt: now, lastDeliveredTemplateId: draft.templateId }).where(eq(leads.id, leadId)),
+      db.update(promptTemplates).set({ sendCount: sql`${promptTemplates.sendCount} + 1` }).where(eq(promptTemplates.id, draft.templateId)),
     ]);
     console.log(`[sender:dry-run] draft ${draftId} → ${toEmail} | subject: "${draft.subject}"`);
     return { draftId, status: "sent", messageId: fakeMessageId };
@@ -193,7 +194,8 @@ export async function sendDraft(payload: SendPayload): Promise<SendResult> {
   await Promise.all([
     db.insert(emailEvents).values({ draftId, leadId, sesMessageId, sentAt: now }),
     db.update(emailDrafts).set({ status: "sent" }).where(eq(emailDrafts.id, draftId)),
-    db.update(leads).set({ lastContactedAt: now }).where(eq(leads.id, leadId)),
+    db.update(leads).set({ lastContactedAt: now, lastDeliveredTemplateId: draft.templateId }).where(eq(leads.id, leadId)),
+    db.update(promptTemplates).set({ sendCount: sql`${promptTemplates.sendCount} + 1` }).where(eq(promptTemplates.id, draft.templateId)),
   ]);
 
   return { draftId, status: "sent", messageId };
@@ -210,6 +212,7 @@ interface FollowUpPayload {
   campaignId: string;
   isVerified: boolean;
   hasRiskFlags: boolean;
+  templateId?: string;
 }
 
 // Sends a follow-up email. Same hard gates as sendDraft except there is no
@@ -218,7 +221,7 @@ interface FollowUpPayload {
 // equivalent gate is enforced by the cron before calling here: sentAt IS NULL,
 // content is present, and sequential ordering is satisfied.
 export async function sendFollowUpEmail(payload: FollowUpPayload): Promise<SendResult> {
-  const { originalDraftId, subject, body, toEmail, leadId, campaignId, isVerified, hasRiskFlags } = payload;
+  const { originalDraftId, subject, body, toEmail, leadId, campaignId, isVerified, hasRiskFlags, templateId } = payload;
 
   const [suppressed] = await db
     .select({ id: suppressionList.id })
@@ -262,10 +265,17 @@ export async function sendFollowUpEmail(payload: FollowUpPayload): Promise<SendR
   if (process.env.SES_DRY_RUN === "true") {
     const fakeMessageId = `dry-run-${Date.now()}`;
     const now = new Date();
-    await Promise.all([
+    const leadSet = templateId
+      ? { lastContactedAt: now, lastDeliveredTemplateId: templateId }
+      : { lastContactedAt: now };
+    const updates: Promise<unknown>[] = [
       db.insert(emailEvents).values({ draftId: originalDraftId, leadId, sesMessageId: `<${fakeMessageId}@dry-run.local>`, sentAt: now }),
-      db.update(leads).set({ lastContactedAt: now }).where(eq(leads.id, leadId)),
-    ]);
+      db.update(leads).set(leadSet).where(eq(leads.id, leadId)),
+    ];
+    if (templateId) {
+      updates.push(db.update(promptTemplates).set({ sendCount: sql`${promptTemplates.sendCount} + 1` }).where(eq(promptTemplates.id, templateId)));
+    }
+    await Promise.all(updates);
     console.log(`[sender:dry-run] follow-up → ${toEmail} | subject: "${subject}"`);
     return { draftId: originalDraftId, status: "sent", messageId: fakeMessageId };
   }
@@ -287,10 +297,17 @@ export async function sendFollowUpEmail(payload: FollowUpPayload): Promise<SendR
   const sesMessageId = messageId ? `<${messageId}@email.amazonses.com>` : null;
 
   const now = new Date();
-  await Promise.all([
+  const leadSet = templateId
+    ? { lastContactedAt: now, lastDeliveredTemplateId: templateId }
+    : { lastContactedAt: now };
+  const updates: Promise<unknown>[] = [
     db.insert(emailEvents).values({ draftId: originalDraftId, leadId, sesMessageId, sentAt: now }),
-    db.update(leads).set({ lastContactedAt: now }).where(eq(leads.id, leadId)),
-  ]);
+    db.update(leads).set(leadSet).where(eq(leads.id, leadId)),
+  ];
+  if (templateId) {
+    updates.push(db.update(promptTemplates).set({ sendCount: sql`${promptTemplates.sendCount} + 1` }).where(eq(promptTemplates.id, templateId)));
+  }
+  await Promise.all(updates);
 
   return { draftId: originalDraftId, status: "sent", messageId };
 }
