@@ -54,6 +54,8 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
       role: leads.role,
       companyName: companies.name,
       industry: companies.industry,
+      companySize: companies.companySize,
+      location: companies.location,
     })
     .from(campaignLeads)
     .innerJoin(leads, eq(campaignLeads.leadId, leads.id))
@@ -64,8 +66,20 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
     return { generated: 0, skipped_no_eligible: true, errors: [] };
   }
 
+  const incomplete = eligible.filter((l) => !l.role || (!l.firstName && !l.lastName));
+  if (incomplete.length > 0) {
+    console.warn(
+      `[drafting] skipping ${incomplete.length} lead(s) with missing role or name: ${incomplete.map((l) => l.id).join(", ")}`,
+    );
+  }
+  const complete = eligible.filter((l) => l.role && (l.firstName || l.lastName));
+
+  if (complete.length === 0) {
+    return { generated: 0, skipped_no_eligible: true, errors: [] };
+  }
+
   const campaignContext = toCampaignContext(campaign);
-  const requests = eligible.map((lead) => ({
+  const requests = complete.map((lead) => ({
     leadId: lead.id,
     campaignId,
     lead: {
@@ -74,6 +88,8 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
       role: lead.role ?? undefined,
       companyName: lead.companyName,
       industry: lead.industry,
+      companySize: lead.companySize,
+      location: lead.location,
     },
     campaign: campaignContext,
   }));
