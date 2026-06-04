@@ -370,9 +370,18 @@ repliesRouter.post("/webhooks/ses/reply", async (c) => {
         .limit(1);
 
       if (tmpl && tmpl.sendCount > 0 && tmpl.spamComplaintCount >= 3 && tmpl.spamComplaintCount / tmpl.sendCount >= 0.001) {
-        await db.update(promptTemplates).set({ active: false }).where(eq(promptTemplates.id, complainant.lastDeliveredTemplateId));
-        await db.update(promptTemplates).set({ active: false }).where(eq(promptTemplates.parentTemplateId, complainant.lastDeliveredTemplateId));
-        console.error(`[reply-webhook:kill-switch] template ${complainant.lastDeliveredTemplateId} disabled — spam complaint rate exceeded 0.1%. Descendants frozen.`);
+        const killedId = complainant.lastDeliveredTemplateId;
+        await db.update(promptTemplates).set({ active: false }).where(eq(promptTemplates.id, killedId));
+        const directChildren = await db
+          .select({ id: promptTemplates.id })
+          .from(promptTemplates)
+          .where(eq(promptTemplates.parentTemplateId, killedId));
+        await db.update(promptTemplates).set({ active: false }).where(eq(promptTemplates.parentTemplateId, killedId));
+        if (directChildren.length > 0) {
+          const childIds = directChildren.map((c) => c.id);
+          await db.update(promptTemplates).set({ active: false }).where(inArray(promptTemplates.parentTemplateId, childIds));
+        }
+        console.error(`[reply-webhook:kill-switch] template ${killedId} disabled — spam complaint rate exceeded 0.1%. Full lineage frozen.`);
       }
     }
     console.log(`[reply-webhook:complaint] processed ${complainedEmails.length} complaint(s)`);
