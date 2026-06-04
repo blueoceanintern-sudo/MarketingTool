@@ -87,7 +87,7 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
       lastName: lead.lastName ?? undefined,
       role: lead.role ?? undefined,
       companyName: lead.companyName,
-      industry: lead.industry,
+      industry: lead.industry ?? undefined,
       companySize: lead.companySize,
       location: lead.location,
     },

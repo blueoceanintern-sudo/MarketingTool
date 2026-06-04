@@ -223,7 +223,7 @@ export async function runFollowUpSender() {
             lastName: fu.leadLastName ?? undefined,
             role: fu.leadRole ?? undefined,
             companyName: fu.companyName,
-            industry: fu.companyIndustry,
+            industry: fu.companyIndustry ?? undefined,
             companySize: fu.companySize ?? undefined,
             location: fu.companyLocation ?? undefined,
           },

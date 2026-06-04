@@ -11,7 +11,7 @@ import type { EnrichmentInput, EnrichmentProvider, ProviderResult } from "./type
 
 const MIN_INTERVAL_MS = 2_000;
 const DEFAULT_DAILY_CAP = 100;
-const AGENT_TIMEOUT_MS = 60_000;
+const AGENT_TIMEOUT_MS = 90_000;
 
 let lastRunAt = 0;
 let dailyCount = 0;
@@ -77,6 +77,25 @@ VALIDATION
 * Prefer the most recent information available.
 * Verify title, company, and contact details are consistent across sources.
 * Ignore outdated employment information.
+
+COMPANY SIZE
+
+Determine "size" from the company's OWN website first (About, Team, or
+Careers pages — a stated headcount or a team roster you can count). Only
+if the website gives no usable headcount, make ONE attempt at the LinkedIn
+company page for its employee band. If the website already yields a
+headcount, do NOT visit LinkedIn. Do not visit any other external site
+for size.
+
+Map the headcount to a band:
+
+* small      — 1–50 employees
+* medium     — 51–250 employees
+* large      — 251–1000 employees
+* enterprise — more than 1000 employees
+
+If no reliable headcount is found, set size to "unknown". Never infer size
+from office photos, branding, tone, or word choice.
 
 EMAILS
 

@@ -31,6 +31,7 @@ async function persistScrapedLead(
   campaignId: string,
   scraped: { company?: string; email?: string; website: string },
   campaignGeo: string,
+  campaignVertical: string,
   scraperUsed: "crawl4ai" | "cheerio"
 ): Promise<string | null> {
   if (!scraped.email) return null;
@@ -69,9 +70,12 @@ async function persistScrapedLead(
     const [inserted] = await db
       .insert(companies)
       .values({
+        // industry seeds from the campaign vertical that surfaced this company —
+        // the one signal we actually have at scrape time. size is left unknown
+        // for enrichment to fill; we don't guess it here.
         name: companyName,
-        industry: "Unknown",
-        companySize: "small",
+        industry: campaignVertical,
+        companySize: "unknown",
         location: campaignGeo,
         // source holds the website URL — used by enrichment as the mandatory
         // navigation target for the Cowork browser agent.
@@ -154,7 +158,7 @@ export async function runScrapeJob(jobId: string, campaignId: string): Promise<v
       const result = await scrapeSourceUrl(source.url, source.scraperType);
       let savedForSource = 0;
       for (const lead of result.leads) {
-        const newLeadId = await persistScrapedLead(campaignId, lead, source.geo, result.scraper);
+        const newLeadId = await persistScrapedLead(campaignId, lead, source.geo, campaign.vertical, result.scraper);
         if (newLeadId !== null) {
           newLeadIds.push(newLeadId);
           savedForSource++;

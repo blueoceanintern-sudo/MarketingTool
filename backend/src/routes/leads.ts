@@ -309,12 +309,13 @@ leadsRouter.post("/:id/leads/import", async (c) => {
         if (m.includes("enterprise")) return "enterprise";
         if (m.includes("large")) return "large";
         if (m.includes("medium")) return "medium";
-        return "small";
-      })() as "small" | "medium" | "large" | "enterprise";
+        if (m.includes("small")) return "small";
+        return "unknown";
+      })() as "small" | "medium" | "large" | "enterprise" | "unknown";
 
       const [inserted] = await db.insert(companies).values({
         name: companyName,
-        industry: row["industry"] ?? "Unknown",
+        industry: row["industry"] ?? null,
         companySize: size,
         location: row["market"] ?? "",
         source: row["company_website"] || null,
