@@ -28,7 +28,31 @@
       "mcp__ide__getDiagnostics",
       "Bash(docker exec *)",
       "Bash(dir C:\\\\Users\\\\jachi\\\\Desktop\\\\MarketingTool\\\\backend *)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(bunx drizzle-kit *)",
+      "Bash(pg_isready -h localhost -p 5432)",
+      "PowerShell(psql *)",
+      "Bash(bun -e \"import { db } from './src/db'; const r = await db.execute\\('SELECT 1 as ok'\\); console.log\\(JSON.stringify\\(r.rows\\)\\);\")",
+      "Bash(bun -e ' *)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(nohup bun run src/index.ts)",
+      "Bash(echo \"PID: $!\")",
+      "Bash(curl *)",
+      "Bash(netstat -tlnp)",
+      "PowerShell(Get-Process *)",
+      "Bash(psql postgresql://postgres:postgres@localhost:5432/blueocean -c ' *)",
+      "Bash(powershell *)",
+      "PowerShell(Get-Command *)",
+      "PowerShell(Start-Process \"C:\\\\Program Files\\\\Docker\\\\Docker\\\\Docker Desktop.exe\" -ErrorAction SilentlyContinue)",
+      "PowerShell(docker run *)",
+      "Bash(DATABASE_URL=\"postgresql://postgres:postgres@localhost:5432/blueocean\" bunx drizzle-kit migrate)",
+      "PowerShell(docker stop blueocean-pg)",
+      "PowerShell(docker rm blueocean-pg)",
+      "PowerShell(docker exec blueocean-pg *)",
+      "PowerShell(docker cp \"C:\\\\Users\\\\jachi\\\\Desktop\\\\MarketingTool\\\\backend\\\\src\\\\db\\\\migrations\\\\0000_classy_zzzax.sql\" blueocean-pg:/tmp/0000.sql)",
+      "Bash(docker cp *)",
+      "Bash(Get-Content \"C:\\\\Users\\\\jachi\\\\Desktop\\\\MarketingTool\\\\backend\\\\src\\\\db\\\\migrations\\\\0006_remove_hostile_enum.sql\")",
+      "PowerShell(docker exec *)"
     ]
   }
 }

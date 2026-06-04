@@ -22,10 +22,12 @@ Each draft is scored 0–100 across four equally weighted (25%) factors:
 
 | Factor | Description |
 |---|---|
-| Lead data completeness | Role, company size, industry, market present |
+| Pain point-to-role fit | The selected pain point is a realistic daily concern for someone in the lead's role and industry — not just generically relevant to the campaign |
 | Campaign-goal alignment | Draft follows the assigned campaign's objective (re-engagement references prior relationship; certification upsell leads with ROI; event promo has a clear dated CTA). Generic language scores low. |
 | Personalisation quality | Specificity and relevance to the lead's context |
 | Length compliance | Under 125 words |
+
+Lead data completeness is enforced as a pre-generation hard gate (see Drafting service). All required fields must be present before a batch request is submitted; incomplete leads are skipped and logged.
 
 ## Approval Workflow (send phases)
 
@@ -85,9 +87,9 @@ The `follow-up-sender` worker runs daily at 9am in two phases:
 
 **Phase B — follow-up send.** Finds due `follow_ups` rows (`sent_at IS NULL`, `scheduled_at ≤ now`). If `subject`/`body` are null, generates content lazily via `generateFollowUpContent()` (Batch API, ~50% cheaper than sync) with attempt-aware prompts.
 
-The exact prompt wording per attempt is **a work in progress** — the current direction is a light nudge early, additional value in the middle, and a break-up message last, but treat the specifics as not yet finalized. The structural rules below are settled.
+`generateFollowUpContent()` passes: campaign context (description, pain points, CTA), lead context (name, role, company, industry, size, location), `original_subject` from the initial draft, `attempt_number`, and `previous_angle_tags` derived from prior `follow_ups.angle_tag` values for the same (lead, campaign). Follow-up content does **not** include the previous email body. Each follow-up returns an `angle_tag` that is persisted to `follow_ups.angle_tag` so subsequent attempts can exclude it.
 
-Follow-up content does **not** include the previous email body — campaign context + attempt number are sufficient. Sends go through `sendFollowUpEmail()`, which enforces all gates (suppression, weekly cap, risk flags, verified, daily cap, campaign active).
+Sends go through `sendFollowUpEmail()`, which enforces all gates (suppression, weekly cap, risk flags, verified, daily cap, campaign active).
 
 Rules:
 
@@ -102,8 +104,8 @@ Rules:
 | Classification | Action |
 |---|---|
 | Positive | Create a `demos` row, assign a rep, notify the dashboard |
-| Negative / unsubscribe | Add to `suppression_list`, stop follow-ups |
-| Neutral / question | Route to the flagged queue for human review |
-| Hostile / legal threat | Add `risk_flags` + suppress; **no auto-reply** |
+| Negative / unsubscribe | Add to `suppression_list` (`reason: manual`), stop follow-ups, cancel pending drafts. If reply contains legal threats or hostile language (`risk_flag: true`), also insert `risk_flags` (`hostile_interaction`). |
+| Out of office | Reschedule the next follow-up to the stated return date (default +7 days if none given) |
+| Neutral / question | Route to the flagged queue for human review; follow-up sequence continues |
 
 Inbound matching: resolve the lead by `From` address; match the email event via `In-Reply-To` → `email_events.ses_message_id`; fall back to the most recent unread event if the header is absent.

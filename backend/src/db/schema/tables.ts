@@ -91,6 +91,7 @@ export const promptTemplates = pgTable("prompt_templates", {
   description: text("description"),
   systemPrompt: text("system_prompt").notNull(),
   templateType: text("template_type", { enum: ["initial", "followup_1", "followup_2", "breakup"] }).default("initial").notNull(),
+  weight: integer("weight").default(1).notNull(),
   active: boolean("active").default(true).notNull(),
   parentTemplateId: uuid("parent_template_id"),
   createdBy: text("created_by").default("user").notNull(),
