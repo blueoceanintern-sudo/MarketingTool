@@ -8,6 +8,7 @@ import { keys } from "./queries";
 export type JobEvent =
   | { kind: "scrape"; campaignId: string; status: "complete" | "failed" | "blocked"; leadsScraped?: number }
   | { kind: "scrape_progress"; campaignId: string; leadsScraped: number }
+  | { kind: "enrichment_complete"; campaignId: string; count: number }
   | { kind: "drafts"; campaignId: string; generated: number }
   | { kind: "discovery"; vertical: string; geo: string; inserted: number };
 
@@ -62,6 +63,10 @@ export function JobEventsProvider({ children }: { children: ReactNode }) {
           }
           break;
         }
+        case "enrichment_complete":
+          queryClient.invalidateQueries({ queryKey: keys.campaigns });
+          queryClient.invalidateQueries({ queryKey: ["campaigns", event.campaignId, "leads"] });
+          break;
         case "drafts":
           queryClient.invalidateQueries({ queryKey: keys.campaigns });
           queryClient.invalidateQueries({ queryKey: keys.drafts });
