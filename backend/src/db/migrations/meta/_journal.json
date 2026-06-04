@@ -8,6 +8,13 @@
       "when": 1780555567994,
       "tag": "0000_curvy_black_bolt",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1780563789219,
+      "tag": "0001_tough_rictor",
+      "breakpoints": true
     }
   ]
 }
