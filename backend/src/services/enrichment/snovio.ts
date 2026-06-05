@@ -68,6 +68,9 @@ export const snovioProvider: EnrichmentProvider = {
     const seed = input.seed;
     if (!seed.email && !seed.companyWebsite) return null;
 
+    const { SNOVIO_CLIENT_ID: id, SNOVIO_CLIENT_SECRET: secret } = process.env;
+    if (!id || !secret) return null;
+
     const token = await getAccessToken();
 
     if (seed.email) {

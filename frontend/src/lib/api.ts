@@ -253,6 +253,20 @@ export async function triggerCampaignScrape(campaignId: string): Promise<{ ok: b
   }
 }
 
+export async function triggerCampaignEnrich(campaignId: string): Promise<{ ok: boolean; count?: number; error?: string }> {
+  try {
+    const res = await fetch(`${BASE}/api/v1/campaigns/${campaignId}/enrich`, { method: "POST" });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return { ok: false, error: body.error ?? `Enrichment failed (${res.status})` };
+    }
+    const body = (await res.json()) as { count: number };
+    return { ok: true, count: body.count };
+  } catch {
+    return { ok: false, error: "Could not reach the API." };
+  }
+}
+
 export async function triggerCampaignDraftGeneration(
   campaignId: string,
 ): Promise<{ ok: boolean; error?: string }> {

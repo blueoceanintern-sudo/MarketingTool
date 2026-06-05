@@ -9,7 +9,7 @@ CREATE TYPE "public"."lead_status" AS ENUM('new', 'contacted', 'replied', 'conve
 CREATE TYPE "public"."scrape_job_status" AS ENUM('queued', 'running', 'complete', 'failed', 'blocked');--> statement-breakpoint
 CREATE TYPE "public"."scraper_type" AS ENUM('crawl4ai', 'cheerio', 'api');--> statement-breakpoint
 CREATE TYPE "public"."sentiment" AS ENUM('positive', 'negative', 'neutral', 'out_of_office');--> statement-breakpoint
-CREATE TYPE "public"."suppression_reason" AS ENUM('unsubscribed', 'spam_complaint', 'hostile', 'manual');--> statement-breakpoint
+CREATE TYPE "public"."suppression_reason" AS ENUM('unsubscribed', 'manual');--> statement-breakpoint
 CREATE TABLE "audit_log" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"timestamp" timestamp DEFAULT now() NOT NULL,
@@ -19,6 +19,15 @@ CREATE TABLE "audit_log" (
 	"target_type" text,
 	"ip_address" text,
 	"metadata" jsonb
+);
+--> statement-breakpoint
+CREATE TABLE "campaign_lead_exclusions" (
+	"lead_id" uuid NOT NULL,
+	"campaign_id" uuid NOT NULL,
+	"excluded_at" timestamp DEFAULT now() NOT NULL,
+	"excluded_by" text NOT NULL,
+	"reason" text,
+	CONSTRAINT "campaign_lead_exclusions_lead_id_campaign_id_pk" PRIMARY KEY("lead_id","campaign_id")
 );
 --> statement-breakpoint
 CREATE TABLE "campaign_leads" (
@@ -49,6 +58,7 @@ CREATE TABLE "companies" (
 	"industry" text NOT NULL,
 	"company_size" "company_size" NOT NULL,
 	"location" text NOT NULL,
+	"source" text,
 	"created_at" timestamp DEFAULT now() NOT NULL,
 	"updated_at" timestamp DEFAULT now() NOT NULL
 );
@@ -114,7 +124,8 @@ CREATE TABLE "follow_ups" (
 	"sent_at" timestamp,
 	"draft_id" uuid,
 	"subject" text,
-	"body" text
+	"body" text,
+	"angle_tag" text
 );
 --> statement-breakpoint
 CREATE TABLE "leads" (
@@ -142,6 +153,7 @@ CREATE TABLE "prompt_templates" (
 	"name" text NOT NULL,
 	"description" text,
 	"system_prompt" text NOT NULL,
+	"template_type" text DEFAULT 'initial' NOT NULL,
 	"weight" integer DEFAULT 1 NOT NULL,
 	"active" boolean DEFAULT true NOT NULL,
 	"parent_template_id" uuid,
@@ -200,11 +212,14 @@ CREATE TABLE "source_registry" (
 CREATE TABLE "suppression_list" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"email" text NOT NULL,
+	"campaign_id" uuid NOT NULL,
 	"reason" "suppression_reason" NOT NULL,
 	"added_at" timestamp DEFAULT now() NOT NULL,
-	CONSTRAINT "suppression_list_email_unique" UNIQUE("email")
+	CONSTRAINT "suppression_list_email_campaign_unique" UNIQUE("email","campaign_id")
 );
 --> statement-breakpoint
+ALTER TABLE "campaign_lead_exclusions" ADD CONSTRAINT "campaign_lead_exclusions_lead_id_leads_id_fk" FOREIGN KEY ("lead_id") REFERENCES "public"."leads"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "campaign_lead_exclusions" ADD CONSTRAINT "campaign_lead_exclusions_campaign_id_campaigns_id_fk" FOREIGN KEY ("campaign_id") REFERENCES "public"."campaigns"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "campaign_leads" ADD CONSTRAINT "campaign_leads_lead_id_leads_id_fk" FOREIGN KEY ("lead_id") REFERENCES "public"."leads"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "campaign_leads" ADD CONSTRAINT "campaign_leads_campaign_id_campaigns_id_fk" FOREIGN KEY ("campaign_id") REFERENCES "public"."campaigns"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "demos" ADD CONSTRAINT "demos_lead_id_leads_id_fk" FOREIGN KEY ("lead_id") REFERENCES "public"."leads"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
@@ -225,6 +240,9 @@ ALTER TABLE "replies" ADD CONSTRAINT "replies_email_event_id_email_events_id_fk"
 ALTER TABLE "risk_flags" ADD CONSTRAINT "risk_flags_lead_id_leads_id_fk" FOREIGN KEY ("lead_id") REFERENCES "public"."leads"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "scrape_jobs" ADD CONSTRAINT "scrape_jobs_campaign_id_campaigns_id_fk" FOREIGN KEY ("campaign_id") REFERENCES "public"."campaigns"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "source_registry" ADD CONSTRAINT "source_registry_generated_by_campaigns_id_fk" FOREIGN KEY ("generated_by") REFERENCES "public"."campaigns"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "suppression_list" ADD CONSTRAINT "suppression_list_campaign_id_campaigns_id_fk" FOREIGN KEY ("campaign_id") REFERENCES "public"."campaigns"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "campaign_lead_exclusions_campaign_id_idx" ON "campaign_lead_exclusions" USING btree ("campaign_id");--> statement-breakpoint
 CREATE INDEX "campaign_leads_campaign_id_idx" ON "campaign_leads" USING btree ("campaign_id");--> statement-breakpoint
 CREATE INDEX "email_drafts_body_embedding_idx" ON "email_drafts" USING hnsw ("body_embedding" vector_cosine_ops);--> statement-breakpoint
-CREATE INDEX "enrichment_records_lead_enriched_at_idx" ON "enrichment_records" USING btree ("lead_id","enriched_at" DESC NULLS LAST);
+CREATE INDEX "enrichment_records_lead_enriched_at_idx" ON "enrichment_records" USING btree ("lead_id","enriched_at" DESC NULLS LAST);--> statement-breakpoint
+CREATE INDEX "suppression_list_campaign_id_idx" ON "suppression_list" USING btree ("campaign_id");
