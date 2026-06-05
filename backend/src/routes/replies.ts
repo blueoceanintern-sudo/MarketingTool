@@ -3,7 +3,7 @@ import PostalMime from "postal-mime";
 import { createVerify } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { db } from "../db";
-import { replies, emailEvents, leads, companies, emailDrafts, campaigns, suppressionList, followUps, demos } from "../db/schema";
+import { replies, emailEvents, leads, companies, emailDrafts, campaigns, suppressionList, followUps, demos, riskFlags } from "../db/schema";
 import { count, eq, and, isNull, inArray, asc } from "drizzle-orm";
 
 // ── SNS types ─────────────────────────────────────────────────────────────────
@@ -89,9 +89,9 @@ async function verifySnsSignature(msg: SnsEnvelope): Promise<boolean> {
 
 const anthropic = new Anthropic();
 
-async function classifyReply(body: string): Promise<{ category: string; return_date: string | null }> {
+async function classifyReply(body: string): Promise<{ category: string; return_date: string | null; risk_flag: boolean }> {
   const currentDate = new Date().toISOString().split("T")[0];
-  const systemPrompt = `You are classifying replies to cold marketing emails. Your job is to categorise the reply into exactly one of four classes and extract any return date if present.
+  const systemPrompt = `You are classifying replies to cold marketing emails. Your job is to categorise the reply into exactly one of four classes, extract any return date if present, and flag legal/hostile language.
 
 Current date: ${currentDate}
 
@@ -100,8 +100,8 @@ Current date: ${currentDate}
 positive — the recipient shows explicit interest, willingness to continue discussion, a request for more information or pricing, scheduling intent, or openness to evaluating the offer.
 Examples: "I'd love to learn more", "Can we set up a call?", "Send me your pricing", "Yes, let's talk", "Please send more details", "Can you explain what you offer?", "What are your rates?"
 
-negative — the recipient is not interested, asks to be removed, expresses frustration, explicitly declines, or the reply is a delivery failure or mailbox error.
-Examples: "Please unsubscribe me", "Not interested", "Remove me from your list", "We already have a solution", "Thanks but we're good", "Mailbox full", "Recipient no longer at this address", "Delivery failed", "Undeliverable"
+negative — the recipient is not interested, asks to be removed, expresses frustration, explicitly declines, or the reply is a delivery failure or mailbox error. Also includes replies containing legal threats, cease-and-desist language, or regulatory complaints — these are negative with risk_flag: true.
+Examples: "Please unsubscribe me", "Not interested", "Remove me from your list", "We already have a solution", "Thanks but we're good", "Mailbox full", "Delivery failed", "Stop contacting me or I will file a complaint", "I am forwarding this to our legal team"
 Note: polite phrasing does not override a clear rejection. "Thanks, but we're not interested" is negative.
 
 out_of_office — the reply is an automated out-of-office or vacation message, not a human response.
@@ -114,15 +114,20 @@ Note: "Thanks" and similar pleasantries without any engagement signal are neutra
 ## Priority order
 
 When a reply contains multiple signals, apply this priority:
-1. negative — always wins if present
+1. negative — wins over out_of_office, positive, and neutral
 2. out_of_office — wins over positive and neutral
 3. positive
 4. neutral
 
 Example: "I'm out until June 20. Not interested." → negative
+Example: "Stop emailing me or I'll report this to the authorities." → negative, risk_flag: true
 Example: "Out of office until July 1. Please reach out to my colleague instead." → out_of_office
 Example: "Thanks, but we're not interested." → negative
 Example: "Please send pricing." → positive
+
+## risk_flag
+
+Set risk_flag to true when the reply contains any of: legal threats, cease-and-desist language, explicit accusations of harassment, threats of regulatory complaint (GDPR/PDPA/CAN-SPAM), or demands for legal action. Always negative when risk_flag is true.
 
 ## Date extraction
 
@@ -133,9 +138,8 @@ If the class is out_of_office, extract the return date if one is explicitly stat
 1. Classify the reply into exactly one class, even if multiple signals are present. Follow the priority order above.
 2. Ignore all quoted original email text below any reply divider (e.g. "On [date] wrote:", "-----Original Message-----"). Classify only the new reply content.
 3. Unsubscribe requests, delivery failures, and mailbox errors are always negative regardless of tone.
-4. Polite tone does not override clear rejection intent.
-5. Requests for pricing, details, or further information are always positive regardless of brevity.
-6. When in doubt, classify as neutral.
+4. Requests for pricing, details, or further information are always positive regardless of brevity.
+5. When in doubt, classify as neutral.
 
 ## Output format
 
@@ -143,7 +147,8 @@ Return only valid JSON. No explanation, no preamble, no markdown fences.
 
 {
   "sentiment": "positive" | "negative" | "out_of_office" | "neutral",
-  "return_date": "YYYY-MM-DD" | null
+  "return_date": "YYYY-MM-DD" | null,
+  "risk_flag": true | false
 }`;
 
   try {
@@ -155,19 +160,21 @@ Return only valid JSON. No explanation, no preamble, no markdown fences.
     });
     const first = response.content[0];
     const text = first?.type === "text" ? first.text : "";
-    const parsed = JSON.parse(text) as { sentiment?: string; return_date?: string | null };
+    const parsed = JSON.parse(text) as { sentiment?: string; return_date?: string | null; risk_flag?: boolean };
     return {
       category: parsed.sentiment ?? "neutral",
       return_date: parsed.return_date ?? null,
+      risk_flag: parsed.risk_flag ?? false,
     };
   } catch {
-    return { category: "neutral", return_date: null };
+    return { category: "neutral", return_date: null, risk_flag: false };
   }
 }
 
-function categoryToSentiment(category: string): "positive" | "negative" | "neutral" {
+function categoryToSentiment(category: string): "positive" | "negative" | "neutral" | "out_of_office" {
   if (category === "positive") return "positive";
   if (category === "negative") return "negative";
+  if (category === "out_of_office") return "out_of_office";
   return "neutral";
 }
 
@@ -411,7 +418,7 @@ repliesRouter.post("/webhooks/ses/reply", async (c) => {
     return c.json({ ok: true });
   }
 
-  const { category, return_date } = await classifyReply(replyBody);
+  const { category, return_date, risk_flag } = await classifyReply(replyBody);
   const sentiment = categoryToSentiment(category);
 
   // Resolve campaign_id from the matched email event → draft.
@@ -443,6 +450,9 @@ repliesRouter.post("/webhooks/ses/reply", async (c) => {
         .delete(followUps)
         .where(and(eq(followUps.leadId, lead.id), eq(followUps.campaignId, campaignId), isNull(followUps.sentAt)));
     } else if (category === "negative") {
+      if (risk_flag) {
+        await db.insert(riskFlags).values({ leadId: lead.id, flagType: "hostile_interaction" });
+      }
       await db.insert(suppressionList).values({ email: fromEmail, campaignId, reason: "manual" }).onConflictDoNothing();
       await db
         .delete(followUps)

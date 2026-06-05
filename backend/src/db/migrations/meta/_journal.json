@@ -5,22 +5,15 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1780367501264,
-      "tag": "0000_classy_zzzax",
+      "when": 1780555567994,
+      "tag": "0000_curvy_black_bolt",
       "breakpoints": true
     },
     {
       "idx": 1,
       "version": "7",
-      "when": 1780382887852,
-      "tag": "0001_early_the_hunter",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1780459229072,
-      "tag": "0002_overconfident_nekra",
+      "when": 1780563789219,
+      "tag": "0001_tough_rictor",
       "breakpoints": true
     }
   ]

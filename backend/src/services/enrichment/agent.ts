@@ -4,6 +4,15 @@ import type { BrowserDriver } from "./browserDriver";
 const MAX_STEPS = 12;
 const MODEL = "claude-haiku-4-5";
 
+// read_page returns up to ~20k chars (~6k tokens) and otherwise lingers in the
+// message history, getting resent every step. We keep only the most recent page
+// dump verbatim and replace older ones with a stub — the agent's own assistant
+// turns retain what it concluded from those pages.
+const KEEP_RECENT_PAGE_READS = 1;
+const EVICTED_PAGE_STUB = JSON.stringify({
+  text: "[earlier page text evicted to save context — re-read the page if you still need it]",
+});
+
 const TOOLS: Anthropic.Messages.Tool[] = [
   {
     name: "navigate",
@@ -58,12 +67,16 @@ export async function runBrowserAgent<T>(opts: {
   const messages: Anthropic.Messages.MessageParam[] = [
     { role: "user", content: opts.task },
   ];
+  // Ordered tool_use ids of read_page calls, used to evict stale page dumps.
+  const pageReadIds: string[] = [];
 
   for (let step = 0; step < MAX_STEPS; step++) {
     const response = await client.messages.create({
       model: MODEL,
       max_tokens: 1024,
-      system: opts.systemPrompt,
+      // Cache the static prefix (tools + system) once and reuse it across every
+      // step of this run; only the mutating message history stays uncached.
+      system: [{ type: "text", text: opts.systemPrompt, cache_control: { type: "ephemeral" } }],
       tools: TOOLS,
       messages,
     });
@@ -85,6 +98,7 @@ export async function runBrowserAgent<T>(opts: {
       }
 
       const output = await dispatchTool(opts.driver, block.name, block.input as Record<string, unknown>);
+      if (block.name === "read_page") pageReadIds.push(block.id);
       toolResults.push({
         type: "tool_result",
         tool_use_id: block.id,
@@ -93,9 +107,30 @@ export async function runBrowserAgent<T>(opts: {
     }
 
     messages.push({ role: "user", content: toolResults });
+    evictStalePageReads(messages, pageReadIds);
   }
 
   return { result: null, steps: MAX_STEPS, reason: "max_steps" };
+}
+
+// Replace every read_page result except the most recent KEEP_RECENT_PAGE_READS
+// with a small stub, in place, so old page dumps stop riding along in each
+// step's request. Mutates the message blocks directly.
+function evictStalePageReads(
+  messages: Anthropic.Messages.MessageParam[],
+  pageReadIds: string[],
+): void {
+  if (pageReadIds.length <= KEEP_RECENT_PAGE_READS) return;
+  const stale = new Set(pageReadIds.slice(0, pageReadIds.length - KEEP_RECENT_PAGE_READS));
+
+  for (const msg of messages) {
+    if (msg.role !== "user" || !Array.isArray(msg.content)) continue;
+    for (const block of msg.content) {
+      if (block.type === "tool_result" && stale.has(block.tool_use_id) && block.content !== EVICTED_PAGE_STUB) {
+        block.content = EVICTED_PAGE_STUB;
+      }
+    }
+  }
 }
 
 async function dispatchTool(

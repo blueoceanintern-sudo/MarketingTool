@@ -1,7 +1,15 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db } from "../../db";
 import { promptTemplates } from "../../db/schema";
+
+type TemplateType = "initial" | "followup_1" | "followup_2" | "breakup";
+
+const ATTEMPT_TO_TYPE: Record<number, TemplateType> = {
+  1: "followup_1",
+  2: "followup_2",
+  3: "breakup",
+};
 
 interface LeadContext {
   firstName?: string;
@@ -9,6 +17,8 @@ interface LeadContext {
   role?: string;
   companyName?: string;
   industry?: string;
+  companySize?: string;
+  location?: string;
 }
 
 export interface CampaignContext {
@@ -27,6 +37,24 @@ export interface DraftResult {
   confidenceScore: number;
 }
 
+export interface FollowUpRequest {
+  followUpId: string;
+  leadId: string;
+  campaignId: string;
+  lead: LeadContext;
+  campaign: CampaignContext;
+  attemptNumber: number;
+  originalSubject: string;
+  previousAngleTags: string[];
+}
+
+export interface FollowUpResult {
+  followUpId: string;
+  subject: string;
+  body: string;
+  angleTag: string;
+}
+
 interface DraftRequest {
   leadId: string;
   campaignId: string;
@@ -34,59 +62,77 @@ interface DraftRequest {
   campaign?: CampaignContext;
 }
 
-interface PickedTemplate {
-  id: string;
-  systemPrompt: string;
+function weightedRandom<T extends { weight: number }>(items: T[]): T | undefined {
+  const total = items.reduce((sum, item) => sum + item.weight, 0);
+  if (total === 0) return items[0];
+  let rand = Math.random() * total;
+  for (const item of items) {
+    rand -= item.weight;
+    if (rand <= 0) return item;
+  }
+  return items[items.length - 1];
 }
 
-// Weighted-random pick across active templates. Weight = relative probability;
-// a template with weight 3 is 3× as likely to be picked as one with weight 1.
-// Each draft picks independently so a single batch can span multiple templates.
-function pickTemplate(active: { id: string; systemPrompt: string; weight: number }[]): PickedTemplate {
-  const total = active.reduce((sum, t) => sum + Math.max(t.weight, 0), 0);
-  if (total <= 0) {
-    const first = active[0]!;
-    return { id: first.id, systemPrompt: first.systemPrompt };
-  }
-  let r = Math.random() * total;
-  for (const t of active) {
-    r -= Math.max(t.weight, 0);
-    if (r <= 0) return { id: t.id, systemPrompt: t.systemPrompt };
-  }
-  const last = active[active.length - 1]!;
-  return { id: last.id, systemPrompt: last.systemPrompt };
+function buildLeadBlock(lead: LeadContext): string {
+  const name = [lead.firstName, lead.lastName].filter(Boolean).join(" ") || "Unknown";
+  return `## Lead data
+- contact_name: ${name}
+- role: ${lead.role ?? "Unknown"}
+- company_name: ${lead.companyName ?? "Unknown"}
+- industry: ${lead.industry ?? "Unknown"}
+- company_size: ${lead.companySize ?? "Unknown"}
+- location: ${lead.location ?? "Unknown"}`;
 }
 
-function buildCampaignBlock(campaign?: CampaignContext): string {
-  if (!campaign) return "";
-  const lines: string[] = [];
-  if (campaign.name) lines.push(`- Campaign: ${campaign.name}`);
-  if (campaign.description) lines.push(`- Goal / value proposition: ${campaign.description}`);
-  if (campaign.painPoints && campaign.painPoints.length > 0) {
-    lines.push("- Pain points to draw from:");
-    for (const p of campaign.painPoints) lines.push(`    • ${p}`);
-  }
-  if (campaign.callToAction) lines.push(`- Preferred call to action: ${campaign.callToAction}`);
-  if (lines.length === 0) return "";
-  return `\nCampaign context:\n${lines.join("\n")}\n`;
+function buildPainPoints(painPoints?: string[] | null): string {
+  if (!painPoints || painPoints.length === 0) return "  • Not specified";
+  return painPoints.map((p) => `  • ${p}`).join("\n");
 }
 
 function buildUserPrompt(lead: LeadContext, campaign?: CampaignContext): string {
-  return `${buildCampaignBlock(campaign)}
-Lead details:
-- Name: ${lead.firstName ?? "Unknown"} ${lead.lastName ?? ""}
-- Role: ${lead.role ?? "Unknown"}
-- Company: ${lead.companyName ?? "Unknown"}
-- Industry: ${lead.industry ?? "Unknown"}
+  return `${buildLeadBlock(lead)}
 
-Write the email now.`;
+## What we offer
+${campaign?.description ?? "Not specified"}
+
+## Campaign context
+- campaign_pain_points:
+${buildPainPoints(campaign?.painPoints)}`;
 }
 
-function parseResponse(raw: string): { subject: string; body: string; confidenceScore: number } {
+function buildFollowUpPrompt(
+  lead: LeadContext,
+  campaign: CampaignContext,
+  originalSubject: string,
+  previousAngleTags: string[],
+): string {
+  return `${buildLeadBlock(lead)}
+
+## Product context
+${campaign.description ?? "Not specified"}
+
+## Campaign context
+- original_subject: ${originalSubject}
+- previous_angle_tags: ${previousAngleTags.length > 0 ? previousAngleTags.join(", ") : "none"}
+- campaign_pain_points:
+${buildPainPoints(campaign.painPoints)}`;
+}
+
+function parseResponse(raw: string): {
+  subject: string;
+  body: string;
+  confidenceScore: number;
+  angleTag?: string;
+} {
   const match = raw.match(/\{[\s\S]*\}/);
   if (!match) throw new Error("No JSON found in response");
 
-  const parsed = JSON.parse(match[0]) as { subject?: string; body?: string; confidenceScore?: number };
+  const parsed = JSON.parse(match[0]) as {
+    subject?: string;
+    body?: string;
+    confidenceScore?: number;
+    angle_tag?: string;
+  };
 
   if (!parsed.subject || !parsed.body || parsed.confidenceScore === undefined) {
     throw new Error("Missing required fields in draft response");
@@ -95,66 +141,74 @@ function parseResponse(raw: string): { subject: string; body: string; confidence
   const wordCount = parsed.body.trim().split(/\s+/).length;
   const score = wordCount > 125 ? Math.max(0, parsed.confidenceScore - 20) : parsed.confidenceScore;
 
-  return { subject: parsed.subject, body: parsed.body, confidenceScore: score };
-}
-
-// Follow-up prompt variants by attempt number.
-// Attempt 1: simple nudge. Attempt 2: new angle. Attempt 3: break-up email.
-function buildFollowUpPrompt(lead: LeadContext, campaign: CampaignContext, attemptNumber: number): string {
-  const base = buildCampaignBlock(campaign);
-  const leadLine = `Lead: ${lead.firstName ?? "there"} ${lead.lastName ?? ""}, ${lead.role ?? "unknown role"} at ${lead.companyName ?? "their company"}.`;
-
-  const instructions: Record<number, string> = {
-    1: "Write a short, friendly follow-up (under 80 words). Acknowledge this is a follow-up to a prior email. Vary the angle slightly — don't repeat the opening line verbatim.",
-    2: "Write a follow-up (under 80 words) that introduces one new piece of value or a relevant insight, rather than just nudging. Make it feel like a reason to reply, not a reminder.",
-    3: "Write a brief break-up email (under 60 words). Acknowledge you've reached out a couple of times. Keep it light — if now isn't the right time, no problem. Leave the door open.",
+  return {
+    subject: parsed.subject,
+    body: parsed.body,
+    confidenceScore: score,
+    angleTag: parsed.angle_tag,
   };
-
-  const instruction = instructions[attemptNumber] ?? instructions[1]!;
-
-  return `${base}
-${leadLine}
-
-${instruction}
-
-Respond as JSON: { "subject": "...", "body": "...", "confidenceScore": <0-100> }`;
 }
 
-// Generates follow-up email content via the Batch API (50% cheaper than sync).
-// Uses attempt-number-aware prompts so each attempt has the right tone.
-export async function generateFollowUpContent(
-  leadId: string,
-  campaignId: string,
-  lead: LeadContext,
-  campaign: CampaignContext,
-  attemptNumber: number,
-): Promise<{ subject: string; body: string }> {
+export async function generateFollowUpBatch(requests: FollowUpRequest[]): Promise<FollowUpResult[]> {
+  if (requests.length === 0) return [];
+
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY is required");
 
-  const activeTemplates = await db
-    .select({ id: promptTemplates.id, systemPrompt: promptTemplates.systemPrompt, weight: promptTemplates.weight })
+  const neededTypes = [
+    ...new Set(requests.map((r) => ATTEMPT_TO_TYPE[r.attemptNumber] ?? "followup_1")),
+  ] as TemplateType[];
+
+  const templateRows = await db
+    .select({ id: promptTemplates.id, systemPrompt: promptTemplates.systemPrompt, templateType: promptTemplates.templateType, weight: promptTemplates.weight })
     .from(promptTemplates)
-    .where(eq(promptTemplates.active, true));
+    .where(and(eq(promptTemplates.active, true), inArray(promptTemplates.templateType, neededTypes)));
 
-  if (activeTemplates.length === 0) throw new Error("No active prompt templates");
+  const templatesByType = new Map<TemplateType, typeof templateRows>();
+  for (const row of templateRows) {
+    const key = row.templateType as TemplateType;
+    if (!templatesByType.has(key)) templatesByType.set(key, []);
+    templatesByType.get(key)!.push(row);
+  }
 
-  const tmpl = pickTemplate(activeTemplates);
+  const templateByType = new Map<TemplateType, typeof templateRows[number]>();
+  for (const type of neededTypes) {
+    const pool = templatesByType.get(type);
+    if (!pool || pool.length === 0) throw new Error(`No active prompt template for type: ${type}`);
+    templateByType.set(type, weightedRandom(pool)!);
+  }
+
   const client = new Anthropic({ apiKey });
-  const customId = `followup:${leadId}:${campaignId}:${attemptNumber}`;
+
+  const maxTokensByType: Record<TemplateType, number> = {
+    initial: 400,
+    followup_1: 300,
+    followup_2: 300,
+    breakup: 256,
+  };
+
+  // Sort by attempt number so same-type requests are adjacent — maximises cache hits.
+  const sorted = [...requests].sort((a, b) => a.attemptNumber - b.attemptNumber);
 
   const batch = await client.messages.batches.create({
-    requests: [
-      {
-        custom_id: customId,
+    requests: sorted.map((req) => {
+      const type = ATTEMPT_TO_TYPE[req.attemptNumber] ?? "followup_1";
+      const tmpl = templateByType.get(type)!;
+      return {
+        custom_id: `followup:${req.followUpId}`,
         params: {
           model: "claude-haiku-4-5",
-          max_tokens: 512,
-          system: [{ type: "text", text: tmpl.systemPrompt, cache_control: { type: "ephemeral" } }],
-          messages: [{ role: "user", content: buildFollowUpPrompt(lead, campaign, attemptNumber) }],
+          max_tokens: maxTokensByType[type],
+          system: [{ type: "text" as const, text: tmpl.systemPrompt, cache_control: { type: "ephemeral" as const } }],
+          messages: [
+            {
+              role: "user" as const,
+              content: buildFollowUpPrompt(req.lead, req.campaign, req.originalSubject, req.previousAngleTags),
+            },
+          ],
         },
-      },
-    ],
+      };
+    }),
   });
 
   let status = batch.processing_status;
@@ -164,15 +218,28 @@ export async function generateFollowUpContent(
     status = updated.processing_status;
   }
 
+  const results: FollowUpResult[] = [];
   for await (const result of await client.messages.batches.results(batch.id)) {
-    if (result.result.type !== "succeeded") throw new Error(`Follow-up batch failed: ${JSON.stringify(result.result)}`);
+    if (result.result.type !== "succeeded") {
+      console.error(`Follow-up batch item failed for ${result.custom_id}:`, result.result);
+      continue;
+    }
     const text = result.result.message.content.find((b) => b.type === "text");
-    if (!text || text.type !== "text") throw new Error("No text in follow-up batch result");
-    const { subject, body } = parseResponse(text.text);
-    return { subject, body };
+    if (!text || text.type !== "text") continue;
+    try {
+      const { subject, body, angleTag } = parseResponse(text.text);
+      results.push({
+        followUpId: result.custom_id.slice("followup:".length),
+        subject,
+        body,
+        angleTag: angleTag ?? "manual_workload",
+      });
+    } catch (err) {
+      console.error(`Failed to parse follow-up for ${result.custom_id}:`, err);
+    }
   }
 
-  throw new Error("Follow-up batch returned no results");
+  return results;
 }
 
 export async function generateDraftsBatch(requests: DraftRequest[]): Promise<DraftResult[]> {
@@ -181,79 +248,51 @@ export async function generateDraftsBatch(requests: DraftRequest[]): Promise<Dra
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY is required");
 
-  const activeTemplates = await db
-    .select({ id: promptTemplates.id, systemPrompt: promptTemplates.systemPrompt, weight: promptTemplates.weight })
+  const [template] = await db
+    .select({ id: promptTemplates.id, systemPrompt: promptTemplates.systemPrompt })
     .from(promptTemplates)
-    .where(eq(promptTemplates.active, true));
+    .where(and(eq(promptTemplates.active, true), eq(promptTemplates.templateType, "initial")))
+    .limit(1);
 
-  if (activeTemplates.length === 0) {
-    throw new Error("No active prompt templates — seed at least one row in prompt_templates");
+  if (!template) {
+    throw new Error("No active initial prompt template — seed a row in prompt_templates with template_type='initial'");
   }
 
   const client = new Anthropic({ apiKey });
 
-  // Pick a template per request so a single batch exercises multiple styles
-  // when weights spread the probability mass.
-  const requestTemplateIds: string[] = [];
-  const batchRequests: Anthropic.Messages.MessageCreateParamsNonStreaming[] = requests.map((req) => {
-    const tmpl = pickTemplate(activeTemplates);
-    requestTemplateIds.push(tmpl.id);
-    return {
-      model: "claude-haiku-4-5",
-      max_tokens: 512,
-      system: [{ type: "text", text: tmpl.systemPrompt, cache_control: { type: "ephemeral" } }],
-      messages: [{ role: "user", content: buildUserPrompt(req.lead, req.campaign) }],
-    };
-  });
+  console.log(`[drafting] generating ${requests.length} draft(s) (sync)`);
 
-  // Batch API custom_id has a 64-character limit. Three UUIDs joined by colons
-  // would be 110 chars, so we use the request index instead and look up the
-  // original lead/campaign/template data by position when parsing results.
-  const batch = await client.messages.batches.create({
-    requests: batchRequests.map((params, i) => ({ custom_id: String(i), params })),
-  });
-
-  console.log(`[drafting] batch ${batch.id}: submitted ${requests.length} request(s), polling...`);
-
-  let status = batch.processing_status;
-  while (status !== "ended") {
-    await new Promise((r) => setTimeout(r, 5000));
-    const updated = await client.messages.batches.retrieve(batch.id);
-    status = updated.processing_status;
-    if (status !== "ended") console.log(`[drafting] batch ${batch.id}: status=${status}, waiting...`);
-  }
-
-  console.log(`[drafting] batch ${batch.id}: complete`);
+  const settled = await Promise.allSettled(
+    requests.map((req) =>
+      client.messages.create({
+        model: "claude-haiku-4-5",
+        max_tokens: 400,
+        system: [{ type: "text" as const, text: template.systemPrompt, cache_control: { type: "ephemeral" as const } }],
+        messages: [{ role: "user" as const, content: buildUserPrompt(req.lead, req.campaign) }],
+      }).then((msg) => ({ req, msg }))
+    ),
+  );
 
   const results: DraftResult[] = [];
 
-  for await (const result of await client.messages.batches.results(batch.id)) {
-    const idx = parseInt(result.custom_id, 10);
-    const req = requests[idx];
-    const templateId = requestTemplateIds[idx];
-
-    if (!req || !templateId) {
-      console.error(`[drafting] batch result index ${idx} out of range — skipping`);
+  for (const outcome of settled) {
+    if (outcome.status === "rejected") {
+      console.error(`[drafting] API call failed:`, outcome.reason);
       continue;
     }
 
-    const { leadId, campaignId } = req;
-
-    if (result.result.type !== "succeeded") {
-      console.error(`Draft failed for lead ${leadId}:`, result.result);
-      continue;
-    }
-
-    const text = result.result.message.content.find((b) => b.type === "text");
+    const { req, msg } = outcome.value;
+    const text = msg.content.find((b) => b.type === "text");
     if (!text || text.type !== "text") continue;
 
     try {
       const { subject, body, confidenceScore } = parseResponse(text.text);
-      results.push({ leadId, campaignId, templateId, subject, body, confidenceScore });
+      results.push({ leadId: req.leadId, campaignId: req.campaignId, templateId: template.id, subject, body, confidenceScore });
     } catch (err) {
-      console.error(`Failed to parse draft for ${result.custom_id}:`, err);
+      console.error(`[drafting] failed to parse draft for lead ${req.leadId}:`, err);
     }
   }
 
+  console.log(`[drafting] done: ${results.length}/${requests.length} succeeded`);
   return results;
 }

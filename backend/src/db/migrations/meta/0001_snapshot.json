@@ -1,6 +1,6 @@
 {
-  "id": "37e6e5be-380a-42f4-8511-410ba952cc3a",
-  "prevId": "fbc3217c-6a25-4b38-bb24-371a9b2d469f",
+  "id": "7752989a-045e-4c0c-9ea1-64163b774ee8",
+  "prevId": "1185f398-0503-40e1-be70-c9f3d2353b73",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -357,7 +357,7 @@
           "name": "industry",
           "type": "text",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "company_size": {
           "name": "company_size",
@@ -371,6 +371,12 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
@@ -933,6 +939,12 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
+        },
+        "angle_tag": {
+          "name": "angle_tag",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {},
@@ -1152,6 +1164,13 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "template_type": {
+          "name": "template_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'initial'"
         },
         "weight": {
           "name": "weight",
@@ -1647,7 +1666,8 @@
         "small",
         "medium",
         "large",
-        "enterprise"
+        "enterprise",
+        "unknown"
       ]
     },
     "public.draft_status": {
