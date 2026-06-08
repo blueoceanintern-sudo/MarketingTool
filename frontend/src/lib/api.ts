@@ -1,8 +1,29 @@
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
+// Set by TokenSync in Providers once the Auth.js session is available.
+let _token: string | undefined;
+export function setApiToken(token: string) {
+  _token = token;
+}
+
+function authHeaders(extra?: Record<string, string>): Record<string, string> {
+  return {
+    ...extra,
+    ...(_token ? { Authorization: `Bearer ${_token}` } : {}),
+  };
+}
+
+// Unified fetch wrapper — all API calls go through here so auth is applied consistently.
+function apiRequest(url: string, init?: RequestInit): Promise<Response> {
+  return fetch(url, {
+    ...init,
+    headers: authHeaders(init?.headers as Record<string, string> | undefined),
+  });
+}
+
 async function apiFetch<T>(path: string): Promise<T | null> {
   try {
-    const res = await fetch(`${BASE}/api/v1${path}`, { cache: "no-store" });
+    const res = await apiRequest(`${BASE}/api/v1${path}`, { cache: "no-store" });
     if (!res.ok) return null;
     return res.json() as Promise<T>;
   } catch {
@@ -231,7 +252,7 @@ export async function createCampaign(payload: {
   call_to_action?: string | null;
 }): Promise<{ campaign: Campaign | null; discovery?: DiscoveryStatus; error?: string }> {
   try {
-    const res = await fetch(`${BASE}/api/v1/campaigns`, {
+    const res = await apiRequest(`${BASE}/api/v1/campaigns`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -250,7 +271,7 @@ export async function createCampaign(payload: {
 
 export async function triggerCampaignScrape(campaignId: string): Promise<{ ok: boolean; error?: string }> {
   try {
-    const res = await fetch(`${BASE}/api/v1/campaigns/${campaignId}/scrape`, { method: "POST" });
+    const res = await apiRequest(`${BASE}/api/v1/campaigns/${campaignId}/scrape`, { method: "POST" });
     if (!res.ok) {
       const body = (await res.json().catch(() => ({}))) as { error?: string };
       return { ok: false, error: body.error ?? `Scrape failed (${res.status})` };
@@ -263,7 +284,7 @@ export async function triggerCampaignScrape(campaignId: string): Promise<{ ok: b
 
 export async function triggerCampaignEnrich(campaignId: string): Promise<{ ok: boolean; count?: number; error?: string }> {
   try {
-    const res = await fetch(`${BASE}/api/v1/campaigns/${campaignId}/enrich`, { method: "POST" });
+    const res = await apiRequest(`${BASE}/api/v1/campaigns/${campaignId}/enrich`, { method: "POST" });
     if (!res.ok) {
       const body = (await res.json().catch(() => ({}))) as { error?: string };
       return { ok: false, error: body.error ?? `Enrichment failed (${res.status})` };
@@ -279,7 +300,7 @@ export async function triggerCampaignDraftGeneration(
   campaignId: string,
 ): Promise<{ ok: boolean; error?: string }> {
   try {
-    const res = await fetch(`${BASE}/api/v1/campaigns/${campaignId}/drafts/generate`, { method: "POST" });
+    const res = await apiRequest(`${BASE}/api/v1/campaigns/${campaignId}/drafts/generate`, { method: "POST" });
     if (!res.ok) {
       const body = (await res.json().catch(() => ({}))) as { error?: string };
       return { ok: false, error: body.error ?? `Draft generation failed (${res.status})` };
@@ -303,7 +324,7 @@ export async function updateCampaign(
   },
 ): Promise<{ campaign: Campaign | null; error?: string }> {
   try {
-    const res = await fetch(`${BASE}/api/v1/campaigns/${campaignId}`, {
+    const res = await apiRequest(`${BASE}/api/v1/campaigns/${campaignId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -324,7 +345,7 @@ export async function updateCampaignStatus(
   status: CampaignStatus
 ): Promise<{ ok: boolean; error?: string }> {
   try {
-    const res = await fetch(`${BASE}/api/v1/campaigns/${campaignId}/status`, {
+    const res = await apiRequest(`${BASE}/api/v1/campaigns/${campaignId}/status`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status }),
@@ -393,7 +414,7 @@ export async function addLeadToCampaign(
   campaignId: string,
 ): Promise<{ ok: boolean; error?: string }> {
   try {
-    const res = await fetch(`${BASE}/api/v1/leads/${leadId}/campaigns`, {
+    const res = await apiRequest(`${BASE}/api/v1/leads/${leadId}/campaigns`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ campaign_id: campaignId }),
@@ -414,7 +435,7 @@ export async function removeLeadFromCampaign(
   try {
     const url = new URL(`${BASE}/api/v1/leads/${leadId}/campaigns/${campaignId}`);
     if (reason) url.searchParams.set("reason", reason);
-    const res = await fetch(url.toString(), {
+    const res = await apiRequest(url.toString(), {
       method: "DELETE",
     });
     const body = (await res.json().catch(() => ({}))) as {
@@ -446,7 +467,7 @@ export async function createPromptTemplate(payload: {
   parent_template_id?: string | null;
 }): Promise<{ template: PromptTemplate | null; error?: string }> {
   try {
-    const res = await fetch(`${BASE}/api/v1/templates`, {
+    const res = await apiRequest(`${BASE}/api/v1/templates`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -466,7 +487,7 @@ export async function updatePromptTemplate(
   payload: { name?: string; description?: string | null; weight?: number; active?: boolean },
 ): Promise<{ template: PromptTemplate | null; error?: string }> {
   try {
-    const res = await fetch(`${BASE}/api/v1/templates/${id}`, {
+    const res = await apiRequest(`${BASE}/api/v1/templates/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -483,7 +504,7 @@ export async function updatePromptTemplate(
 
 export async function deletePromptTemplate(id: string): Promise<{ ok: boolean; error?: string }> {
   try {
-    const res = await fetch(`${BASE}/api/v1/templates/${id}`, { method: "DELETE" });
+    const res = await apiRequest(`${BASE}/api/v1/templates/${id}`, { method: "DELETE" });
     if (!res.ok) {
       const body = (await res.json().catch(() => ({}))) as { error?: string };
       return { ok: false, error: body.error ?? `Delete failed (${res.status})` };
@@ -571,7 +592,7 @@ export async function triggerDiscovery(
   geo: string,
 ): Promise<{ ok: boolean; status?: string; message?: string; domains?: string[]; error?: string; retryAfter?: number }> {
   try {
-    const res = await fetch(`${BASE}/api/v1/registry/discover`, {
+    const res = await apiRequest(`${BASE}/api/v1/registry/discover`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ vertical, geo }),
@@ -603,7 +624,7 @@ export async function createRegistrySource(payload: {
   active?: boolean;
 }): Promise<{ source: SourceRegistry | null; error?: string }> {
   try {
-    const res = await fetch(`${BASE}/api/v1/registry/sources`, {
+    const res = await apiRequest(`${BASE}/api/v1/registry/sources`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -629,7 +650,7 @@ export async function importRegistrySources(file: File): Promise<{ result: Regis
   try {
     const form = new FormData();
     form.append("file", file);
-    const res = await fetch(`${BASE}/api/v1/registry/sources/import`, { method: "POST", body: form });
+    const res = await apiRequest(`${BASE}/api/v1/registry/sources/import`, { method: "POST", body: form });
     const body = (await res.json()) as RegistryImportResult & { error?: string };
     if (!res.ok) return { result: null, error: body.error ?? `Import failed (${res.status})` };
     return { result: body };
@@ -654,7 +675,7 @@ export async function getDailySends(days: number): Promise<DailySend[]> {
 
 export async function approveDraft(id: string): Promise<boolean> {
   try {
-    const res = await fetch(`${BASE}/api/v1/drafts/${id}/approve`, { method: "PATCH" });
+    const res = await apiRequest(`${BASE}/api/v1/drafts/${id}/approve`, { method: "PATCH" });
     return res.ok;
   } catch {
     return false;
@@ -663,7 +684,7 @@ export async function approveDraft(id: string): Promise<boolean> {
 
 export async function rejectDraft(id: string, reason: string): Promise<boolean> {
   try {
-    const res = await fetch(`${BASE}/api/v1/drafts/${id}/reject`, {
+    const res = await apiRequest(`${BASE}/api/v1/drafts/${id}/reject`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ reason }),
@@ -679,7 +700,7 @@ export async function editDraft(
   updates: { subject?: string; body?: string }
 ): Promise<{ draft: Draft | null; error?: string }> {
   try {
-    const res = await fetch(`${BASE}/api/v1/drafts/${id}/edit`, {
+    const res = await apiRequest(`${BASE}/api/v1/drafts/${id}/edit`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(updates),
@@ -702,7 +723,7 @@ export async function bookDemo(payload: {
   assigned_to: string;
 }): Promise<Demo | null> {
   try {
-    const res = await fetch(`${BASE}/api/v1/demos`, {
+    const res = await apiRequest(`${BASE}/api/v1/demos`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -716,7 +737,7 @@ export async function bookDemo(payload: {
 
 export async function resolveReply(id: string): Promise<boolean> {
   try {
-    const res = await fetch(`${BASE}/api/v1/replies/${id}/resolve`, { method: "PATCH" });
+    const res = await apiRequest(`${BASE}/api/v1/replies/${id}/resolve`, { method: "PATCH" });
     return res.ok;
   } catch {
     return false;
@@ -725,7 +746,7 @@ export async function resolveReply(id: string): Promise<boolean> {
 
 export async function triggerEnrichment(): Promise<{ queued: number } | null> {
   try {
-    const res = await fetch(`${BASE}/api/v1/leads/enrich`, { method: "POST" });
+    const res = await apiRequest(`${BASE}/api/v1/leads/enrich`, { method: "POST" });
     if (!res.ok) return null;
     return res.json() as Promise<{ queued: number }>;
   } catch {
