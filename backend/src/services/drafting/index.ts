@@ -53,6 +53,7 @@ export interface FollowUpResult {
   subject: string;
   body: string;
   angleTag: string;
+  templateId: string;
 }
 
 interface DraftRequest {
@@ -62,15 +63,57 @@ interface DraftRequest {
   campaign?: CampaignContext;
 }
 
-function weightedRandom<T extends { weight: number }>(items: T[]): T | undefined {
-  const total = items.reduce((sum, item) => sum + item.weight, 0);
-  if (total === 0) return items[0];
-  let rand = Math.random() * total;
-  for (const item of items) {
-    rand -= item.weight;
-    if (rand <= 0) return item;
+const NEGATIVE_RATE_THRESHOLD = 0.05;
+const NEGATIVE_FILTER_MIN_SENDS = 30;
+
+function normalSample(): number {
+  let u: number;
+  do { u = Math.random(); } while (u === 0);
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * Math.random());
+}
+
+function sampleGamma(shape: number): number {
+  if (shape < 1) return sampleGamma(1 + shape) * Math.pow(Math.random(), 1 / shape);
+  const d = shape - 1 / 3;
+  const c = 1 / Math.sqrt(9 * d);
+  for (;;) {
+    let x: number, v: number;
+    do { x = normalSample(); v = 1 + c * x; } while (v <= 0);
+    v = v * v * v;
+    const u = Math.random();
+    if (u < 1 - 0.0331 * x * x * x * x) return d * v;
+    if (Math.log(u) < 0.5 * x * x + d * (1 - v + Math.log(v))) return d * v;
   }
-  return items[items.length - 1];
+}
+
+function sampleBeta(alpha: number, beta: number): number {
+  const x = sampleGamma(alpha);
+  const y = sampleGamma(beta);
+  return x + y === 0 ? 0.5 : x / (x + y);
+}
+
+function thompsonSample<T extends { sendCount: number; positiveIntentCount: number; negativeReplyCount: number }>(items: T[]): T | undefined {
+  if (items.length === 0) return undefined;
+
+  // Soft exclusion: filter out templates with a high negative-reply rate once
+  // they have enough sends to make the signal meaningful.
+  const eligible = items.filter((t) =>
+    t.sendCount < NEGATIVE_FILTER_MIN_SENDS ||
+    t.negativeReplyCount / t.sendCount < NEGATIVE_RATE_THRESHOLD,
+  );
+  const pool = eligible.length > 0 ? eligible : items;
+
+  // Thompson Sampling for all templates. New templates (sendCount=0) start with
+  // Beta(1,1) — a uniform distribution — so they compete naturally with high
+  // uncertainty and get explored without starving proven performers.
+  let best: T | undefined;
+  let bestSample = -1;
+  for (const item of pool) {
+    const nonPositive = item.sendCount - item.positiveIntentCount;
+    const draw = sampleBeta(item.positiveIntentCount + 1, nonPositive + 1);
+    if (draw > bestSample) { bestSample = draw; best = item; }
+  }
+  return best;
 }
 
 function buildLeadBlock(lead: LeadContext): string {
@@ -160,22 +203,22 @@ export async function generateFollowUpBatch(requests: FollowUpRequest[]): Promis
   ] as TemplateType[];
 
   const templateRows = await db
-    .select({ id: promptTemplates.id, systemPrompt: promptTemplates.systemPrompt, templateType: promptTemplates.templateType, weight: promptTemplates.weight })
+    .select({
+      id: promptTemplates.id,
+      systemPrompt: promptTemplates.systemPrompt,
+      templateType: promptTemplates.templateType,
+    })
     .from(promptTemplates)
     .where(and(eq(promptTemplates.active, true), inArray(promptTemplates.templateType, neededTypes)));
 
-  const templatesByType = new Map<TemplateType, typeof templateRows>();
+  const templateByType = new Map<TemplateType, typeof templateRows[number]>();
   for (const row of templateRows) {
-    const key = row.templateType as TemplateType;
-    if (!templatesByType.has(key)) templatesByType.set(key, []);
-    templatesByType.get(key)!.push(row);
+    const type = row.templateType as TemplateType;
+    if (!templateByType.has(type)) templateByType.set(type, row);
   }
 
-  const templateByType = new Map<TemplateType, typeof templateRows[number]>();
   for (const type of neededTypes) {
-    const pool = templatesByType.get(type);
-    if (!pool || pool.length === 0) throw new Error(`No active prompt template for type: ${type}`);
-    templateByType.set(type, weightedRandom(pool)!);
+    if (!templateByType.has(type)) throw new Error(`No active prompt template for type: ${type}`);
   }
 
   const client = new Anthropic({ apiKey });
@@ -190,12 +233,17 @@ export async function generateFollowUpBatch(requests: FollowUpRequest[]): Promis
   // Sort by attempt number so same-type requests are adjacent — maximises cache hits.
   const sorted = [...requests].sort((a, b) => a.attemptNumber - b.attemptNumber);
 
+  // Map custom_id → templateId so results can carry attribution back to the caller.
+  const requestTemplateMap = new Map<string, string>();
+
   const batch = await client.messages.batches.create({
     requests: sorted.map((req) => {
       const type = ATTEMPT_TO_TYPE[req.attemptNumber] ?? "followup_1";
       const tmpl = templateByType.get(type)!;
+      const customId = `followup:${req.followUpId}`;
+      requestTemplateMap.set(customId, tmpl.id);
       return {
-        custom_id: `followup:${req.followUpId}`,
+        custom_id: customId,
         params: {
           model: "claude-haiku-4-5",
           max_tokens: maxTokensByType[type],
@@ -233,6 +281,7 @@ export async function generateFollowUpBatch(requests: FollowUpRequest[]): Promis
         subject,
         body,
         angleTag: angleTag ?? "manual_workload",
+        templateId: requestTemplateMap.get(result.custom_id) ?? "",
       });
     } catch (err) {
       console.error(`Failed to parse follow-up for ${result.custom_id}:`, err);
@@ -248,15 +297,17 @@ export async function generateDraftsBatch(requests: DraftRequest[]): Promise<Dra
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY is required");
 
-  const [template] = await db
+  const allTemplates = await db
     .select({ id: promptTemplates.id, systemPrompt: promptTemplates.systemPrompt })
     .from(promptTemplates)
     .where(and(eq(promptTemplates.active, true), eq(promptTemplates.templateType, "initial")))
     .limit(1);
 
-  if (!template) {
-    throw new Error("No active initial prompt template — seed a row in prompt_templates with template_type='initial'");
+  if (allTemplates.length === 0) {
+    throw new Error("No active initial prompt template — run db:seed to insert templates");
   }
+
+  const template = allTemplates[0]!;
 
   const client = new Anthropic({ apiKey });
 

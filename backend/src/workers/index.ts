@@ -1,12 +1,13 @@
 import cron from "node-cron";
 import { db } from "../db";
-import { followUps, leads, emailEvents, emailDrafts, riskFlags, scrapeJobs, campaigns, replies, companies } from "../db/schema";
-import { eq, and, isNull, lte, isNotNull, lt, or, inArray, notInArray, asc } from "drizzle-orm";
+import { followUps, leads, emailEvents, emailDrafts, riskFlags, scrapeJobs, campaigns, replies, companies, promptTemplates } from "../db/schema";
+import { eq, and, isNull, lte, isNotNull, lt, or, inArray, notInArray, asc, gte } from "drizzle-orm";
 import { sendDraft, sendFollowUpEmail, getTotalSent, getWarmupWeek, getDailyCap } from "../services/sender";
 import { runScrapeJob } from "../services/scraping/runScrapeJob";
 import { enrichLead } from "../services/enrichment/orchestrator";
 import { generateDraftsForCampaign } from "../services/drafting/orchestrator";
 import { generateFollowUpBatch, type FollowUpRequest } from "../services/drafting";
+import { generateMutation } from "../services/mutator";
 
 const MAX_FOLLOW_UP_ATTEMPTS = 3;
 
@@ -114,6 +115,7 @@ export async function runFollowUpSender() {
       .select({
         id: followUps.id,
         draftId: followUps.draftId,
+        templateId: followUps.templateId,
         subject: followUps.subject,
         body: followUps.body,
         leadId: followUps.leadId,
@@ -179,7 +181,7 @@ export async function runFollowUpSender() {
 
     // Pass 2: batch-generate missing content in a single Batch API call
     const needsContent = qualified.filter((fu) => !fu.subject || !fu.body);
-    const contentMap = new Map<string, { subject: string; body: string }>();
+    const contentMap = new Map<string, { subject: string; body: string; templateId?: string }>();
 
     if (needsContent.length > 0) {
       const batchRequests: FollowUpRequest[] = [];
@@ -240,9 +242,9 @@ export async function runFollowUpSender() {
           for (const gen of generated) {
             await db
               .update(followUps)
-              .set({ subject: gen.subject, body: gen.body, angleTag: gen.angleTag })
+              .set({ subject: gen.subject, body: gen.body, angleTag: gen.angleTag, templateId: gen.templateId || null })
               .where(eq(followUps.id, gen.followUpId));
-            contentMap.set(gen.followUpId, { subject: gen.subject, body: gen.body });
+            contentMap.set(gen.followUpId, { subject: gen.subject, body: gen.body, templateId: gen.templateId || undefined });
           }
         } catch (err) {
           console.error("[follow-up-sender] batch content generation failed:", err);
@@ -272,6 +274,7 @@ export async function runFollowUpSender() {
           campaignId: fu.campaignId,
           isVerified: fu.isVerified,
           hasRiskFlags: !!flag,
+          templateId: fu.templateId ?? contentMap.get(fu.id)?.templateId,
         });
       } catch (err) {
         console.error(`[follow-up-sender] Phase B: follow_up ${fu.id} threw:`, err);
@@ -468,6 +471,91 @@ cron.schedule("*/30 * * * *", async () => {
   console.log(
     `[drafting-runner] done: campaigns=${activeCampaigns.length}, with_work=${campaignsWithWork}, drafts=${totalGenerated}`,
   );
+});
+
+// ---------------------------------------------------------------------------
+// mutation-runner  — Monday 06:00
+//
+// Fires only after 300+ total sends across the pool. Picks the top-performing
+// eligible template (active, generation_depth < 2, send_count >= 50) by
+// positive intent rate, generates one mutation via Claude, inserts it as
+// inactive (requires manual activation), and notifies via webhook if configured.
+// ---------------------------------------------------------------------------
+cron.schedule("0 6 * * 1", async () => {
+  console.log("[mutation-runner] running");
+
+  const totalSent = await getTotalSent();
+  if (totalSent < 300) {
+    console.log(`[mutation-runner] skipped — ${totalSent} total sends so far (need 300+)`);
+    return;
+  }
+
+  const eligible = await db
+    .select()
+    .from(promptTemplates)
+    .where(
+      and(
+        eq(promptTemplates.active, true),
+        eq(promptTemplates.templateType, "initial"),
+        lt(promptTemplates.generationDepth, 2),
+        gte(promptTemplates.sendCount, 50),
+      ),
+    );
+
+  if (eligible.length === 0) {
+    console.log("[mutation-runner] no eligible templates (need active, depth < 2, send_count >= 50)");
+    return;
+  }
+
+  const top = eligible.reduce((best, t) => {
+    const rate = t.sendCount > 0 ? t.positiveIntentCount / t.sendCount : 0;
+    const bestRate = best.sendCount > 0 ? best.positiveIntentCount / best.sendCount : 0;
+    return rate > bestRate ? t : best;
+  });
+
+  console.log(`[mutation-runner] mutating template "${top.name}" (${(top.positiveIntentCount / top.sendCount * 100).toFixed(1)}% positive rate, ${top.sendCount} sends)`);
+
+  const result = await generateMutation(top.id);
+  if (!result) {
+    console.error("[mutation-runner] mutation generation failed — skipping");
+    return;
+  }
+
+  const [inserted] = await db
+    .insert(promptTemplates)
+    .values({
+      name: result.name,
+      description: result.description,
+      systemPrompt: result.systemPrompt,
+      templateType: top.templateType,
+      active: false,
+      parentTemplateId: top.id,
+      generationDepth: top.generationDepth + 1,
+      createdBy: "ai",
+    })
+    .returning({ id: promptTemplates.id });
+
+  console.log(`[mutation-runner] created template "${result.name}" (id: ${inserted?.id}, depth: ${top.generationDepth + 1}) — requires manual activation`);
+
+  const notifyUrl = process.env.MUTATION_NOTIFY_WEBHOOK_URL;
+  if (notifyUrl && inserted) {
+    await fetch(notifyUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event: "mutation_created",
+        template_id: inserted.id,
+        template_name: result.name,
+        template_description: result.description,
+        parent_id: top.id,
+        parent_name: top.name,
+        parent_positive_rate: `${(top.positiveIntentCount / top.sendCount * 100).toFixed(1)}%`,
+        parent_send_count: top.sendCount,
+        generation_depth: top.generationDepth + 1,
+        action: "Review and manually activate at /admin/templates if approved.",
+      }),
+    }).catch((err) => console.error("[mutation-runner] webhook notify failed:", err));
+  }
 });
 
 console.log("[workers] all cron jobs registered");
