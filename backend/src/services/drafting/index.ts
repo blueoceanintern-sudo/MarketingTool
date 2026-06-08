@@ -5,6 +5,25 @@ import { promptTemplates } from "../../db/schema";
 
 type TemplateType = "initial" | "followup_1" | "followup_2" | "breakup";
 
+// Word limit per template type — mirrors the per-template length rules in seed.sql.
+const WORD_LIMIT: Record<TemplateType, number> = {
+  initial: 125,
+  followup_1: 90,
+  followup_2: 85,
+  breakup: 70,
+};
+
+function confidenceScoreRubric(wordLimit: number): string {
+  return `
+## Confidence score rubric
+confidenceScore is the sum of four equally weighted factors, each scored 0–25:
+1. Pain point-to-role fit — the selected pain point is a realistic daily concern for someone in this specific role and industry, not just generically relevant to the campaign.
+2. Campaign-goal alignment — the draft follows the assigned campaign's objective; generic language scores low.
+3. Personalisation quality — the email is specific and relevant to the lead's role, industry, and company context provided.
+4. Length compliance — score 25 if the body is under ${wordLimit} words, 0 if over.
+A total below 70 indicates the draft should be reviewed before sending.`;
+}
+
 const ATTEMPT_TO_TYPE: Record<number, TemplateType> = {
   1: "followup_1",
   2: "followup_2",
@@ -247,7 +266,7 @@ export async function generateFollowUpBatch(requests: FollowUpRequest[]): Promis
         params: {
           model: "claude-haiku-4-5",
           max_tokens: maxTokensByType[type],
-          system: [{ type: "text" as const, text: tmpl.systemPrompt, cache_control: { type: "ephemeral" as const } }],
+          system: [{ type: "text" as const, text: tmpl.systemPrompt + confidenceScoreRubric(WORD_LIMIT[type]), cache_control: { type: "ephemeral" as const } }],
           messages: [
             {
               role: "user" as const,
@@ -318,7 +337,7 @@ export async function generateDraftsBatch(requests: DraftRequest[]): Promise<Dra
       client.messages.create({
         model: "claude-haiku-4-5",
         max_tokens: 400,
-        system: [{ type: "text" as const, text: template.systemPrompt, cache_control: { type: "ephemeral" as const } }],
+        system: [{ type: "text" as const, text: template.systemPrompt + confidenceScoreRubric(WORD_LIMIT.initial), cache_control: { type: "ephemeral" as const } }],
         messages: [{ role: "user" as const, content: buildUserPrompt(req.lead, req.campaign) }],
       }).then((msg) => ({ req, msg }))
     ),
