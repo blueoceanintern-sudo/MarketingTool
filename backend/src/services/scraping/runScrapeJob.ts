@@ -206,7 +206,7 @@ export async function runScrapeJob(jobId: string, campaignId: string): Promise<v
     let enriched = 0;
     const enrichPromises = newLeadIds.map((leadId) =>
       enrichLead(leadId)
-        .then(() => { enriched++; })
+        .then(({ fullyEnriched }) => { if (fullyEnriched) enriched++; })
         .catch((err) => {
           console.error(`[scrape] enrichment failed for lead ${leadId}:`, err);
         })
