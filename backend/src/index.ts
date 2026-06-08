@@ -14,7 +14,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { db } from "./db";
 import { leads, suppressionList, campaignLeadExclusions } from "./db/schema";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 
 const app = new Hono();
 
@@ -84,4 +84,10 @@ app.get("/unsubscribe", async (c) => {
   return c.redirect(`${frontendUrl}/unsubscribe.html`, 302);
 });
 
-export default app;
+export default {
+  port: Number(process.env.PORT ?? 3001),
+  fetch: app.fetch,
+  // SSE keepalive pings every 25s — idle timeout must exceed that.
+  // 0 = no timeout (safe for an internal tool).
+  idleTimeout: 0,
+};
