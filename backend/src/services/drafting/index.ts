@@ -13,15 +13,14 @@ const WORD_LIMIT: Record<TemplateType, number> = {
   breakup: 70,
 };
 
-function confidenceScoreRubric(wordLimit: number): string {
+function confidenceScoreRubric(): string {
   return `
-## Confidence score rubric
-confidenceScore is the sum of four equally weighted factors, each scored 0–25:
-1. Pain point-to-role fit — the selected pain point is a realistic daily concern for someone in this specific role and industry, not just generically relevant to the campaign.
-2. Campaign-goal alignment — the draft follows the assigned campaign's objective; generic language scores low.
-3. Personalisation quality — the email is specific and relevant to the lead's role, industry, and company context provided.
-4. Length compliance — score 25 if the body is under ${wordLimit} words, 0 if over.
-A total below 70 indicates the draft should be reviewed before sending.`;
+## Confidence score
+Return a confidenceScore object with exactly these three integer fields, each scored 0–25:
+- painPointFit: the selected pain point is a realistic daily concern for someone in this specific role and industry — not just generically relevant to the campaign. Score low if the pain point could apply to any role or industry.
+- campaignAlignment: the draft follows the assigned campaign's objective and stays grounded in the product description. Generic language or off-brief framing scores low.
+- personalisationQuality: the email uses the lead's role, industry, and company context meaningfully. Vague or role-agnostic content scores low.
+Do not include a lengthCompliance field — that is calculated separately.`;
 }
 
 const ATTEMPT_TO_TYPE: Record<number, TemplateType> = {
@@ -180,7 +179,7 @@ ${campaign.description ?? "Not specified"}
 ${buildPainPoints(campaign.painPoints)}`;
 }
 
-function parseResponse(raw: string): {
+function parseResponse(raw: string, wordLimit: number): {
   subject: string;
   body: string;
   confidenceScore: number;
@@ -192,21 +191,25 @@ function parseResponse(raw: string): {
   const parsed = JSON.parse(match[0]) as {
     subject?: string;
     body?: string;
-    confidenceScore?: number;
+    confidenceScore?: { painPointFit?: number; campaignAlignment?: number; personalisationQuality?: number };
     angle_tag?: string;
   };
 
-  if (!parsed.subject || !parsed.body || parsed.confidenceScore === undefined) {
+  if (!parsed.subject || !parsed.body || !parsed.confidenceScore) {
     throw new Error("Missing required fields in draft response");
   }
 
+  const sub = parsed.confidenceScore;
+  const painPointFit = Math.min(25, Math.max(0, Math.round(sub.painPointFit ?? 0)));
+  const campaignAlignment = Math.min(25, Math.max(0, Math.round(sub.campaignAlignment ?? 0)));
+  const personalisationQuality = Math.min(25, Math.max(0, Math.round(sub.personalisationQuality ?? 0)));
   const wordCount = parsed.body.trim().split(/\s+/).length;
-  const score = wordCount > 125 ? Math.max(0, parsed.confidenceScore - 20) : parsed.confidenceScore;
+  const lengthCompliance = wordCount <= wordLimit ? 25 : 0;
 
   return {
     subject: parsed.subject,
     body: parsed.body,
-    confidenceScore: score,
+    confidenceScore: painPointFit + campaignAlignment + personalisationQuality + lengthCompliance,
     angleTag: parsed.angle_tag,
   };
 }
@@ -252,8 +255,9 @@ export async function generateFollowUpBatch(requests: FollowUpRequest[]): Promis
   // Sort by attempt number so same-type requests are adjacent — maximises cache hits.
   const sorted = [...requests].sort((a, b) => a.attemptNumber - b.attemptNumber);
 
-  // Map custom_id → templateId so results can carry attribution back to the caller.
+  // Map custom_id → templateId / type so results can carry attribution and word limit back to the caller.
   const requestTemplateMap = new Map<string, string>();
+  const requestTypeMap = new Map<string, TemplateType>();
 
   const batch = await client.messages.batches.create({
     requests: sorted.map((req) => {
@@ -261,12 +265,13 @@ export async function generateFollowUpBatch(requests: FollowUpRequest[]): Promis
       const tmpl = templateByType.get(type)!;
       const customId = `followup:${req.followUpId}`;
       requestTemplateMap.set(customId, tmpl.id);
+      requestTypeMap.set(customId, type);
       return {
         custom_id: customId,
         params: {
           model: "claude-haiku-4-5",
           max_tokens: maxTokensByType[type],
-          system: [{ type: "text" as const, text: tmpl.systemPrompt + confidenceScoreRubric(WORD_LIMIT[type]), cache_control: { type: "ephemeral" as const } }],
+          system: [{ type: "text" as const, text: tmpl.systemPrompt + confidenceScoreRubric(), cache_control: { type: "ephemeral" as const } }],
           messages: [
             {
               role: "user" as const,
@@ -294,7 +299,8 @@ export async function generateFollowUpBatch(requests: FollowUpRequest[]): Promis
     const text = result.result.message.content.find((b) => b.type === "text");
     if (!text || text.type !== "text") continue;
     try {
-      const { subject, body, angleTag } = parseResponse(text.text);
+      const type = requestTypeMap.get(result.custom_id) ?? "followup_1";
+      const { subject, body, angleTag } = parseResponse(text.text, WORD_LIMIT[type]);
       results.push({
         followUpId: result.custom_id.slice("followup:".length),
         subject,
@@ -337,7 +343,7 @@ export async function generateDraftsBatch(requests: DraftRequest[]): Promise<Dra
       client.messages.create({
         model: "claude-haiku-4-5",
         max_tokens: 400,
-        system: [{ type: "text" as const, text: template.systemPrompt + confidenceScoreRubric(WORD_LIMIT.initial), cache_control: { type: "ephemeral" as const } }],
+        system: [{ type: "text" as const, text: template.systemPrompt + confidenceScoreRubric(), cache_control: { type: "ephemeral" as const } }],
         messages: [{ role: "user" as const, content: buildUserPrompt(req.lead, req.campaign) }],
       }).then((msg) => ({ req, msg }))
     ),
@@ -356,7 +362,7 @@ export async function generateDraftsBatch(requests: DraftRequest[]): Promise<Dra
     if (!text || text.type !== "text") continue;
 
     try {
-      const { subject, body, confidenceScore } = parseResponse(text.text);
+      const { subject, body, confidenceScore } = parseResponse(text.text, WORD_LIMIT.initial);
       results.push({ leadId: req.leadId, campaignId: req.campaignId, templateId: template.id, subject, body, confidenceScore });
     } catch (err) {
       console.error(`[drafting] failed to parse draft for lead ${req.leadId}:`, err);
