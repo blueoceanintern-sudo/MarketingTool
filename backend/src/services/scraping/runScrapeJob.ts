@@ -4,6 +4,7 @@ import { campaigns, campaignLeads, campaignLeadExclusions, companies, leads, scr
 import { scrapeWithFallback } from "../scrapers/crawl4aiScraper";
 import { scrapeWebsite } from "../scrapers/cheerioScraper";
 import { isValidLeadEmail } from "../scrapers/emailFilter";
+import { isValidEduEmail } from "../scrapers/eduEmailFilter";
 import { emitJobEvent } from "../events";
 import { enrichLead } from "../enrichment/orchestrator";
 
@@ -38,6 +39,7 @@ async function persistScrapedLead(
 
   const email = scraped.email.trim().toLowerCase();
   if (!isValidLeadEmail(email)) return null;
+  if (campaignVertical.includes("edu") && !isValidEduEmail(email)) return null;
 
   // Reuse the existing lead row if we've seen this email before — m:n means
   // the same person can be in multiple campaigns. We add a campaign_leads
@@ -198,23 +200,20 @@ export async function runScrapeJob(jobId: string, campaignId: string): Promise<v
     .where(eq(scrapeJobs.id, jobId));
   await emitJobEvent({ kind: "scrape", campaignId, status, leadsScraped });
 
-  // Fire enrichment for every brand-new lead immediately after the scrape
-  // completes. Each call is fire-and-forget; we track how many succeed to
-  // emit a single enrichment_complete event the frontend toasts on.
   if (newLeadIds.length > 0) {
     console.log(`[scrape] queuing enrichment for ${newLeadIds.length} new lead(s)`);
     let enriched = 0;
-    const enrichPromises = newLeadIds.map((leadId) =>
-      enrichLead(leadId)
-        .then(() => { enriched++; })
-        .catch((err) => {
+    await Promise.all(
+      newLeadIds.map(async (leadId) => {
+        try {
+          await enrichLead(leadId);
+          enriched++;
+        } catch (err) {
           console.error(`[scrape] enrichment failed for lead ${leadId}:`, err);
-        })
+        }
+      })
     );
-    // Wait for all enrichment to finish then emit a single SSE event.
-    void Promise.all(enrichPromises).then(() => {
-      console.log(`[scrape] enrichment complete: ${enriched}/${newLeadIds.length} succeeded`);
-      void emitJobEvent({ kind: "enrichment_complete", campaignId, count: enriched });
-    });
+    console.log(`[scrape] enrichment complete: ${enriched}/${newLeadIds.length} succeeded`);
+    await emitJobEvent({ kind: "enrichment_complete", campaignId, count: enriched });
   }
 }
