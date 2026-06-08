@@ -1,4 +1,4 @@
-import { and, eq, notInArray } from "drizzle-orm";
+import { and, eq, inArray, notInArray } from "drizzle-orm";
 import { db } from "../../db";
 import { campaigns, campaignLeads, companies, emailDrafts, leads, suppressionList } from "../../db/schema";
 import { generateDraftsBatch, type CampaignContext } from "./index";
@@ -33,7 +33,10 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
   // routed it to auto_queue, (3) not suppressed for this campaign, (4) no
   // existing draft yet for this (lead, campaign) pair.
   const [draftedRows, suppressedRows] = await Promise.all([
-    db.select({ leadId: emailDrafts.leadId }).from(emailDrafts).where(eq(emailDrafts.campaignId, campaignId)),
+    db.select({ leadId: emailDrafts.leadId }).from(emailDrafts).where(and(
+      eq(emailDrafts.campaignId, campaignId),
+      inArray(emailDrafts.status, ["pending_review", "approved", "scheduled", "sent"]),
+    )),
     db.select({ email: suppressionList.email }).from(suppressionList).where(eq(suppressionList.campaignId, campaignId)),
   ]);
   const alreadyDrafted = draftedRows.map((r) => r.leadId);
@@ -97,15 +100,30 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
   const results = await generateDraftsBatch(requests);
 
   for (const draft of results) {
-    await db.insert(emailDrafts).values({
-      leadId: draft.leadId,
-      campaignId: draft.campaignId,
-      templateId: draft.templateId,
-      subject: draft.subject,
-      body: draft.body,
-      confidenceScore: draft.confidenceScore,
-      status: "pending_review",
-    });
+    await db.insert(emailDrafts)
+      .values({
+        leadId: draft.leadId,
+        campaignId: draft.campaignId,
+        templateId: draft.templateId,
+        subject: draft.subject,
+        body: draft.body,
+        confidenceScore: draft.confidenceScore,
+        scoreBreakdown: draft.scoreBreakdown,
+        status: "pending_review",
+      })
+      .onConflictDoUpdate({
+        target: [emailDrafts.leadId, emailDrafts.campaignId],
+        set: {
+          templateId: draft.templateId,
+          subject: draft.subject,
+          body: draft.body,
+          confidenceScore: draft.confidenceScore,
+          scoreBreakdown: draft.scoreBreakdown,
+          status: "pending_review",
+          approvedBy: null,
+          approvedAt: null,
+        },
+      });
   }
 
   const errors: string[] = [];
