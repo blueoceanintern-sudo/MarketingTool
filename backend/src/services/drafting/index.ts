@@ -207,27 +207,18 @@ export async function generateFollowUpBatch(requests: FollowUpRequest[]): Promis
       id: promptTemplates.id,
       systemPrompt: promptTemplates.systemPrompt,
       templateType: promptTemplates.templateType,
-      sendCount: promptTemplates.sendCount,
-      positiveIntentCount: promptTemplates.positiveIntentCount,
-      negativeReplyCount: promptTemplates.negativeReplyCount,
     })
     .from(promptTemplates)
     .where(and(eq(promptTemplates.active, true), inArray(promptTemplates.templateType, neededTypes)));
 
-  const templatesByType = new Map<TemplateType, typeof templateRows>();
+  const templateByType = new Map<TemplateType, typeof templateRows[number]>();
   for (const row of templateRows) {
-    const key = row.templateType as TemplateType;
-    if (!templatesByType.has(key)) templatesByType.set(key, []);
-    templatesByType.get(key)!.push(row);
+    const type = row.templateType as TemplateType;
+    if (!templateByType.has(type)) templateByType.set(type, row);
   }
 
-  const templateByType = new Map<TemplateType, typeof templateRows[number]>();
   for (const type of neededTypes) {
-    const pool = templatesByType.get(type);
-    if (!pool || pool.length === 0) throw new Error(`No active prompt template for type: ${type}`);
-    const selected = thompsonSample(pool);
-    if (!selected) throw new Error(`Thompson sampling failed for type: ${type}`);
-    templateByType.set(type, selected);
+    if (!templateByType.has(type)) throw new Error(`No active prompt template for type: ${type}`);
   }
 
   const client = new Anthropic({ apiKey });
@@ -307,22 +298,16 @@ export async function generateDraftsBatch(requests: DraftRequest[]): Promise<Dra
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY is required");
 
   const allTemplates = await db
-    .select({
-      id: promptTemplates.id,
-      systemPrompt: promptTemplates.systemPrompt,
-      sendCount: promptTemplates.sendCount,
-      positiveIntentCount: promptTemplates.positiveIntentCount,
-      negativeReplyCount: promptTemplates.negativeReplyCount,
-    })
+    .select({ id: promptTemplates.id, systemPrompt: promptTemplates.systemPrompt })
     .from(promptTemplates)
-    .where(and(eq(promptTemplates.active, true), eq(promptTemplates.templateType, "initial")));
+    .where(and(eq(promptTemplates.active, true), eq(promptTemplates.templateType, "initial")))
+    .limit(1);
 
   if (allTemplates.length === 0) {
-    throw new Error("No active initial prompt template — seed a row in prompt_templates with template_type='initial'");
+    throw new Error("No active initial prompt template — run db:seed to insert templates");
   }
 
-  const template = thompsonSample(allTemplates);
-  if (!template) throw new Error("Thompson sampling returned no template");
+  const template = allTemplates[0]!;
 
   const client = new Anthropic({ apiKey });
 
