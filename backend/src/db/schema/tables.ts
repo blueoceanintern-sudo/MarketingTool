@@ -114,6 +114,7 @@ export const emailDrafts = pgTable("email_drafts", {
   subject: text("subject").notNull(),
   body: text("body").notNull(),
   confidenceScore: real("confidence_score").notNull(),
+  scoreBreakdown: jsonb("score_breakdown").$type<{ painPointFit: number; campaignAlignment: number; personalisationQuality: number; lengthCompliance: number }>(),
   status: draftStatusEnum("status").default("pending_review").notNull(),
   approvedBy: text("approved_by"),
   approvedAt: timestamp("approved_at"),
