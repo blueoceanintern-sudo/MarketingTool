@@ -548,7 +548,7 @@ allLeadsRouter.post("/enrich", async (c) => {
   void (async () => {
     let enriched = 0;
     for (const { id } of unenriched) {
-      await enrichLead(id).then(() => enriched++).catch((err) => {
+      await enrichLead(id).then(({ fullyEnriched }) => { if (fullyEnriched) enriched++; }).catch((err) => {
         console.error(`[leads/enrich] enrichment failed for ${id}:`, err);
       });
     }
