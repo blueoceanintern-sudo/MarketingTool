@@ -54,7 +54,12 @@
       "Bash(Get-Content \"C:\\\\Users\\\\jachi\\\\Desktop\\\\MarketingTool\\\\backend\\\\src\\\\db\\\\migrations\\\\0006_remove_hostile_enum.sql\")",
       "PowerShell(docker exec *)",
       "PowerShell(New-Item *)",
-      "Bash(git *)"
+      "Bash(git *)",
+      "Bash(grep \"DATABASE_URL\" ../.env)",
+      "Bash(grep \"DATABASE_URL\" .env)",
+      "Bash(psql *)",
+      "Bash(cat)",
+      "Bash(bun src/db/check_drafts_temp.ts)"
     ]
   }
 }

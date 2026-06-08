@@ -211,12 +211,7 @@ Return only this JSON — no explanation, no preamble:
 
 {
   "subject": "...",
-  "body": "...",
-  "confidenceScore": {
-    "painPointFit": <integer 0-25>,
-    "campaignAlignment": <integer 0-25>,
-    "personalisationQuality": <integer 0-25>
-  }
+  "body": "..."
 }
 
 $prompt$,
@@ -381,12 +376,7 @@ Return only valid JSON — no explanation, no preamble:
 {
   "subject": "...",
   "body": "...",
-  "angle_tag": "...",
-  "confidenceScore": {
-    "painPointFit": <integer 0-25>,
-    "campaignAlignment": <integer 0-25>,
-    "personalisationQuality": <integer 0-25>
-  }
+  "angle_tag": "..."
 }
 
 $prompt$,
@@ -546,12 +536,7 @@ Return only valid JSON — no explanation, no preamble:
 {
   "subject": "...",
   "body": "...",
-  "angle_tag": "...",
-  "confidenceScore": {
-    "painPointFit": <integer 0-25>,
-    "campaignAlignment": <integer 0-25>,
-    "personalisationQuality": <integer 0-25>
-  }
+  "angle_tag": "..."
 }
 
 $prompt$,
@@ -699,12 +684,7 @@ Return only valid JSON — no explanation, no preamble:
 {
   "subject": "...",
   "body": "...",
-  "angle_tag": "exit",
-  "confidenceScore": {
-    "painPointFit": <integer 0-25>,
-    "campaignAlignment": <integer 0-25>,
-    "personalisationQuality": <integer 0-25>
-  }
+  "angle_tag": "exit"
 }
 
 $prompt$,
