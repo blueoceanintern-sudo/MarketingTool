@@ -15,6 +15,13 @@
       "when": 1780563789219,
       "tag": "0001_tough_rictor",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1780886119857,
+      "tag": "0002_late_valeria_richards",
+      "breakpoints": true
     }
   ]
 }
