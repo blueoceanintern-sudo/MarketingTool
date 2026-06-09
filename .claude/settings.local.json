@@ -63,7 +63,8 @@
       "Bash(bun src/db/check_tmpl_temp.ts)",
       "Bash(rm src/db/check_tmpl_temp.ts)",
       "Bash(dir /s /b \"C:\\\\Users\\\\jachi\\\\Desktop\\\\MarketingTool\\\\backend\\\\src\\\\services\")",
-      "Bash(rm test-mutation.ts)"
+      "Bash(rm test-mutation.ts)",
+      "Bash(bun drizzle-kit *)"
     ]
   }
 }

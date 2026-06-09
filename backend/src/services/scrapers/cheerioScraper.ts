@@ -6,8 +6,7 @@ export interface Lead {
   company?: string;
   email?: string;
   website: string;
-  firstName?: string;
-  lastName?: string;
+  name?: string;
   role?: string;
 }
 
@@ -64,11 +63,11 @@ function findStaffPageLinks($: cheerio.CheerioAPI, baseUrl: string): string[] {
   return [...seen].slice(0, 3);
 }
 
-function parseName(text: string): { firstName: string; lastName: string } | null {
+function parseName(text: string): string | null {
   const cleaned = text.replace(/[^a-zA-Z\s\-'.]/g, "").trim();
   const words = cleaned.split(/\s+/).filter((w) => w.length >= 2);
   if (words.length < 2 || words.length > 4) return null;
-  return { firstName: words[0]!, lastName: words.slice(1).join(" ") };
+  return words.join(" ");
 }
 
 function extractRole(text: string): string | null {
@@ -100,23 +99,17 @@ function extractLeadsFromPage(
     const linkText = $(el).text().trim();
     if (linkText && !linkText.includes("@")) {
       const parsed = parseName(linkText);
-      if (parsed) {
-        lead.firstName = parsed.firstName;
-        lead.lastName = parsed.lastName;
-      }
+      if (parsed) lead.name = parsed;
     }
 
     // Look in nearest container for name heading + role
     const $container = $(el).closest("div, li, article, section, td, tr, p");
     if ($container.length) {
-      if (!lead.firstName) {
+      if (!lead.name) {
         const heading = $container.find("h1,h2,h3,h4,h5,h6,strong,b").first().text().trim();
         if (heading && !heading.includes("@")) {
           const parsed = parseName(heading);
-          if (parsed) {
-            lead.firstName = parsed.firstName;
-            lead.lastName = parsed.lastName;
-          }
+          if (parsed) lead.name = parsed;
         }
       }
       if (!lead.role) {

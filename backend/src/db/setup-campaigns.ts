@@ -123,14 +123,13 @@ async function main() {
   // until migrations are applied.
   async function insertLead(
     companyId: string,
-    firstName: string,
-    lastName: string,
+    name: string,
     email: string,
     role: string,
   ): Promise<string> {
     const [row] = await client<{ id: string }[]>`
-      INSERT INTO leads (company_id, first_name, last_name, email, role, is_verified, status, email_status, routing)
-      VALUES (${companyId}, ${firstName}, ${lastName}, ${email}, ${role}, true, 'new', 'verified', 'auto_queue')
+      INSERT INTO leads (company_id, name, email, role, is_verified, status, email_status, routing)
+      VALUES (${companyId}, ${name}, ${email}, ${role}, true, 'new', 'verified', 'auto_queue')
       RETURNING id
     `;
     return row!.id;
@@ -142,7 +141,7 @@ async function main() {
     .values({ name: "Stamford International School", industry: "education", companySize: "medium", location: "Singapore", source: "seed" })
     .returning({ id: companies.id });
 
-  const eduLeadId = await insertLead(eduCompany!.id, "Sarah", "Tan", "sarah.tan@stamford-school.edu.sg", "Head of Admissions");
+  const eduLeadId = await insertLead(eduCompany!.id, "Sarah Tan", "sarah.tan@stamford-school.edu.sg", "Head of Admissions");
   await db.insert(campaignLeads).values({ leadId: eduLeadId, campaignId: eduCampaign!.id, source: "seed" });
   console.log(`  ✓ edu lead: Sarah Tan → "${eduCampaign!.name}"`);
 
@@ -152,7 +151,7 @@ async function main() {
     .values({ name: "Ashurst Australia", industry: "law", companySize: "medium", location: "Sydney, AU", source: "seed" })
     .returning({ id: companies.id });
 
-  const lawLeadId = await insertLead(lawCompany!.id, "James", "Whitfield", "james.whitfield@ashurst.com.au", "HR Manager");
+  const lawLeadId = await insertLead(lawCompany!.id, "James Whitfield", "james.whitfield@ashurst.com.au", "HR Manager");
   await db.insert(campaignLeads).values({ leadId: lawLeadId, campaignId: lawCampaign!.id, source: "seed" });
   console.log(`  ✓ law lead: James Whitfield → "${lawCampaign!.name}"`);
 
@@ -162,7 +161,7 @@ async function main() {
     .values({ name: "Grab Holdings", industry: "technology", companySize: "large", location: "Singapore", source: "seed" })
     .returning({ id: companies.id });
 
-  const hrLeadId = await insertLead(hrCompany!.id, "Michelle", "Lim", "michelle.lim@grab.com", "HR Director");
+  const hrLeadId = await insertLead(hrCompany!.id, "Michelle Lim", "michelle.lim@grab.com", "HR Director");
   await db.insert(campaignLeads).values({ leadId: hrLeadId, campaignId: hrCampaign!.id, source: "seed" });
   console.log(`  ✓ hr lead: Michelle Lim → "${hrCampaign!.name}"`);
 

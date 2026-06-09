@@ -9,8 +9,7 @@ import { isValidLeadEmail } from "../services/scrapers/emailFilter";
 
 interface LeadRow {
   id: string;
-  firstName: string | null;
-  lastName: string | null;
+  name: string | null;
   email: string;
   role: string | null;
   isVerified: boolean;
@@ -27,8 +26,7 @@ interface LeadRow {
 function formatLead(row: LeadRow, campaignsForLead: { id: string; name: string }[]) {
   return {
     id: row.id,
-    first_name: row.firstName ?? "",
-    last_name: row.lastName ?? "",
+    name: row.name ?? "",
     email: row.email,
     role: row.role ?? "",
     is_verified: row.isVerified,
@@ -66,8 +64,7 @@ async function attachCampaignsToLeads(leadIds: string[]): Promise<Map<string, { 
 
 const LEAD_SELECT = {
   id: leads.id,
-  firstName: leads.firstName,
-  lastName: leads.lastName,
+  name: leads.name,
   email: leads.email,
   role: leads.role,
   isVerified: leads.isVerified,
@@ -215,8 +212,7 @@ leadsRouter.get("/:id/leads/excluded", async (c) => {
       excludedBy: campaignLeadExclusions.excludedBy,
       reason: campaignLeadExclusions.reason,
       email: leads.email,
-      firstName: leads.firstName,
-      lastName: leads.lastName,
+      name: leads.name,
       role: leads.role,
       companyName: companies.name,
     })
@@ -229,8 +225,7 @@ leadsRouter.get("/:id/leads/excluded", async (c) => {
   return c.json(rows.map((r) => ({
     lead_id: r.leadId,
     email: r.email,
-    first_name: r.firstName ?? "",
-    last_name: r.lastName ?? "",
+    name: r.name ?? "",
     role: r.role ?? "",
     company_name: r.companyName,
     excluded_at: r.excludedAt.toISOString(),
@@ -324,14 +319,11 @@ leadsRouter.post("/:id/leads/import", async (c) => {
       company = inserted!;
     }
 
-    const nameParts = (row["contact_name"] ?? "").trim().split(/\s+/);
-    const firstName = nameParts[0] ?? "";
-    const lastName = nameParts.slice(1).join(" ") || "";
+    const name = (row["contact_name"] ?? "").trim() || null;
 
     const [lead] = await db.insert(leads).values({
       companyId: company.id,
-      firstName,
-      lastName,
+      name,
       email,
       role: row["role"] ?? "",
       isVerified: false,

@@ -57,8 +57,7 @@ export type EnrichmentRouting = "auto_queue" | "rep_review";
 
 export interface Lead {
   id: string;
-  first_name: string;
-  last_name: string;
+  name: string;
   email: string;
   role: string;
   is_verified: boolean;
