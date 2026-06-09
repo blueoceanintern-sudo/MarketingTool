@@ -15,6 +15,7 @@ import { cors } from "hono/cors";
 import { db } from "./db";
 import { leads, suppressionList, campaignLeadExclusions } from "./db/schema";
 import { eq } from "drizzle-orm";
+import { requireAuth } from "./middleware/auth";
 
 const app = new Hono();
 
@@ -23,19 +24,25 @@ app.use(
   cors({
     origin: ["http://localhost:3000", "http://127.0.0.1:3000"],
     allowMethods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
-    allowHeaders: ["Content-Type"],
+    allowHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
   })
 );
 
-app.route("/api/v1/campaigns", campaignsRouter);
-app.route("/api/v1/campaigns", leadsRouter);
-app.route("/api/v1/leads", allLeadsRouter);
-app.route("/api/v1/drafts", draftsRouter);
-app.route("/api/v1", repliesRouter);
-app.route("/api/v1/demos", demosRouter);
-app.route("/api/v1/analytics", analyticsRouter);
-app.route("/api/v1", adminRouter);
-app.route("/api/v1", eventsRouter);
+// All /api/v1/* routes require a valid session token.
+const api = new Hono();
+api.use("*", requireAuth);
+api.route("/campaigns", campaignsRouter);
+api.route("/campaigns", leadsRouter);
+api.route("/leads", allLeadsRouter);
+api.route("/drafts", draftsRouter);
+api.route("", repliesRouter);
+api.route("/demos", demosRouter);
+api.route("/analytics", analyticsRouter);
+api.route("", adminRouter);
+api.route("", eventsRouter);
+
+app.route("/api/v1", api);
 
 // Start the Postgres LISTEN connection that fans job events out to SSE clients.
 void startJobEventListener();

@@ -3,6 +3,7 @@ import { db } from "../db";
 import { leads, companies, campaigns, campaignLeads, campaignLeadExclusions, suppressionList, enrichmentRecords, emailDrafts, emailEvents, followUps } from "../db/schema";
 import { count, sql, eq, desc, and, inArray, isNull, isNotNull } from "drizzle-orm";
 import { logAudit } from "../services/audit/log";
+import type { AuthUser } from "../middleware/auth";
 import { enrichLead } from "../services/enrichment/orchestrator";
 import { emitJobEvent } from "../services/events";
 import { isValidLeadEmail } from "../services/scrapers/emailFilter";
@@ -86,7 +87,7 @@ const SUMMARY_SELECT = {
 } as const;
 
 // Mounted at /api/v1/leads — all leads, no campaign filter
-export const allLeadsRouter = new Hono();
+export const allLeadsRouter = new Hono<{ Variables: { user: AuthUser } }>();
 
 allLeadsRouter.get("/", async (c) => {
   const page = Math.max(1, parseInt(c.req.query("page") ?? "1", 10) || 1);
@@ -163,7 +164,7 @@ allLeadsRouter.get("/", async (c) => {
 });
 
 // Mounted at /api/v1/campaigns — campaign-scoped lead endpoints
-export const leadsRouter = new Hono();
+export const leadsRouter = new Hono<{ Variables: { user: AuthUser } }>();
 
 leadsRouter.get("/:id/leads", async (c) => {
   const campaignId = c.req.param("id");
@@ -396,7 +397,7 @@ allLeadsRouter.post("/:id/campaigns", async (c) => {
   await db.insert(campaignLeads).values({ leadId, campaignId: body.campaign_id, source: "manual" });
 
   await logAudit({
-    actor: "user",
+    actor: c.get("user"),
     action: "lead.add_to_campaign",
     targetId: leadId,
     targetType: "lead",
@@ -501,7 +502,7 @@ allLeadsRouter.delete("/:id/campaigns/:campaignId", async (c) => {
   });
 
   await logAudit({
-    actor: "user",
+    actor: c.get("user"),
     action: "lead.remove_from_campaign",
     targetId: leadId,
     targetType: "lead",

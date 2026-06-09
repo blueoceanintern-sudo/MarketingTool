@@ -163,7 +163,7 @@ async function maybeAutoDiscover(
       continue;
     }
 
-    const config = getDirectoryConfig(verticalNormalized, geo);
+    const config = await getDirectoryConfig(verticalNormalized, geo);
     if (!config) {
       outcomes.push({ geo, status: "skipped_no_config", domains: [] });
       continue;

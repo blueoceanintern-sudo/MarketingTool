@@ -1,6 +1,7 @@
 {
   "permissions": {
     "allow": [
+<<<<<<< HEAD
       "PowerShell(Get-ChildItem)",
       "PowerShell(& \"$env:USERPROFILE\\\\.bun\\\\bin\\\\bun.exe\" --version 2>$null; cmd /c \"where bun\" 2>$null)",
       "Bash(git pull *)",
@@ -68,6 +69,15 @@
       "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\jachi\\\\Desktop\\\\MarketingTool\" -Recurse -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -match \"^\\\\.env\" } | ForEach-Object { $_.FullName })",
       "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\jachi\\\\Desktop\\\\MarketingTool\\\\frontend\" -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -match \"^\\\\.env\" } | ForEach-Object { $_.FullName })",
       "PowerShell(Remove-Item *)"
+=======
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.local)",
+      "Bash(cat .env*)",
+      "Bash(grep .env*)",
+      "Bash(less .env*)"
+>>>>>>> e7358ee365ae7ddf051334cb17632e48400aa80a
     ]
   }
 }

@@ -1,42 +1,60 @@
 import { lookup } from "node:dns/promises";
-import { inArray } from "drizzle-orm";
+import { inArray, eq, and } from "drizzle-orm";
 import { db } from "../../db";
-import { sourceRegistry, normalizeVertical, normalizeGeo } from "../../db/schema";
+import { sourceRegistry, directoryConfigs, normalizeVertical, normalizeGeo } from "../../db/schema";
 
 export interface DirectoryConfig {
+  id: string;
   query: string;
   domains: string[];
 }
 
-// Add a new entry here when onboarding a new vertical or market.
-// domains → passed to Tavily as include_domains (restricts results to those sites).
-// query  → search terms used within those domains.
-export const DIRECTORY_CONFIGS: Record<string, DirectoryConfig> = {
-  "education:SG": {
-    query: "Singapore school contact principal",
-    domains: ["moe.edu.sg", "cpe.gov.sg"],
-  },
-  "education:AU": {
-    query: "school contact principal email",
-    domains: ["myschool.edu.au", "acara.edu.au", "asqa.gov.au", "teqsa.gov.au"],
-  },
-  "education:US": {
-    query: "school contact email",
-    domains: ["nces.ed.gov", "ed.gov"],
-  },
-};
-
-// Whether (vertical, geo) has a Tavily directory config. Callers use this to
-// distinguish "discovery skipped because no config" from "discovery ran and
-// found nothing." Routes can also expose this so UIs can show coverage.
-export function hasDirectoryConfig(vertical: string, geo: string): boolean {
-  const key = `${normalizeVertical(vertical)}:${resolveGeo(geo)}`;
-  return key in DIRECTORY_CONFIGS;
+export async function getAllDirectoryConfigs(): Promise<Array<DirectoryConfig & { vertical: string; geo: string }>> {
+  const rows = await db.select().from(directoryConfigs).orderBy(directoryConfigs.vertical, directoryConfigs.geo);
+  return rows.map((r) => ({
+    id: r.id,
+    vertical: r.vertical,
+    geo: r.geo,
+    query: r.query,
+    domains: r.domains,
+  }));
 }
 
-export function getDirectoryConfig(vertical: string, geo: string): DirectoryConfig | null {
-  const key = `${normalizeVertical(vertical)}:${resolveGeo(geo)}`;
-  return DIRECTORY_CONFIGS[key] ?? null;
+const GEO_ALIASES: Record<string, string> = {
+  "AUSTRALIA": "AU",
+  "AUS": "AU",
+  "SINGAPORE": "SG",
+  "SIN": "SG",
+  "USA": "US",
+  "UNITED STATES": "US",
+  "UNITED STATES OF AMERICA": "US",
+  "VIETNAM": "VN", 
+  "VIET": "VN",
+};
+
+export function resolveGeo(geo: string): string {
+  const upper = normalizeGeo(geo);
+  return GEO_ALIASES[upper] ?? upper;
+}
+
+export async function getDirectoryConfig(vertical: string, geo: string): Promise<DirectoryConfig | null> {
+  const [row] = await db
+    .select()
+    .from(directoryConfigs)
+    .where(
+      and(
+        eq(directoryConfigs.vertical, normalizeVertical(vertical)),
+        eq(directoryConfigs.geo, resolveGeo(geo)),
+      ),
+    )
+    .limit(1);
+  if (!row) return null;
+  return { id: row.id, query: row.query, domains: row.domains };
+}
+
+export async function hasDirectoryConfig(vertical: string, geo: string): Promise<boolean> {
+  const config = await getDirectoryConfig(vertical, geo);
+  return config !== null;
 }
 
 const PRIVATE_IP_RE =
@@ -96,26 +114,13 @@ async function tavilySearch(query: string, domains: string[]): Promise<{ url: st
   return data.results ?? [];
 }
 
-const GEO_ALIASES: Record<string, string> = {
-  AUSTRALIA: "AU",
-  SINGAPORE: "SG",
-  "UNITED STATES": "US",
-  "UNITED STATES OF AMERICA": "US",
-  USA: "US",
-};
-
-function resolveGeo(geo: string): string {
-  const upper = normalizeGeo(geo);
-  return GEO_ALIASES[upper] ?? upper;
-}
-
 export async function discoverSources(
   vertical: string,
   geo: string,
   campaignId: string | null,
 ): Promise<number> {
   const key = `${normalizeVertical(vertical)}:${resolveGeo(geo)}`;
-  const config = DIRECTORY_CONFIGS[key];
+  const config = await getDirectoryConfig(vertical, geo);
 
   if (!config) {
     console.warn(`[source-registry] no directory config for ${key} — skipping discovery`);
@@ -125,7 +130,6 @@ export async function discoverSources(
   const results = await tavilySearch(config.query, config.domains);
   if (results.length === 0) return 0;
 
-  // Load only candidate URLs to check for duplicates — avoid a full table scan
   const candidateUrls = results.map((r) => r.url);
   const existing = await db
     .select({ url: sourceRegistry.url })
@@ -136,7 +140,6 @@ export async function discoverSources(
   const novel = results.filter((r) => !existingUrls.has(r.url));
   if (novel.length === 0) return 0;
 
-  // Validate all candidate URLs in parallel
   const validated = await Promise.allSettled(
     novel.map(async (r) => ({ ...r, ok: await validateUrl(r.url) })),
   );
