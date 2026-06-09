@@ -12,6 +12,7 @@ function formatDraft(row: {
   subject: string;
   body: string;
   confidenceScore: number;
+  scoreBreakdown: { painPointFit: number; campaignAlignment: number; personalisationQuality: number; lengthCompliance: number } | null;
   status: string;
   createdAt: Date;
   leadFirstName: string | null;
@@ -30,6 +31,7 @@ function formatDraft(row: {
     subject: row.subject,
     body: row.body,
     confidence_score: row.confidenceScore,
+    score_breakdown: row.scoreBreakdown,
     status: row.status,
     created_at: row.createdAt.toISOString(),
   };
@@ -45,6 +47,7 @@ async function getDraftWithJoins(draftId: string) {
       subject: emailDrafts.subject,
       body: emailDrafts.body,
       confidenceScore: emailDrafts.confidenceScore,
+      scoreBreakdown: emailDrafts.scoreBreakdown,
       status: emailDrafts.status,
       createdAt: emailDrafts.createdAt,
       leadFirstName: leads.firstName,
@@ -94,6 +97,7 @@ draftsRouter.get("/", async (c) => {
       subject: emailDrafts.subject,
       body: emailDrafts.body,
       confidenceScore: emailDrafts.confidenceScore,
+      scoreBreakdown: emailDrafts.scoreBreakdown,
       status: emailDrafts.status,
       createdAt: emailDrafts.createdAt,
       leadFirstName: leads.firstName,
@@ -128,6 +132,7 @@ draftsRouter.get("/queue", async (c) => {
       subject: emailDrafts.subject,
       body: emailDrafts.body,
       confidenceScore: emailDrafts.confidenceScore,
+      scoreBreakdown: emailDrafts.scoreBreakdown,
       status: emailDrafts.status,
       createdAt: emailDrafts.createdAt,
       leadFirstName: leads.firstName,

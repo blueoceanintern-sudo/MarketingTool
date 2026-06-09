@@ -104,6 +104,13 @@ export interface EnrichmentRecord {
   routing_reason: string | null;
 }
 
+export interface ScoreBreakdown {
+  painPointFit: number;
+  campaignAlignment: number;
+  personalisationQuality: number;
+  lengthCompliance: number;
+}
+
 export interface Draft {
   id: string;
   lead_id: string;
@@ -115,6 +122,7 @@ export interface Draft {
   subject: string;
   body: string;
   confidence_score: number;
+  score_breakdown: ScoreBreakdown | null;
   status: DraftStatus;
   created_at: string;
 }
