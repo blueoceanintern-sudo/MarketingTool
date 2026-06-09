@@ -34,7 +34,7 @@ const REQUIRED_FIELDS = [
   "contact.email_status",
 ] as const;
 
-export async function enrichLead(leadId: string): Promise<EnrichmentRecord> {
+export async function enrichLead(leadId: string): Promise<{ record: EnrichmentRecord; fullyEnriched: boolean }> {
   const input = await buildInput(leadId);
 
   let primarySource: EnrichmentSource = "manual";
@@ -83,8 +83,8 @@ export async function enrichLead(leadId: string): Promise<EnrichmentRecord> {
     routing_reason: reason,
   };
 
-  await persist(record, input.campaignId);
-  return record;
+  const fullyEnriched = await persist(record, input.campaignId);
+  return { record, fullyEnriched };
 }
 
 async function buildInput(leadId: string): Promise<EnrichmentInput> {
@@ -256,8 +256,8 @@ function computeRouting(
   return { routing: "auto_queue", reason: null };
 }
 
-async function persist(record: EnrichmentRecord, campaignId: string | null): Promise<void> {
-  const { first_name, full_name, role } = record.contact;
+async function persist(record: EnrichmentRecord, campaignId: string | null): Promise<boolean> {
+  const { first_name, full_name, role, email } = record.contact;
 
   // Derive last name from full_name by removing first_name prefix
   let lastName: string | null = null;
@@ -268,6 +268,9 @@ async function persist(record: EnrichmentRecord, campaignId: string | null): Pro
     const spaceIdx = full_name.indexOf(" ");
     lastName = spaceIdx !== -1 ? full_name.slice(spaceIdx + 1).trim() : null;
   }
+
+  // Only mark the lead as fully enriched if all key contact fields are present
+  const fullyEnriched = Boolean(first_name && lastName && role && email);
 
   await db.transaction(async (tx) => {
     await tx.insert(enrichmentRecords).values({
@@ -289,10 +292,11 @@ async function persist(record: EnrichmentRecord, campaignId: string | null): Pro
         ...(first_name ? { firstName: first_name } : {}),
         ...(lastName ? { lastName } : {}),
         ...(role ? { role } : {}),
+        ...(email ? { email } : {}),
         emailStatus: record.contact.email_status,
         enrichmentSource: record.enrichment_source,
         routing: record.routing,
-        enrichedAt: new Date(record.enriched_at),
+        ...(fullyEnriched ? { enrichedAt: new Date(record.enriched_at) } : {}),
         isVerified: record.contact.email_status === "verified",
         updatedAt: new Date(),
       })
@@ -300,4 +304,5 @@ async function persist(record: EnrichmentRecord, campaignId: string | null): Pro
   });
 
   await appendEnrichmentRecord(record);
+  return fullyEnriched;
 }

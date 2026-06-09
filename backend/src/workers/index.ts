@@ -368,7 +368,7 @@ cron.schedule("0 3 * * *", async () => {
   for (const { id } of candidates) {
     counts.attempted++;
     try {
-      const record = await enrichLead(id);
+      const { record } = await enrichLead(id);
       counts[record.contact.email_status]++;
     } catch (err) {
       counts.errors++;

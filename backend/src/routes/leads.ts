@@ -4,6 +4,7 @@ import { leads, companies, campaigns, campaignLeads, campaignLeadExclusions, sup
 import { count, sql, eq, desc, and, inArray, isNull, isNotNull } from "drizzle-orm";
 import { logAudit } from "../services/audit/log";
 import { enrichLead } from "../services/enrichment/orchestrator";
+import { emitJobEvent } from "../services/events";
 import { isValidLeadEmail } from "../services/scrapers/emailFilter";
 
 interface LeadRow {
@@ -544,11 +545,15 @@ allLeadsRouter.post("/enrich", async (c) => {
   const queued = unenriched.length;
   console.log(`[leads/enrich] queuing ${queued} scraped lead(s) for enrichment`);
 
-  for (const { id } of unenriched) {
-    void enrichLead(id).catch((err) => {
-      console.error(`[leads/enrich] enrichment failed for ${id}:`, err);
-    });
-  }
+  void (async () => {
+    let enriched = 0;
+    for (const { id } of unenriched) {
+      await enrichLead(id).then(({ fullyEnriched }) => { if (fullyEnriched) enriched++; }).catch((err) => {
+        console.error(`[leads/enrich] enrichment failed for ${id}:`, err);
+      });
+    }
+    await emitJobEvent({ kind: "enrichment_complete", campaignId: "", count: enriched });
+  })();
 
   console.log(`[task:2] ✓ POST /api/v1/leads/enrich returned queued=${queued}`);
   return c.json({ queued });
