@@ -1,6 +1,7 @@
 import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
 import { SignJWT } from "jose";
+import type { Role } from "@/types/auth";
 
 const allowedEmails = (process.env.ALLOWED_EMAILS ?? "")
   .split(",")
@@ -29,7 +30,7 @@ const BACKEND_TOKEN_TTL_SECONDS = 3600;
 // Refresh the backend token when less than this many seconds remain.
 const REFRESH_BEFORE_EXPIRY = 300;
 
-async function mintBackendToken(email: string, role: "admin" | "rep"): Promise<string> {
+async function mintBackendToken(email: string, role: Role): Promise<string> {
   return new SignJWT({ email, role })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
@@ -64,7 +65,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
       // Re-evaluate role from env on every refresh — role changes in
       // ADMIN_EMAILS take effect on the user's next page navigation.
-      const role: "admin" | "rep" = adminEmails.includes(email) ? "admin" : "rep";
+      const role: Role = adminEmails.includes(email) ? "admin" : "rep";
       const now = Math.floor(Date.now() / 1000);
       const backendTokenExp = token.backendTokenExp as number | undefined;
       const roleChanged = token.role !== role;
@@ -79,7 +80,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       return token;
     },
     async session({ session, token }) {
-      session.user.role = token.role as "admin" | "rep";
+      session.user.role = token.role as Role;
       session.backendToken = token.backendToken as string;
       return session;
     },

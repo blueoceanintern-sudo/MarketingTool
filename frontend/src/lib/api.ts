@@ -567,6 +567,7 @@ export async function getRegistrySources(): Promise<SourceRegistry[]> {
 }
 
 export interface DirectoryConfig {
+  id: string;
   vertical: string;
   geo: string;
   query: string;
@@ -656,6 +657,60 @@ export async function importRegistrySources(file: File): Promise<{ result: Regis
     return { result: body };
   } catch {
     return { result: null, error: "Could not reach the API." };
+  }
+}
+
+export async function createDirectoryConfig(payload: {
+  vertical: string;
+  geo: string;
+  query: string;
+  domains: string[];
+}): Promise<{ config: DirectoryConfig | null; error?: string; isDuplicate?: boolean }> {
+  try {
+    const res = await apiRequest(`${BASE}/api/v1/registry/directory-configs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const body = (await res.json()) as DirectoryConfig & { error?: string };
+    if (res.status === 409) return { config: null, error: body.error ?? "Already exists", isDuplicate: true };
+    if (!res.ok) return { config: null, error: body.error ?? `Request failed (${res.status})` };
+    return { config: body };
+  } catch {
+    return { config: null, error: "Could not reach the API." };
+  }
+}
+
+export async function updateDirectoryConfig(
+  id: string,
+  payload: { query?: string; domains?: string[] },
+): Promise<{ config: DirectoryConfig | null; error?: string }> {
+  try {
+    const res = await apiRequest(`${BASE}/api/v1/registry/directory-configs/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const body = (await res.json()) as DirectoryConfig & { error?: string };
+    if (!res.ok) return { config: null, error: body.error ?? `Request failed (${res.status})` };
+    return { config: body };
+  } catch {
+    return { config: null, error: "Could not reach the API." };
+  }
+}
+
+export async function deleteDirectoryConfig(id: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await apiRequest(`${BASE}/api/v1/registry/directory-configs/${id}`, {
+      method: "DELETE",
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return { ok: false, error: body.error ?? `Request failed (${res.status})` };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "Could not reach the API." };
   }
 }
 

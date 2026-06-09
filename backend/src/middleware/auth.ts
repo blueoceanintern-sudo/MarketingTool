@@ -7,9 +7,11 @@ function getSecret(): Uint8Array {
   return new TextEncoder().encode(s);
 }
 
+export type Role = "admin" | "rep";
+
 export interface AuthUser {
   email: string;
-  role: "admin" | "rep";
+  role: Role;
 }
 
 // Verifies the HS256 backend token minted by the frontend on sign-in.
@@ -25,7 +27,7 @@ export async function requireAuth(c: Context, next: Next) {
     if (typeof payload.email !== "string" || typeof payload.role !== "string") {
       return c.json({ error: "Unauthorized" }, 401);
     }
-    c.set("user", { email: payload.email, role: payload.role } satisfies AuthUser);
+    c.set("user", { email: payload.email, role: payload.role as Role } satisfies AuthUser);
     await next();
   } catch {
     return c.json({ error: "Unauthorized" }, 401);
