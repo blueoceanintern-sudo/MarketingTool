@@ -102,6 +102,14 @@ export const promptTemplates = pgTable("prompt_templates", {
   positiveIntentCount: integer("positive_intent_count").default(0).notNull(),
   negativeReplyCount: integer("negative_reply_count").default(0).notNull(),
   spamComplaintCount: integer("spam_complaint_count").default(0).notNull(),
+  // Mutation metadata — populated by mutation-runner for AI-generated variants
+  mutationMode: text("mutation_mode"),
+  parentPersuasionStrategy: text("parent_persuasion_strategy"),
+  childPersuasionStrategy: text("child_persuasion_strategy"),
+  dimensionsChanged: jsonb("dimensions_changed").$type<string[]>(),
+  mutationDistance: text("mutation_distance"),
+  mutationReason: text("mutation_reason"),
+  hypothesisTested: text("hypothesis_tested"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
