@@ -22,7 +22,7 @@ async function scrapeSourceUrl(
   if (scraperType === "crawl4ai") {
     return scrapeWithFallback(url);
   }
-  const leads = await scrapeWebsite(url, "generic");
+  const leads = await scrapeWebsite(url);
   return { leads, scraper: "cheerio" };
 }
 
@@ -206,8 +206,8 @@ export async function runScrapeJob(jobId: string, campaignId: string): Promise<v
     await Promise.all(
       newLeadIds.map(async (leadId) => {
         try {
-          const { fullyEnriched } = await enrichLead(leadId);
-          if (fullyEnriched) enriched++;
+          await enrichLead(leadId);
+          enriched++;
         } catch (err) {
           console.error(`[scrape] enrichment failed for lead ${leadId}:`, err);
         }
