@@ -1,13 +1,11 @@
 import { db } from "../../db";
 import { auditLog } from "../../db/schema";
+import type { AuthUser } from "../../middleware/auth";
 
 export interface AuditEntry {
-  // Who performed the action. Use "system" for cron jobs / background workers,
-  // a user identifier for human-triggered actions. Until auth lands, route
-  // handlers pass "user" for any /api/v1/* mutation.
-  actor: string;
-  // Verb-noun convention: "lead.move", "lead.remove", "campaign.update",
-  // "draft.approve", "suppression.add", "lead.erase". Stick to lowercase.
+  // Who performed the action. Pass the AuthUser from the request context for
+  // human-triggered actions, or the string "system" for cron / background workers.
+  actor: AuthUser | "system";
   action: string;
   targetId?: string | null;
   targetType?: string | null;
@@ -19,9 +17,10 @@ export interface AuditEntry {
 // logging is observational, so a failure here must never block the calling
 // operation (worse to fail a user's lead move because audit insert errored).
 export async function logAudit(entry: AuditEntry): Promise<void> {
+  const actor = entry.actor === "system" ? "system" : entry.actor.email;
   try {
     await db.insert(auditLog).values({
-      actor: entry.actor,
+      actor,
       action: entry.action,
       targetId: entry.targetId ?? null,
       targetType: entry.targetType ?? null,

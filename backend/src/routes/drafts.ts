@@ -3,6 +3,7 @@ import { db } from "../db";
 import { emailDrafts, leads, campaigns } from "../db/schema";
 import { count, eq, and } from "drizzle-orm";
 import { logAudit } from "../services/audit/log";
+import type { AuthUser } from "../middleware/auth";
 
 function formatDraft(row: {
   id: string;
@@ -61,7 +62,7 @@ async function getDraftWithJoins(draftId: string) {
   return row;
 }
 
-export const draftsRouter = new Hono();
+export const draftsRouter = new Hono<{ Variables: { user: AuthUser } }>();
 
 // GET /drafts?status=scheduled|sent  — for the scheduled/sent views in the UI.
 // Returns drafts grouped by campaign_id (client sorts/groups from the flat array).
@@ -155,7 +156,7 @@ draftsRouter.patch("/:id/approve", async (c) => {
 
   await db.update(emailDrafts).set({ status: "scheduled" }).where(eq(emailDrafts.id, draftId));
   await logAudit({
-    actor: "user",
+    actor: c.get("user"),
     action: "draft.approve",
     targetId: draftId,
     targetType: "email_draft",
@@ -176,7 +177,7 @@ draftsRouter.patch("/:id/reject", async (c) => {
 
   await db.update(emailDrafts).set({ status: "rejected" }).where(eq(emailDrafts.id, draftId));
   await logAudit({
-    actor: "user",
+    actor: c.get("user"),
     action: "draft.reject",
     targetId: draftId,
     targetType: "email_draft",
@@ -209,7 +210,7 @@ draftsRouter.patch("/:id/edit", async (c) => {
 
   await db.update(emailDrafts).set(updates).where(eq(emailDrafts.id, draftId));
   await logAudit({
-    actor: "user",
+    actor: c.get("user"),
     action: "draft.edit",
     targetId: draftId,
     targetType: "email_draft",
