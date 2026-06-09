@@ -22,7 +22,7 @@ async function scrapeSourceUrl(
   if (scraperType === "crawl4ai") {
     return scrapeWithFallback(url);
   }
-  const leads = await scrapeWebsite(url, "generic");
+  const leads = await scrapeWebsite(url);
   return { leads, scraper: "cheerio" };
 }
 
