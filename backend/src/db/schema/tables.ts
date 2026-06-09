@@ -62,6 +62,7 @@ export const leads = pgTable("leads", {
   enrichedAt: timestamp("enriched_at"),
   scraperUsed: scraperTypeEnum("scraper_used"),
   lastContactedAt: timestamp("last_contacted_at", { withTimezone: true }),
+  lastDeliveredTemplateId: uuid("last_delivered_template_id").references(() => promptTemplates.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -95,6 +96,12 @@ export const promptTemplates = pgTable("prompt_templates", {
   active: boolean("active").default(true).notNull(),
   parentTemplateId: uuid("parent_template_id"),
   createdBy: text("created_by").default("user").notNull(),
+  // Thompson Sampling fields
+  generationDepth: integer("generation_depth").default(0).notNull(),
+  sendCount: integer("send_count").default(0).notNull(),
+  positiveIntentCount: integer("positive_intent_count").default(0).notNull(),
+  negativeReplyCount: integer("negative_reply_count").default(0).notNull(),
+  spamComplaintCount: integer("spam_complaint_count").default(0).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -107,6 +114,7 @@ export const emailDrafts = pgTable("email_drafts", {
   subject: text("subject").notNull(),
   body: text("body").notNull(),
   confidenceScore: real("confidence_score").notNull(),
+  scoreBreakdown: jsonb("score_breakdown").$type<{ painPointFit: number; campaignAlignment: number; personalisationQuality: number; lengthCompliance: number }>(),
   status: draftStatusEnum("status").default("pending_review").notNull(),
   approvedBy: text("approved_by"),
   approvedAt: timestamp("approved_at"),
@@ -204,6 +212,7 @@ export const followUps = pgTable("follow_ups", {
   // Operational angle tag returned by the AI (e.g. "manual_workload"). Stored so
   // subsequent follow-ups can read previous_angle_tags and avoid repeating angles.
   angleTag: text("angle_tag"),
+  templateId: uuid("template_id").references(() => promptTemplates.id),
 });
 
 export const demos = pgTable("demos", {

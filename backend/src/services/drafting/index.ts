@@ -5,6 +5,13 @@ import { promptTemplates } from "../../db/schema";
 
 type TemplateType = "initial" | "followup_1" | "followup_2" | "breakup";
 
+const WORD_LIMIT: Record<TemplateType, number> = {
+  initial: 125,
+  followup_1: 90,
+  followup_2: 85,
+  breakup: 70,
+};
+
 const ATTEMPT_TO_TYPE: Record<number, TemplateType> = {
   1: "followup_1",
   2: "followup_2",
@@ -28,6 +35,13 @@ export interface CampaignContext {
   callToAction?: string | null;
 }
 
+export interface ScoreBreakdown {
+  painPointFit: number;
+  campaignAlignment: number;
+  personalisationQuality: number;
+  lengthCompliance: number;
+}
+
 export interface DraftResult {
   leadId: string;
   campaignId: string;
@@ -35,6 +49,7 @@ export interface DraftResult {
   subject: string;
   body: string;
   confidenceScore: number;
+  scoreBreakdown: ScoreBreakdown;
 }
 
 export interface FollowUpRequest {
@@ -53,6 +68,8 @@ export interface FollowUpResult {
   subject: string;
   body: string;
   angleTag: string;
+  templateId: string;
+  scoreBreakdown: ScoreBreakdown;
 }
 
 interface DraftRequest {
@@ -62,16 +79,109 @@ interface DraftRequest {
   campaign?: CampaignContext;
 }
 
-function weightedRandom<T extends { weight: number }>(items: T[]): T | undefined {
-  const total = items.reduce((sum, item) => sum + item.weight, 0);
-  if (total === 0) return items[0];
-  let rand = Math.random() * total;
-  for (const item of items) {
-    rand -= item.weight;
-    if (rand <= 0) return item;
-  }
-  return items[items.length - 1];
+// ---------------------------------------------------------------------------
+// Scoring — separate adversarial call, starts from 0
+// ---------------------------------------------------------------------------
+
+const SCORING_SYSTEM_PROMPT = `You are a critical B2B email quality reviewer. Score a cold outreach email honestly and harshly against three criteria.
+
+Start from 0 for each criterion — award points only when clearly earned. Be a strict critic: if in doubt, score low.
+
+## Scoring criteria
+
+painPointFit (0–25)
+Score 22–25: the opening pain point is a specific, realistic daily frustration for someone in this exact role at this type of company — not just thematically relevant to the campaign.
+Score 15–21: relevant pain point but broad enough to apply to a range of similar roles or industries.
+Score 5–14: pain point is thematic to the campaign but generic — it could apply to almost anyone in business.
+Score 0–4: pain point is absent, irrelevant to this role, or not grounded in the lead data provided.
+
+campaignAlignment (0–25)
+Score 22–25: email clearly advances the campaign's specific objective, every claim is grounded in the product description, no generic filler.
+Score 15–21: broadly on-brief but uses generic language or slightly overstates the product.
+Score 5–14: email drifts from the campaign objective, or makes claims not clearly supported by the product description.
+Score 0–4: email is off-brief, contradicts the campaign objective, or fabricates product capabilities.
+
+personalisationQuality (0–25)
+Score 22–25: the email is clearly written for this specific lead — role, industry, and company context are used meaningfully. It would not work for a different lead without significant edits.
+Score 15–21: some role-specific language but could be sent to a range of similar roles with minor tweaks.
+Score 5–14: personalisation is surface-level — only the name or company name appears.
+Score 0–4: no meaningful personalisation — could be sent to anyone.
+
+## Output format
+Return only valid JSON — no explanation, no preamble:
+{
+  "painPointFit": <integer 0-25>,
+  "campaignAlignment": <integer 0-25>,
+  "personalisationQuality": <integer 0-25>
+}`;
+
+function buildScoringUserPrompt(
+  email: { subject: string; body: string },
+  lead: LeadContext,
+  campaign?: CampaignContext,
+): string {
+  const painPoints = campaign?.painPoints?.map((p) => `  • ${p}`).join("\n") ?? "  • Not specified";
+  return `## Lead
+- role: ${lead.role ?? "Unknown"}
+- industry: ${lead.industry ?? "Unknown"}
+- company: ${lead.companyName ?? "Unknown"}
+- location: ${lead.location ?? "Unknown"}
+
+## Campaign description
+${campaign?.description ?? "Not specified"}
+
+## Campaign pain points
+${painPoints}
+
+## Email to score
+Subject: ${email.subject}
+Body:
+${email.body}`;
 }
+
+async function scoreEmailsBatch(
+  items: { key: string; email: { subject: string; body: string }; lead: LeadContext; campaign?: CampaignContext }[],
+  client: Anthropic,
+): Promise<Map<string, { painPointFit: number; campaignAlignment: number; personalisationQuality: number }>> {
+  const settled = await Promise.allSettled(
+    items.map(({ key, email, lead, campaign }) =>
+      client.messages.create({
+        model: "claude-haiku-4-5",
+        max_tokens: 120,
+        system: [{ type: "text" as const, text: SCORING_SYSTEM_PROMPT, cache_control: { type: "ephemeral" as const } }],
+        messages: [{ role: "user" as const, content: buildScoringUserPrompt(email, lead, campaign) }],
+      }).then((msg) => ({ key, msg }))
+    ),
+  );
+
+  const scores = new Map<string, { painPointFit: number; campaignAlignment: number; personalisationQuality: number }>();
+  for (const outcome of settled) {
+    if (outcome.status === "rejected") {
+      console.error(`[scoring] API call failed:`, outcome.reason);
+      continue;
+    }
+    const { key, msg } = outcome.value;
+    const text = msg.content.find((b) => b.type === "text");
+    if (!text || text.type !== "text") continue;
+    try {
+      const match = text.text.match(/\{[\s\S]*\}/);
+      if (!match) throw new Error("No JSON in scoring response");
+      const parsed = JSON.parse(match[0]) as { painPointFit?: number; campaignAlignment?: number; personalisationQuality?: number };
+      scores.set(key, {
+        painPointFit: Math.min(25, Math.max(0, Math.round(parsed.painPointFit ?? 0))),
+        campaignAlignment: Math.min(25, Math.max(0, Math.round(parsed.campaignAlignment ?? 0))),
+        personalisationQuality: Math.min(25, Math.max(0, Math.round(parsed.personalisationQuality ?? 0))),
+      });
+    } catch (err) {
+      console.error(`[scoring] failed to parse score for ${key}:`, err);
+    }
+  }
+  return scores;
+}
+
+// ---------------------------------------------------------------------------
+// Prompt builders
+// ---------------------------------------------------------------------------
 
 function buildLeadBlock(lead: LeadContext): string {
   const name = [lead.firstName, lead.lastName].filter(Boolean).join(" ") || "Unknown";
@@ -118,36 +228,26 @@ ${campaign.description ?? "Not specified"}
 ${buildPainPoints(campaign.painPoints)}`;
 }
 
-function parseResponse(raw: string): {
-  subject: string;
-  body: string;
-  confidenceScore: number;
-  angleTag?: string;
-} {
+// ---------------------------------------------------------------------------
+// Generation response parser — extracts email content only, no scoring
+// ---------------------------------------------------------------------------
+
+function parseResponse(raw: string): { subject: string; body: string; angleTag?: string } {
   const match = raw.match(/\{[\s\S]*\}/);
   if (!match) throw new Error("No JSON found in response");
 
-  const parsed = JSON.parse(match[0]) as {
-    subject?: string;
-    body?: string;
-    confidenceScore?: number;
-    angle_tag?: string;
-  };
+  const parsed = JSON.parse(match[0]) as { subject?: string; body?: string; angle_tag?: string };
 
-  if (!parsed.subject || !parsed.body || parsed.confidenceScore === undefined) {
-    throw new Error("Missing required fields in draft response");
+  if (!parsed.subject || !parsed.body) {
+    throw new Error("Missing subject or body in draft response");
   }
 
-  const wordCount = parsed.body.trim().split(/\s+/).length;
-  const score = wordCount > 125 ? Math.max(0, parsed.confidenceScore - 20) : parsed.confidenceScore;
-
-  return {
-    subject: parsed.subject,
-    body: parsed.body,
-    confidenceScore: score,
-    angleTag: parsed.angle_tag,
-  };
+  return { subject: parsed.subject, body: parsed.body, angleTag: parsed.angle_tag };
 }
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
 
 export async function generateFollowUpBatch(requests: FollowUpRequest[]): Promise<FollowUpResult[]> {
   if (requests.length === 0) return [];
@@ -160,22 +260,18 @@ export async function generateFollowUpBatch(requests: FollowUpRequest[]): Promis
   ] as TemplateType[];
 
   const templateRows = await db
-    .select({ id: promptTemplates.id, systemPrompt: promptTemplates.systemPrompt, templateType: promptTemplates.templateType, weight: promptTemplates.weight })
+    .select({ id: promptTemplates.id, systemPrompt: promptTemplates.systemPrompt, templateType: promptTemplates.templateType })
     .from(promptTemplates)
     .where(and(eq(promptTemplates.active, true), inArray(promptTemplates.templateType, neededTypes)));
 
-  const templatesByType = new Map<TemplateType, typeof templateRows>();
+  const templateByType = new Map<TemplateType, typeof templateRows[number]>();
   for (const row of templateRows) {
-    const key = row.templateType as TemplateType;
-    if (!templatesByType.has(key)) templatesByType.set(key, []);
-    templatesByType.get(key)!.push(row);
+    const type = row.templateType as TemplateType;
+    if (!templateByType.has(type)) templateByType.set(type, row);
   }
 
-  const templateByType = new Map<TemplateType, typeof templateRows[number]>();
   for (const type of neededTypes) {
-    const pool = templatesByType.get(type);
-    if (!pool || pool.length === 0) throw new Error(`No active prompt template for type: ${type}`);
-    templateByType.set(type, weightedRandom(pool)!);
+    if (!templateByType.has(type)) throw new Error(`No active prompt template for type: ${type}`);
   }
 
   const client = new Anthropic({ apiKey });
@@ -187,25 +283,25 @@ export async function generateFollowUpBatch(requests: FollowUpRequest[]): Promis
     breakup: 256,
   };
 
-  // Sort by attempt number so same-type requests are adjacent — maximises cache hits.
   const sorted = [...requests].sort((a, b) => a.attemptNumber - b.attemptNumber);
+
+  const requestTemplateMap = new Map<string, string>();
+  const requestTypeMap = new Map<string, TemplateType>();
 
   const batch = await client.messages.batches.create({
     requests: sorted.map((req) => {
       const type = ATTEMPT_TO_TYPE[req.attemptNumber] ?? "followup_1";
       const tmpl = templateByType.get(type)!;
+      const customId = `followup:${req.followUpId}`;
+      requestTemplateMap.set(customId, tmpl.id);
+      requestTypeMap.set(customId, type);
       return {
-        custom_id: `followup:${req.followUpId}`,
+        custom_id: customId,
         params: {
           model: "claude-haiku-4-5",
           max_tokens: maxTokensByType[type],
           system: [{ type: "text" as const, text: tmpl.systemPrompt, cache_control: { type: "ephemeral" as const } }],
-          messages: [
-            {
-              role: "user" as const,
-              content: buildFollowUpPrompt(req.lead, req.campaign, req.originalSubject, req.previousAngleTags),
-            },
-          ],
+          messages: [{ role: "user" as const, content: buildFollowUpPrompt(req.lead, req.campaign, req.originalSubject, req.previousAngleTags) }],
         },
       };
     }),
@@ -218,7 +314,8 @@ export async function generateFollowUpBatch(requests: FollowUpRequest[]): Promis
     status = updated.processing_status;
   }
 
-  const results: FollowUpResult[] = [];
+  // Collect generated emails
+  const generated: { customId: string; subject: string; body: string; angleTag: string }[] = [];
   for await (const result of await client.messages.batches.results(batch.id)) {
     if (result.result.type !== "succeeded") {
       console.error(`Follow-up batch item failed for ${result.custom_id}:`, result.result);
@@ -228,15 +325,35 @@ export async function generateFollowUpBatch(requests: FollowUpRequest[]): Promis
     if (!text || text.type !== "text") continue;
     try {
       const { subject, body, angleTag } = parseResponse(text.text);
-      results.push({
-        followUpId: result.custom_id.slice("followup:".length),
-        subject,
-        body,
-        angleTag: angleTag ?? "manual_workload",
-      });
+      generated.push({ customId: result.custom_id, subject, body, angleTag: angleTag ?? "manual_workload" });
     } catch (err) {
       console.error(`Failed to parse follow-up for ${result.custom_id}:`, err);
     }
+  }
+
+  // Score all generated emails in a separate call
+  const scoreMap = await scoreEmailsBatch(
+    generated.map(({ customId, subject, body }) => {
+      const req = requests.find((r) => `followup:${r.followUpId}` === customId)!;
+      return { key: customId, email: { subject, body }, lead: req.lead, campaign: req.campaign };
+    }),
+    client,
+  );
+
+  const results: FollowUpResult[] = [];
+  for (const { customId, subject, body, angleTag } of generated) {
+    const type = requestTypeMap.get(customId) ?? "followup_1";
+    const wordCount = body.trim().split(/\s+/).length;
+    const lengthCompliance = wordCount <= WORD_LIMIT[type] ? 25 : 0;
+    const sub = scoreMap.get(customId) ?? { painPointFit: 0, campaignAlignment: 0, personalisationQuality: 0 };
+    results.push({
+      followUpId: customId.slice("followup:".length),
+      subject,
+      body,
+      angleTag,
+      templateId: requestTemplateMap.get(customId) ?? "",
+      scoreBreakdown: { ...sub, lengthCompliance },
+    });
   }
 
   return results;
@@ -248,21 +365,23 @@ export async function generateDraftsBatch(requests: DraftRequest[]): Promise<Dra
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY is required");
 
-  const [template] = await db
+  const allTemplates = await db
     .select({ id: promptTemplates.id, systemPrompt: promptTemplates.systemPrompt })
     .from(promptTemplates)
     .where(and(eq(promptTemplates.active, true), eq(promptTemplates.templateType, "initial")))
     .limit(1);
 
-  if (!template) {
-    throw new Error("No active initial prompt template — seed a row in prompt_templates with template_type='initial'");
+  if (allTemplates.length === 0) {
+    throw new Error("No active initial prompt template — run db:seed to insert templates");
   }
 
+  const template = allTemplates[0]!;
   const client = new Anthropic({ apiKey });
 
-  console.log(`[drafting] generating ${requests.length} draft(s) (sync)`);
+  console.log(`[drafting] generating ${requests.length} draft(s)`);
 
-  const settled = await Promise.allSettled(
+  // Call 1: generate emails
+  const genSettled = await Promise.allSettled(
     requests.map((req) =>
       client.messages.create({
         model: "claude-haiku-4-5",
@@ -273,24 +392,49 @@ export async function generateDraftsBatch(requests: DraftRequest[]): Promise<Dra
     ),
   );
 
-  const results: DraftResult[] = [];
-
-  for (const outcome of settled) {
+  const generated: { req: DraftRequest; subject: string; body: string }[] = [];
+  for (const outcome of genSettled) {
     if (outcome.status === "rejected") {
-      console.error(`[drafting] API call failed:`, outcome.reason);
+      console.error(`[drafting] generation failed:`, outcome.reason);
       continue;
     }
-
     const { req, msg } = outcome.value;
     const text = msg.content.find((b) => b.type === "text");
     if (!text || text.type !== "text") continue;
-
     try {
-      const { subject, body, confidenceScore } = parseResponse(text.text);
-      results.push({ leadId: req.leadId, campaignId: req.campaignId, templateId: template.id, subject, body, confidenceScore });
+      const { subject, body } = parseResponse(text.text);
+      generated.push({ req, subject, body });
     } catch (err) {
-      console.error(`[drafting] failed to parse draft for lead ${req.leadId}:`, err);
+      console.error(`[drafting] failed to parse draft for lead ${outcome.value.req.leadId}:`, err);
     }
+  }
+
+  // Call 2: score all generated emails
+  const scoreMap = await scoreEmailsBatch(
+    generated.map(({ req, subject, body }) => ({
+      key: req.leadId,
+      email: { subject, body },
+      lead: req.lead,
+      campaign: req.campaign,
+    })),
+    client,
+  );
+
+  const results: DraftResult[] = [];
+  for (const { req, subject, body } of generated) {
+    const wordCount = body.trim().split(/\s+/).length;
+    const lengthCompliance = wordCount <= WORD_LIMIT.initial ? 25 : 0;
+    const sub = scoreMap.get(req.leadId) ?? { painPointFit: 0, campaignAlignment: 0, personalisationQuality: 0 };
+    const scoreBreakdown: ScoreBreakdown = { ...sub, lengthCompliance };
+    results.push({
+      leadId: req.leadId,
+      campaignId: req.campaignId,
+      templateId: template.id,
+      subject,
+      body,
+      confidenceScore: sub.painPointFit + sub.campaignAlignment + sub.personalisationQuality + lengthCompliance,
+      scoreBreakdown,
+    });
   }
 
   console.log(`[drafting] done: ${results.length}/${requests.length} succeeded`);
