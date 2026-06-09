@@ -84,6 +84,7 @@ interface DraftRequest {
 // ---------------------------------------------------------------------------
 
 const NEGATIVE_RATE_THRESHOLD = 0.05;
+const SPAM_RATE_THRESHOLD = 0.01;
 const NEGATIVE_FILTER_MIN_SENDS = 30;
 
 function normalSample(): number {
@@ -112,15 +113,20 @@ function sampleBeta(alpha: number, beta: number): number {
   return x + y === 0 ? 0.5 : x / (x + y);
 }
 
-export function thompsonSample<T extends { sendCount: number; positiveIntentCount: number; negativeReplyCount: number }>(
+export function thompsonSample<T extends { sendCount: number; positiveIntentCount: number; negativeReplyCount: number; spamComplaintCount: number }>(
   items: T[],
 ): T | undefined {
   if (items.length === 0) return undefined;
 
-  // Soft-exclude templates with a high negative-reply rate once they have
-  // enough sends to make the signal meaningful.
+  // Soft-exclude templates with a high negative-reply or spam-complaint rate
+  // once they have enough sends to make the signal meaningful.
+  // Spam threshold (1%) is tighter than negative replies (5%) — a spam complaint
+  // damages SES sender reputation directly.
   const eligible = items.filter(
-    (t) => t.sendCount < NEGATIVE_FILTER_MIN_SENDS || t.negativeReplyCount / t.sendCount < NEGATIVE_RATE_THRESHOLD,
+    (t) =>
+      t.sendCount < NEGATIVE_FILTER_MIN_SENDS ||
+      (t.negativeReplyCount / t.sendCount < NEGATIVE_RATE_THRESHOLD &&
+       t.spamComplaintCount / t.sendCount < SPAM_RATE_THRESHOLD),
   );
   const pool = eligible.length > 0 ? eligible : items;
 
@@ -324,6 +330,7 @@ export async function generateFollowUpBatch(requests: FollowUpRequest[]): Promis
       sendCount: promptTemplates.sendCount,
       positiveIntentCount: promptTemplates.positiveIntentCount,
       negativeReplyCount: promptTemplates.negativeReplyCount,
+      spamComplaintCount: promptTemplates.spamComplaintCount,
     })
     .from(promptTemplates)
     .where(and(eq(promptTemplates.active, true), inArray(promptTemplates.templateType, neededTypes)));
@@ -443,6 +450,7 @@ export async function generateDraftsBatch(requests: DraftRequest[]): Promise<Dra
       sendCount: promptTemplates.sendCount,
       positiveIntentCount: promptTemplates.positiveIntentCount,
       negativeReplyCount: promptTemplates.negativeReplyCount,
+      spamComplaintCount: promptTemplates.spamComplaintCount,
     })
     .from(promptTemplates)
     .where(and(eq(promptTemplates.active, true), eq(promptTemplates.templateType, "initial")));
