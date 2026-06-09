@@ -300,3 +300,17 @@ export const enrichmentRecords = pgTable("enrichment_records", {
 }, (t) => [
   index("enrichment_records_lead_enriched_at_idx").on(t.leadId, t.enrichedAt.desc()),
 ]);
+
+// Stores Tavily auto-discovery configs per (vertical, geo). Replaces the static
+// DIRECTORY_CONFIGS constant so admins can add/edit coverage without a deploy.
+export const directoryConfigs = pgTable("directory_configs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  vertical: text("vertical").notNull(),
+  geo: text("geo").notNull(),
+  query: text("query").notNull(),
+  domains: text("domains").array().notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [
+  unique("directory_configs_vertical_geo_unique").on(t.vertical, t.geo),
+]);

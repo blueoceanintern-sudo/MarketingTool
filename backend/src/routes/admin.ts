@@ -1,10 +1,11 @@
 import { Hono } from "hono";
 import { db } from "../db";
-import { sourceRegistry, suppressionList, promptTemplates, emailDrafts, campaigns, normalizeVertical, normalizeGeo } from "../db/schema";
+import { sourceRegistry, suppressionList, promptTemplates, emailDrafts, campaigns, directoryConfigs, normalizeVertical, normalizeGeo } from "../db/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import { logAudit } from "../services/audit/log";
-import { DIRECTORY_CONFIGS, discoverSources, getDirectoryConfig } from "../services/sourceRegistry";
+import { discoverSources, getDirectoryConfig, getAllDirectoryConfigs, resolveGeo } from "../services/sourceRegistry";
 import { emitJobEvent } from "../services/events";
+import { requireAdmin, type AuthUser } from "../middleware/auth";
 
 // ---------------------------------------------------------------------------
 // CSV helpers (used by /registry/sources/import)
@@ -34,7 +35,7 @@ function parseBool(val: string | undefined, def: boolean): boolean {
   return ["true", "1", "yes"].includes(val.toLowerCase());
 }
 
-export const adminRouter = new Hono();
+export const adminRouter = new Hono<{ Variables: { user: AuthUser } }>();
 
 // ---------------------------------------------------------------------------
 // Source registry — CRUD
@@ -57,7 +58,7 @@ adminRouter.get("/registry/sources", async (c) => {
   })));
 });
 
-adminRouter.post("/registry/sources", async (c) => {
+adminRouter.post("/registry/sources", requireAdmin, async (c) => {
   const body = await c.req.json<{
     name?: string;
     vertical?: string;
@@ -92,7 +93,7 @@ adminRouter.post("/registry/sources", async (c) => {
   return c.json(row, 201);
 });
 
-adminRouter.post("/registry/sources/import", async (c) => {
+adminRouter.post("/registry/sources/import", requireAdmin, async (c) => {
   const formData = await c.req.formData();
   const file = formData.get("file");
 
@@ -174,14 +175,100 @@ adminRouter.post("/registry/sources/import", async (c) => {
 // Tavily-driven source discovery
 // ---------------------------------------------------------------------------
 
-// Public-facing view of DIRECTORY_CONFIGS so the registry UI can render which
-// (vertical, geo) tuples have auto-discovery wired up.
+// Exposes DB-backed directory configs so the registry UI can render coverage.
 adminRouter.get("/registry/directory-configs", async (c) => {
-  const items = Object.entries(DIRECTORY_CONFIGS).map(([key, cfg]) => {
-    const [vertical, geo] = key.split(":");
-    return { vertical, geo, query: cfg.query, domains: cfg.domains };
-  });
+  const items = await getAllDirectoryConfigs();
   return c.json(items);
+});
+
+adminRouter.post("/registry/directory-configs", requireAdmin, async (c) => {
+  const body = await c.req.json<{
+    vertical?: string;
+    geo?: string;
+    query?: string;
+    domains?: string[];
+  }>();
+
+  if (!body.vertical || !body.geo || !body.query || !Array.isArray(body.domains) || body.domains.length === 0) {
+    return c.json({ error: "vertical, geo, query, and at least one domain are required" }, 400);
+  }
+
+  const vertical = normalizeVertical(body.vertical);
+  const geo = resolveGeo(body.geo);
+
+  const [existing] = await db
+    .select({ id: directoryConfigs.id })
+    .from(directoryConfigs)
+    .where(and(eq(directoryConfigs.vertical, vertical), eq(directoryConfigs.geo, geo)))
+    .limit(1);
+  if (existing) {
+    return c.json({ error: `A config for ${vertical}:${geo} already exists — use PATCH to update it` }, 409);
+  }
+
+  const [row] = await db
+    .insert(directoryConfigs)
+    .values({ vertical, geo, query: body.query, domains: body.domains })
+    .returning();
+
+  await logAudit({
+    actor: c.get("user"),
+    action: "directory_config.create",
+    targetId: row!.id,
+    targetType: "directory_config",
+    metadata: { vertical, geo, domains: body.domains },
+  });
+
+  return c.json({ id: row!.id, vertical: row!.vertical, geo: row!.geo, query: row!.query, domains: row!.domains }, 201);
+});
+
+adminRouter.patch("/registry/directory-configs/:id", requireAdmin, async (c) => {
+  const id = c.req.param("id") as string;
+  const [existing] = await db.select().from(directoryConfigs).where(eq(directoryConfigs.id, id)).limit(1);
+  if (!existing) return c.json({ error: "Config not found" }, 404);
+
+  const body = await c.req.json<{ query?: string; domains?: string[] }>();
+  const updates: Partial<typeof directoryConfigs.$inferInsert> = { updatedAt: new Date() };
+
+  if (body.query !== undefined) {
+    if (!body.query.trim()) return c.json({ error: "query cannot be empty" }, 400);
+    updates.query = body.query.trim();
+  }
+  if (body.domains !== undefined) {
+    if (!Array.isArray(body.domains) || body.domains.length === 0) {
+      return c.json({ error: "domains must be a non-empty array" }, 400);
+    }
+    updates.domains = body.domains.map((d) => d.trim()).filter(Boolean);
+  }
+
+  const [updated] = await db.update(directoryConfigs).set(updates).where(eq(directoryConfigs.id, id)).returning();
+
+  await logAudit({
+    actor: c.get("user"),
+    action: "directory_config.update",
+    targetId: id,
+    targetType: "directory_config",
+    metadata: { changed: Object.keys(updates).filter((k) => k !== "updatedAt") },
+  });
+
+  return c.json({ id: updated!.id, vertical: updated!.vertical, geo: updated!.geo, query: updated!.query, domains: updated!.domains });
+});
+
+adminRouter.delete("/registry/directory-configs/:id", requireAdmin, async (c) => {
+  const id = c.req.param("id") as string;
+  const [existing] = await db.select().from(directoryConfigs).where(eq(directoryConfigs.id, id)).limit(1);
+  if (!existing) return c.json({ error: "Config not found" }, 404);
+
+  await db.delete(directoryConfigs).where(eq(directoryConfigs.id, id));
+
+  await logAudit({
+    actor: c.get("user"),
+    action: "directory_config.delete",
+    targetId: id,
+    targetType: "directory_config",
+    metadata: { vertical: existing.vertical, geo: existing.geo },
+  });
+
+  return c.json({ ok: true });
 });
 
 // Rate-limit manual refresh to 1 req / 60s per (vertical, geo). In-memory is
@@ -200,7 +287,7 @@ adminRouter.post("/registry/discover", async (c) => {
   const geo = normalizeGeo(body.geo);
   const key = `${vertical}:${geo}`;
 
-  const config = getDirectoryConfig(vertical, geo);
+  const config = await getDirectoryConfig(vertical, geo);
   if (!config) {
     return c.json(
       {
@@ -241,7 +328,7 @@ adminRouter.post("/registry/discover", async (c) => {
     });
 
   await logAudit({
-    actor: "user",
+    actor: c.get("user"),
     action: "registry.discover_refresh",
     targetType: "source_registry",
     ipAddress:
@@ -279,12 +366,20 @@ adminRouter.get("/registry/active-combinations", async (c) => {
     }
   }
 
-  return c.json(
-    Array.from(pairs).map((p) => {
-      const [vertical, geo] = p.split(":");
-      return { vertical, geo, has_config: !!getDirectoryConfig(vertical!, geo!) };
-    }),
+  const pairArray = Array.from(pairs).map((p) => {
+    const [vertical, geo] = p.split(":") as [string, string];
+    return { vertical, geo };
+  });
+
+  const withConfig = await Promise.all(
+    pairArray.map(async ({ vertical, geo }) => ({
+      vertical,
+      geo,
+      has_config: !!(await getDirectoryConfig(vertical, geo)),
+    })),
   );
+
+  return c.json(withConfig);
 });
 
 // ---------------------------------------------------------------------------
@@ -380,7 +475,7 @@ adminRouter.post("/templates", async (c) => {
     .returning();
 
   await logAudit({
-    actor: "user",
+    actor: c.get("user"),
     action: "template.create",
     targetId: row!.id,
     targetType: "prompt_template",
@@ -421,7 +516,7 @@ adminRouter.patch("/templates/:id", async (c) => {
   const [updated] = await db.update(promptTemplates).set(updates).where(eq(promptTemplates.id, id)).returning();
 
   await logAudit({
-    actor: "user",
+    actor: c.get("user"),
     action: "template.update",
     targetId: id,
     targetType: "prompt_template",
@@ -453,7 +548,7 @@ adminRouter.delete("/templates/:id", async (c) => {
 
   await db.delete(promptTemplates).where(eq(promptTemplates.id, id));
   await logAudit({
-    actor: "user",
+    actor: c.get("user"),
     action: "template.delete",
     targetId: id,
     targetType: "prompt_template",
