@@ -29,6 +29,13 @@
       "when": 1780890862515,
       "tag": "0003_chubby_rogue",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1780994508803,
+      "tag": "0004_ordinary_starbolt",
+      "breakpoints": true
     }
   ]
 }

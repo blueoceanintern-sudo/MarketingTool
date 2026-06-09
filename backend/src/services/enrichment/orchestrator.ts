@@ -44,8 +44,8 @@ export async function enrichLead(leadId: string): Promise<{ record: EnrichmentRe
   const contact: Partial<EnrichmentContact> = {
     email: input.seed.email ?? undefined,
     email_status: input.seed.email ? "pattern_guessed" : undefined,
-    full_name: [input.seed.firstName, input.seed.lastName].filter(Boolean).join(" ") || undefined,
-    first_name: input.seed.firstName ?? undefined,
+    full_name: input.seed.name ?? undefined,
+    first_name: input.seed.name?.split(" ")[0] ?? undefined,
     role: input.seed.role ?? undefined,
   };
 
@@ -105,8 +105,7 @@ async function buildInput(leadId: string): Promise<EnrichmentInput> {
   const [row] = await db
     .select({
       leadId: leads.id,
-      firstName: leads.firstName,
-      lastName: leads.lastName,
+      name: leads.name,
       email: leads.email,
       role: leads.role,
       companyName: companies.name,
@@ -130,8 +129,7 @@ async function buildInput(leadId: string): Promise<EnrichmentInput> {
     campaignId: null,
     market,
     seed: {
-      firstName: row.firstName,
-      lastName: row.lastName,
+      name: row.name,
       email: row.email,
       role: row.role,
       companyName: row.companyName,
@@ -267,20 +265,10 @@ function computeRouting(
 }
 
 async function persist(record: EnrichmentRecord, campaignId: string | null): Promise<boolean> {
-  const { first_name, full_name, role, email } = record.contact;
-
-  // Derive last name from full_name by removing first_name prefix
-  let lastName: string | null = null;
-  if (full_name && first_name) {
-    const rest = full_name.slice(first_name.length).trim();
-    lastName = rest || null;
-  } else if (full_name && !first_name) {
-    const spaceIdx = full_name.indexOf(" ");
-    lastName = spaceIdx !== -1 ? full_name.slice(spaceIdx + 1).trim() : null;
-  }
+  const { full_name, role, email } = record.contact;
 
   // Only mark the lead as fully enriched if all key contact fields are present
-  const fullyEnriched = Boolean(first_name && lastName && role && email);
+  const fullyEnriched = Boolean(full_name && role && email);
 
   await db.transaction(async (tx) => {
     await tx.insert(enrichmentRecords).values({
@@ -299,8 +287,7 @@ async function persist(record: EnrichmentRecord, campaignId: string | null): Pro
     await tx
       .update(leads)
       .set({
-        ...(first_name ? { firstName: first_name } : {}),
-        ...(lastName ? { lastName } : {}),
+        ...(full_name ? { name: full_name } : {}),
         ...(role ? { role } : {}),
         ...(email ? { email } : {}),
         emailStatus: record.contact.email_status,

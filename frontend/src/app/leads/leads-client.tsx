@@ -240,7 +240,7 @@ export default function LeadsClient({
                       className="hover:bg-ocean-wash cursor-pointer"
                     >
                       <td className="px-6 py-3 text-[14px] font-medium">
-                        {lead.first_name} {lead.last_name}
+                        {lead.name}
                       </td>
                       <td className="px-4 py-3 text-[13px]">{lead.company_name}</td>
                       <td className="px-4 py-3 text-[12px] text-grey-500">
@@ -328,7 +328,7 @@ function EnrichmentDrawer({ lead, onClose }: { lead: Lead; onClose: () => void }
       >
         <div className="px-6 py-5 border-b border-grey-100 flex justify-between items-start">
           <div>
-            <h2 className="text-[16px] font-bold text-primary">{lead.first_name} {lead.last_name}</h2>
+            <h2 className="text-[16px] font-bold text-primary">{lead.name}</h2>
             <p className="text-[12px] text-grey-500 font-mono">{lead.email}</p>
           </div>
           <button
