@@ -6,7 +6,7 @@ import { sendDraft, sendFollowUpEmail, getTotalSent, getWarmupWeek, getDailyCap 
 import { runScrapeJob } from "../services/scraping/runScrapeJob";
 import { enrichLead } from "../services/enrichment/orchestrator";
 import { generateDraftsForCampaign } from "../services/drafting/orchestrator";
-import { generateFollowUpBatch, type FollowUpRequest } from "../services/drafting";
+import { generateFollowUpBatch, thompsonSample, type FollowUpRequest } from "../services/drafting";
 import { generateMutation } from "../services/mutator";
 
 const MAX_FOLLOW_UP_ATTEMPTS = 3;
@@ -490,71 +490,117 @@ cron.schedule("0 6 * * 1", async () => {
     return;
   }
 
-  const eligible = await db
-    .select()
-    .from(promptTemplates)
-    .where(
-      and(
-        eq(promptTemplates.active, true),
-        eq(promptTemplates.templateType, "initial"),
-        lt(promptTemplates.generationDepth, 2),
-        gte(promptTemplates.sendCount, 50),
-      ),
-    );
-
-  if (eligible.length === 0) {
-    console.log("[mutation-runner] no eligible templates (need active, depth < 2, send_count >= 50)");
-    return;
-  }
-
-  const top = eligible.reduce((best, t) => {
-    const rate = t.sendCount > 0 ? t.positiveIntentCount / t.sendCount : 0;
-    const bestRate = best.sendCount > 0 ? best.positiveIntentCount / best.sendCount : 0;
-    return rate > bestRate ? t : best;
-  });
-
-  console.log(`[mutation-runner] mutating template "${top.name}" (${(top.positiveIntentCount / top.sendCount * 100).toFixed(1)}% positive rate, ${top.sendCount} sends)`);
-
-  const result = await generateMutation(top.id);
-  if (!result) {
-    console.error("[mutation-runner] mutation generation failed — skipping");
-    return;
-  }
-
-  const [inserted] = await db
-    .insert(promptTemplates)
-    .values({
-      name: result.name,
-      description: result.description,
-      systemPrompt: result.systemPrompt,
-      templateType: top.templateType,
-      active: false,
-      parentTemplateId: top.id,
-      generationDepth: top.generationDepth + 1,
-      createdBy: "ai",
-    })
-    .returning({ id: promptTemplates.id });
-
-  console.log(`[mutation-runner] created template "${result.name}" (id: ${inserted?.id}, depth: ${top.generationDepth + 1}) — requires manual activation`);
-
+  const TEMPLATE_TYPES = ["initial", "followup_1", "followup_2", "breakup"] as const;
   const notifyUrl = process.env.MUTATION_NOTIFY_WEBHOOK_URL;
-  if (notifyUrl && inserted) {
-    await fetch(notifyUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        event: "mutation_created",
-        template_id: inserted.id,
-        template_name: result.name,
-        template_description: result.description,
-        parent_id: top.id,
-        parent_name: top.name,
-        parent_positive_rate: `${(top.positiveIntentCount / top.sendCount * 100).toFixed(1)}%`,
-        parent_send_count: top.sendCount,
-        generation_depth: top.generationDepth + 1,
-        action: "Review and manually activate at /admin/templates if approved.",
-      }),
-    }).catch((err) => console.error("[mutation-runner] webhook notify failed:", err));
+
+  for (const templateType of TEMPLATE_TYPES) {
+    // Only mutate human-authored templates to prevent constraint drift across lineages
+    const eligible = await db
+      .select()
+      .from(promptTemplates)
+      .where(
+        and(
+          eq(promptTemplates.active, true),
+          eq(promptTemplates.templateType, templateType),
+          eq(promptTemplates.createdBy, "user"),
+          lt(promptTemplates.generationDepth, 5),
+          gte(promptTemplates.sendCount, 50),
+        ),
+      );
+
+    if (eligible.length < 2) {
+      console.log(`[mutation-runner] ${templateType}: fewer than 2 eligible templates — skipping`);
+      continue;
+    }
+
+    // Rank by positive rate descending — used for percentile calculation and loser selection
+    const rankedTemplates = [...eligible].sort((a, b) => {
+      const rateA = a.sendCount > 0 ? a.positiveIntentCount / a.sendCount : 0;
+      const rateB = b.sendCount > 0 ? b.positiveIntentCount / b.sendCount : 0;
+      return rateB - rateA;
+    });
+
+    const total = rankedTemplates.length;
+
+    // Split by the same percentile thresholds used inside getMutationPrompt
+    const winners = rankedTemplates.filter((_, i) => i / (total - 1) <= 0.25);
+    const losers = rankedTemplates.filter((_, i) => i / (total - 1) >= 0.75);
+
+    // Refine: Thompson explores among top performers so #1 doesn't monopolise the lineage
+    const refineCandidate = thompsonSample(winners);
+    // Replace: always target the single worst performer
+    const replaceCandidate = losers[losers.length - 1];
+
+    const candidates = [
+      { candidate: refineCandidate, label: "refine" },
+      { candidate: replaceCandidate, label: "replace" },
+    ] as const;
+
+    for (const { candidate, label } of candidates) {
+      if (!candidate) {
+        console.log(`[mutation-runner] ${templateType}: no ${label} candidate — skipping`);
+        continue;
+      }
+
+      const candidateRate = candidate.sendCount > 0
+        ? `${(candidate.positiveIntentCount / candidate.sendCount * 100).toFixed(1)}%`
+        : "0.0%";
+      console.log(`[mutation-runner] ${templateType} [${label}]: candidate "${candidate.name}" (${candidateRate} positive rate, ${candidate.sendCount} sends)`);
+
+      const result = await generateMutation(candidate.id, rankedTemplates);
+      if (!result) {
+        console.log(`[mutation-runner] ${templateType} [${label}]: generation failed — skipping`);
+        continue;
+      }
+
+      const [inserted] = await db
+        .insert(promptTemplates)
+        .values({
+          name: result.name,
+          description: result.description,
+          systemPrompt: result.systemPrompt,
+          templateType: candidate.templateType,
+          active: true,
+          parentTemplateId: candidate.id,
+          generationDepth: candidate.generationDepth + 1,
+          createdBy: "ai",
+          mutationMode: result.mutationMode,
+          parentPersuasionStrategy: result.parentPersuasionStrategy,
+          childPersuasionStrategy: result.childPersuasionStrategy,
+          dimensionsChanged: result.dimensionsChanged,
+          mutationDistance: result.mutationDistance,
+          mutationReason: result.mutationReason,
+          hypothesisTested: result.hypothesisTested,
+        })
+        .returning({ id: promptTemplates.id });
+
+      console.log(`[mutation-runner] ${templateType} [${label}]: created "${result.name}" (id: ${inserted?.id}, mode: ${result.mutationMode}, depth: ${candidate.generationDepth + 1})`);
+
+      if (notifyUrl && inserted) {
+        await fetch(notifyUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            event: "mutation_created",
+            template_type: templateType,
+            template_id: inserted.id,
+            template_name: result.name,
+            template_description: result.description,
+            mutation_mode: result.mutationMode,
+            parent_persuasion_strategy: result.parentPersuasionStrategy,
+            child_persuasion_strategy: result.childPersuasionStrategy,
+            dimensions_changed: result.dimensionsChanged,
+            mutation_distance: result.mutationDistance,
+            hypothesis_tested: result.hypothesisTested,
+            parent_id: candidate.id,
+            parent_name: candidate.name,
+            parent_positive_rate: candidateRate,
+            parent_send_count: candidate.sendCount,
+            generation_depth: candidate.generationDepth + 1,
+          }),
+        }).catch((err) => console.error(`[mutation-runner] ${templateType} [${label}]: webhook notify failed:`, err));
+      }
+    }
   }
 });
 

@@ -80,6 +80,69 @@ interface DraftRequest {
 }
 
 // ---------------------------------------------------------------------------
+// Thompson Sampling — template selection
+// ---------------------------------------------------------------------------
+
+const NEGATIVE_RATE_THRESHOLD = 0.05;
+const SPAM_RATE_THRESHOLD = 0.01;
+const NEGATIVE_FILTER_MIN_SENDS = 30;
+
+function normalSample(): number {
+  let u: number;
+  do { u = Math.random(); } while (u === 0);
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * Math.random());
+}
+
+function sampleGamma(shape: number): number {
+  if (shape < 1) return sampleGamma(1 + shape) * Math.pow(Math.random(), 1 / shape);
+  const d = shape - 1 / 3;
+  const c = 1 / Math.sqrt(9 * d);
+  for (;;) {
+    let x: number, v: number;
+    do { x = normalSample(); v = 1 + c * x; } while (v <= 0);
+    v = v * v * v;
+    const u = Math.random();
+    if (u < 1 - 0.0331 * x * x * x * x) return d * v;
+    if (Math.log(u) < 0.5 * x * x + d * (1 - v + Math.log(v))) return d * v;
+  }
+}
+
+function sampleBeta(alpha: number, beta: number): number {
+  const x = sampleGamma(alpha);
+  const y = sampleGamma(beta);
+  return x + y === 0 ? 0.5 : x / (x + y);
+}
+
+export function thompsonSample<T extends { sendCount: number; positiveIntentCount: number; negativeReplyCount: number; spamComplaintCount: number }>(
+  items: T[],
+): T | undefined {
+  if (items.length === 0) return undefined;
+
+  // Soft-exclude templates with a high negative-reply or spam-complaint rate
+  // once they have enough sends to make the signal meaningful.
+  // Spam threshold (1%) is tighter than negative replies (5%) — a spam complaint
+  // damages SES sender reputation directly.
+  const eligible = items.filter(
+    (t) =>
+      t.sendCount < NEGATIVE_FILTER_MIN_SENDS ||
+      (t.negativeReplyCount / t.sendCount < NEGATIVE_RATE_THRESHOLD &&
+       t.spamComplaintCount / t.sendCount < SPAM_RATE_THRESHOLD),
+  );
+  const pool = eligible.length > 0 ? eligible : items;
+
+  // Beta(1,1) = Uniform for unseen templates, so new variants explore naturally
+  // without a separate burn-in phase that would freeze proven winners.
+  let best: T | undefined;
+  let bestSample = -1;
+  for (const item of pool) {
+    const nonPositive = item.sendCount - item.positiveIntentCount;
+    const draw = sampleBeta(item.positiveIntentCount + 1, nonPositive + 1);
+    if (draw > bestSample) { bestSample = draw; best = item; }
+  }
+  return best;
+}
+
+// ---------------------------------------------------------------------------
 // Scoring — separate adversarial call, starts from 0
 // ---------------------------------------------------------------------------
 
@@ -260,18 +323,33 @@ export async function generateFollowUpBatch(requests: FollowUpRequest[]): Promis
   ] as TemplateType[];
 
   const templateRows = await db
-    .select({ id: promptTemplates.id, systemPrompt: promptTemplates.systemPrompt, templateType: promptTemplates.templateType })
+    .select({
+      id: promptTemplates.id,
+      systemPrompt: promptTemplates.systemPrompt,
+      templateType: promptTemplates.templateType,
+      sendCount: promptTemplates.sendCount,
+      positiveIntentCount: promptTemplates.positiveIntentCount,
+      negativeReplyCount: promptTemplates.negativeReplyCount,
+      spamComplaintCount: promptTemplates.spamComplaintCount,
+    })
     .from(promptTemplates)
     .where(and(eq(promptTemplates.active, true), inArray(promptTemplates.templateType, neededTypes)));
 
-  const templateByType = new Map<TemplateType, typeof templateRows[number]>();
+  const templatesByType = new Map<TemplateType, typeof templateRows>();
   for (const row of templateRows) {
     const type = row.templateType as TemplateType;
-    if (!templateByType.has(type)) templateByType.set(type, row);
+    const bucket = templatesByType.get(type) ?? [];
+    bucket.push(row);
+    templatesByType.set(type, bucket);
   }
 
+  const templateByType = new Map<TemplateType, typeof templateRows[number]>();
   for (const type of neededTypes) {
-    if (!templateByType.has(type)) throw new Error(`No active prompt template for type: ${type}`);
+    const pool = templatesByType.get(type);
+    if (!pool || pool.length === 0) throw new Error(`No active prompt template for type: ${type}`);
+    const selected = thompsonSample(pool);
+    if (!selected) throw new Error(`Thompson sampling failed for type: ${type}`);
+    templateByType.set(type, selected);
   }
 
   const client = new Anthropic({ apiKey });
@@ -366,16 +444,23 @@ export async function generateDraftsBatch(requests: DraftRequest[]): Promise<Dra
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY is required");
 
   const allTemplates = await db
-    .select({ id: promptTemplates.id, systemPrompt: promptTemplates.systemPrompt })
+    .select({
+      id: promptTemplates.id,
+      systemPrompt: promptTemplates.systemPrompt,
+      sendCount: promptTemplates.sendCount,
+      positiveIntentCount: promptTemplates.positiveIntentCount,
+      negativeReplyCount: promptTemplates.negativeReplyCount,
+      spamComplaintCount: promptTemplates.spamComplaintCount,
+    })
     .from(promptTemplates)
-    .where(and(eq(promptTemplates.active, true), eq(promptTemplates.templateType, "initial")))
-    .limit(1);
+    .where(and(eq(promptTemplates.active, true), eq(promptTemplates.templateType, "initial")));
 
   if (allTemplates.length === 0) {
     throw new Error("No active initial prompt template — run db:seed to insert templates");
   }
 
-  const template = allTemplates[0]!;
+  const template = thompsonSample(allTemplates);
+  if (!template) throw new Error("Thompson sampling returned no template");
   const client = new Anthropic({ apiKey });
 
   console.log(`[drafting] generating ${requests.length} draft(s)`);
