@@ -13,6 +13,7 @@ export default async function LeadsPage({
   const emailStatus = (sp.email_status as EmailStatus | undefined) ?? "";
   const routing = (sp.routing as EnrichmentRouting | undefined) ?? "";
   const campaignId = String(sp.campaign_id ?? "");
+  const search = String(sp.search ?? "");
 
   return (
     <LeadsClient
@@ -21,6 +22,7 @@ export default async function LeadsPage({
       emailStatusFilter={emailStatus}
       routingFilter={routing}
       campaignIdFilter={campaignId}
+      searchFilter={search}
     />
   );
 }
