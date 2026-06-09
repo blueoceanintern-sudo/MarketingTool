@@ -25,6 +25,7 @@
     "cheerio": "^1.2.0",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.12.18",
+    "jose": "^6.2.3",
     "node-cron": "^4.2.1",
     "node-fetch": "^3.3.2",
     "playwright": "^1.60.0",

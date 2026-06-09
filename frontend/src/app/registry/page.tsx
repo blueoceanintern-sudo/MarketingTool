@@ -1,19 +1,8 @@
-import { dehydrate, HydrationBoundary } from "@tanstack/react-query";
-import { getQueryClient } from "@/lib/query-client";
-import { registrySourcesOptions, directoryConfigsOptions, activeCombinationsOptions } from "@/lib/queries";
+import { auth } from "@/auth";
 import RegistryClient from "./registry-client";
 
 export default async function RegistryPage() {
-  const queryClient = getQueryClient();
-  await Promise.all([
-    queryClient.prefetchQuery(registrySourcesOptions()),
-    queryClient.prefetchQuery(directoryConfigsOptions()),
-    queryClient.prefetchQuery(activeCombinationsOptions()),
-  ]);
-
-  return (
-    <HydrationBoundary state={dehydrate(queryClient)}>
-      <RegistryClient />
-    </HydrationBoundary>
-  );
+  const session = await auth();
+  const isAdmin = session?.user?.role === "admin";
+  return <RegistryClient isAdmin={isAdmin} />;
 }

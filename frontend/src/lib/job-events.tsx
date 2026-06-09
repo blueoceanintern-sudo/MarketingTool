@@ -16,7 +16,9 @@ type Listener = (event: JobEvent) => void;
 
 const JobEventsContext = createContext<{ subscribe: (l: Listener) => () => void } | null>(null);
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+// SSE goes through the Next.js proxy route (same-origin) so the session
+// cookie is read server-side — EventSource can't set Authorization headers.
+const SSE_URL = "/api/events";
 
 // A scrape emits one progress event per inserted lead; coalesce the refetches.
 const PROGRESS_THROTTLE_MS = 800;
@@ -38,7 +40,7 @@ export function JobEventsProvider({ children }: { children: ReactNode }) {
   }));
 
   useEffect(() => {
-    const source = new EventSource(`${BASE}/api/v1/events`);
+    const source = new EventSource(SSE_URL);
 
     source.addEventListener("job", (e) => {
       let event: JobEvent;
