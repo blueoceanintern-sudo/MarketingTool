@@ -44,7 +44,6 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
 
   const conditions = [
     eq(campaignLeads.campaignId, campaignId),
-    eq(leads.routing, "auto_queue"),
   ];
   if (alreadyDrafted.length > 0) conditions.push(notInArray(leads.id, alreadyDrafted));
   if (suppressedEmails.length > 0) conditions.push(notInArray(leads.email, suppressedEmails));

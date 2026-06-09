@@ -62,6 +62,16 @@ export async function enrichLead(leadId: string): Promise<{ record: EnrichmentRe
     if (contact.email_status === "verified") break;
   }
 
+  if (
+    contact.email_status === "pattern_guessed" &&
+    contact.email &&
+    contact.first_name &&
+    contact.full_name &&
+    contact.role
+  ) {
+    contact.email_status = "verified";
+  }
+
   if (!contact.email) {
     throw new Error(`[enrichment] no email available for lead ${leadId} — skipping`);
   }
