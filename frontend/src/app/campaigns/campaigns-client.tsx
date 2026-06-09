@@ -24,6 +24,7 @@ export default function CampaignsClient() {
   const queryClient = useQueryClient();
   const { data: campaigns = [] } = useQuery(campaignsOptions());
   const [statusFilter, setStatusFilter] = useState<CampaignStatus | "all">("all");
+  const [search, setSearch] = useState("");
   const [showModal, setShowModal] = useState(false);
   const [modalStep, setModalStep] = useState<1 | 2>(1);
   const [formError, setFormError] = useState<string | null>(null);
@@ -66,10 +67,14 @@ export default function CampaignsClient() {
     setModalStep(2);
   }
 
-  const filtered = useMemo(
-    () => (statusFilter === "all" ? campaigns : campaigns.filter((c) => c.status === statusFilter)),
-    [campaigns, statusFilter]
-  );
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return campaigns.filter((c) => {
+      if (statusFilter !== "all" && c.status !== statusFilter) return false;
+      if (q && !c.name.toLowerCase().includes(q) && !c.vertical.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [campaigns, statusFilter, search]);
 
   const totalLeads = campaigns.reduce((s, c) => s + c.leads_count, 0);
   const avgOpenRate =
@@ -168,7 +173,19 @@ export default function CampaignsClient() {
 
       <div className="bg-white rounded-lg border border-grey-100 overflow-hidden">
         <div className="px-5 py-4 border-b border-grey-100 flex justify-between items-center bg-grey-50 flex-wrap gap-2">
-          <div className="flex gap-2 flex-wrap">
+          <div className="flex gap-2 flex-wrap items-center">
+            <div className="flex">
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search campaigns…"
+                className="px-3 py-1.5 border border-grey-200 rounded-l text-[13px] w-44 focus:outline-none focus:border-primary"
+              />
+              <span className="flex items-center px-2 border border-l-0 border-grey-200 rounded-r bg-white text-grey-400">
+                <span className="material-symbols-outlined text-[16px]">search</span>
+              </span>
+            </div>
             {(["all", "active", "draft", "paused", "complete"] as const).map((s) => (
               <button
                 key={s}

@@ -11,6 +11,7 @@ import {
   createDirectoryConfig,
   updateDirectoryConfig,
   deleteDirectoryConfig,
+  scrapeRegistrySource,
   type DirectoryConfig,
   type RegistryImportResult,
   type ScraperType,
@@ -57,6 +58,8 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
   const { data: directoryConfigs = [] } = useQuery(directoryConfigsOptions());
   const { data: activeCombinations = [] } = useQuery(activeCombinationsOptions());
   const [refreshing, setRefreshing] = useState<string | null>(null);
+  const [scrapingSource, setScrapingSource] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
   const [geoFilter, setGeoFilter] = useState<string>("all");
   const [verticalFilter, setVerticalFilter] = useState<string>("all");
   const [activeOnly, setActiveOnly] = useState(false);
@@ -186,13 +189,15 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
   );
 
   const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
     return sources.filter((s) => {
       if (geoFilter !== "all" && s.geo !== geoFilter) return false;
       if (verticalFilter !== "all" && s.vertical !== verticalFilter) return false;
       if (activeOnly && !s.active) return false;
+      if (q && !s.name.toLowerCase().includes(q) && !s.url.toLowerCase().includes(q) && !s.vertical.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [sources, geoFilter, verticalFilter, activeOnly]);
+  }, [sources, geoFilter, verticalFilter, activeOnly, search]);
 
   function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -223,6 +228,17 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
       setRefreshing(null);
     }
   });
+
+  async function handleScrapeSource(sourceId: string, sourceName: string) {
+    setScrapingSource(sourceId);
+    const result = await scrapeRegistrySource(sourceId);
+    setScrapingSource(null);
+    if (!result) {
+      toast.error(`Scrape failed for ${sourceName}`);
+    } else {
+      toast.info(`Scraping ${sourceName} in the background — new leads will appear shortly.`);
+    }
+  }
 
   async function handleRefresh(vertical: string, geo: string, domains: string[]) {
     const key = `${vertical}:${geo}`;
@@ -491,7 +507,19 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
 
       <div className="bg-white rounded-lg border border-grey-100 overflow-hidden">
         <div className="px-5 py-4 border-b border-grey-100 bg-grey-50 flex flex-wrap gap-3 items-center justify-between">
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2 items-center">
+            <div className="flex">
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search sources…"
+                className="px-3 py-1.5 border border-grey-200 rounded-l text-[13px] w-40 focus:outline-none focus:border-primary"
+              />
+              <span className="flex items-center px-2 border border-l-0 border-grey-200 rounded-r bg-white text-grey-400">
+                <span className="material-symbols-outlined text-[16px]">search</span>
+              </span>
+            </div>
             <select
               value={geoFilter}
               onChange={(e) => setGeoFilter(e.target.value)}
@@ -539,6 +567,7 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
                 <th className="px-4 py-4 text-[14px] font-semibold" title="Engine to try first; falls back to Cheerio if it fails">Engine (preferred)</th>
                 <th className="px-4 py-4 text-[14px] font-semibold text-center">Active</th>
                 <th className="px-4 py-4 text-[14px] font-semibold">Created</th>
+                <th className="px-4 py-4 text-[14px] font-semibold"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-grey-100">
@@ -559,6 +588,18 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
                     )}
                   </td>
                   <td className="px-4 py-3 text-[13px] text-grey-500">{formatDate(s.created_at)}</td>
+                  <td className="px-4 py-3">
+                    <button
+                      type="button"
+                      disabled={!s.active || scrapingSource === s.id}
+                      onClick={() => handleScrapeSource(s.id, s.name)}
+                      title={!s.active ? "Source is inactive" : "Scrape this source for new leads"}
+                      className="flex items-center gap-1 px-2.5 py-1.5 border border-grey-200 rounded-lg text-[12px] font-medium text-grey-700 hover:bg-grey-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <span className="material-symbols-outlined text-[14px]">travel_explore</span>
+                      {scrapingSource === s.id ? "Running…" : "Run Scrape"}
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>

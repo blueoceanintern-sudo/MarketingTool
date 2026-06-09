@@ -1,7 +1,9 @@
 import { Hono } from "hono";
 import { db } from "../db";
-import { leads, companies, campaigns, campaignLeads, campaignLeadExclusions, suppressionList, enrichmentRecords, emailDrafts, emailEvents, followUps } from "../db/schema";
-import { count, sql, eq, desc, and, inArray, isNull, isNotNull } from "drizzle-orm";
+import { leads, companies, campaigns, campaignLeads, campaignLeadExclusions, suppressionList, enrichmentRecords, emailDrafts, emailEvents, followUps, sourceRegistry } from "../db/schema";
+import { scrapeWebsite } from "../services/scrapers/cheerioScraper";
+import { scrapeWithFallback } from "../services/scrapers/crawl4aiScraper";
+import { count, sql, eq, desc, and, or, ilike, inArray, isNull, isNotNull } from "drizzle-orm";
 import { logAudit } from "../services/audit/log";
 import type { AuthUser } from "../middleware/auth";
 import { enrichLead } from "../services/enrichment/orchestrator";
@@ -98,11 +100,21 @@ allLeadsRouter.get("/", async (c) => {
   const emailStatusParam = c.req.query("email_status") as string | undefined;
   const routingParam = c.req.query("routing") as string | undefined;
   const campaignIdParam = c.req.query("campaign_id");
+  const searchParam = c.req.query("search")?.trim() || undefined;
+
+  const searchCond = searchParam
+    ? or(
+        ilike(leads.name, `%${searchParam}%`),
+        ilike(leads.email, `%${searchParam}%`),
+        ilike(companies.name, `%${searchParam}%`),
+      )
+    : undefined;
 
   const filterConds = and(
     statusParam ? eq(leads.status, statusParam as "new" | "contacted" | "replied" | "converted" | "suppressed") : undefined,
     emailStatusParam ? eq(leads.emailStatus, emailStatusParam as "verified" | "pattern_guessed" | "not_found") : undefined,
     routingParam ? eq(leads.routing, routingParam as "auto_queue" | "rep_review") : undefined,
+    searchCond,
   );
 
   let rows: LeadRow[];
@@ -550,6 +562,92 @@ allLeadsRouter.post("/enrich", async (c) => {
 
   console.log(`[task:2] ✓ POST /api/v1/leads/enrich returned queued=${queued}`);
   return c.json({ queued });
+});
+
+// Scrape leads from source registry entries and/or custom URLs, without campaign linkage.
+// Returns immediately; scraping + enrichment runs in the background.
+allLeadsRouter.post("/scrape", async (c) => {
+  const body = await c.req.json<{
+    source_ids?: string[];
+    urls?: string[];
+    scraper_type?: string;
+  }>();
+
+  const sourceIds = body.source_ids ?? [];
+  const customUrls = body.urls ?? [];
+  const scraperType = (body.scraper_type ?? "cheerio") as "cheerio" | "crawl4ai";
+
+  if (sourceIds.length === 0 && customUrls.length === 0) {
+    return c.json({ error: "Provide at least one source_id or url" }, 400);
+  }
+
+  type ScrapeSource = { url: string; scraperType: "cheerio" | "crawl4ai"; name: string };
+  const sources: ScrapeSource[] = [];
+
+  if (sourceIds.length > 0) {
+    const registrySources = await db
+      .select({ id: sourceRegistry.id, url: sourceRegistry.url, scraperType: sourceRegistry.scraperType, name: sourceRegistry.name })
+      .from(sourceRegistry)
+      .where(inArray(sourceRegistry.id, sourceIds));
+    for (const s of registrySources) {
+      sources.push({ url: s.url, scraperType: s.scraperType as "cheerio" | "crawl4ai", name: s.name });
+    }
+  }
+
+  for (const url of customUrls) {
+    sources.push({ url, scraperType, name: url });
+  }
+
+  void (async () => {
+    let saved = 0;
+    for (const source of sources) {
+      try {
+        const result = source.scraperType === "crawl4ai"
+          ? await scrapeWithFallback(source.url)
+          : { leads: await scrapeWebsite(source.url, "generic"), scraper: "cheerio" as const };
+
+        for (const scraped of result.leads) {
+          if (!scraped.email) continue;
+          const email = scraped.email.trim().toLowerCase();
+          if (!isValidLeadEmail(email)) continue;
+
+          const [existing] = await db.select({ id: leads.id }).from(leads).where(eq(leads.email, email)).limit(1);
+          if (existing) continue;
+
+          const companyName = scraped.company?.trim() || new URL(scraped.website).hostname;
+          let [company] = await db.select().from(companies).where(eq(companies.name, companyName)).limit(1);
+          if (!company) {
+            const [inserted] = await db.insert(companies).values({
+              name: companyName,
+              industry: "general",
+              companySize: "unknown",
+              location: "unknown",
+              source: scraped.website,
+            }).returning();
+            company = inserted!;
+          }
+
+          await db.insert(leads).values({
+            companyId: company.id,
+            email,
+            name: scraped.name ?? null,
+            role: scraped.role ?? null,
+            isVerified: false,
+            emailStatus: "pattern_guessed",
+            scraperUsed: result.scraper,
+            status: "new",
+          });
+          saved++;
+        }
+      } catch (err) {
+        console.error(`[leads/scrape] failed for ${source.url}:`, err);
+      }
+    }
+    console.log(`[leads/scrape] saved ${saved} new lead(s) across ${sources.length} source(s)`);
+    await emitJobEvent({ kind: "enrichment_complete", campaignId: "", count: saved });
+  })();
+
+  return c.json({ queued: sources.length });
 });
 
 allLeadsRouter.get("/:id/enrichment", async (c) => {

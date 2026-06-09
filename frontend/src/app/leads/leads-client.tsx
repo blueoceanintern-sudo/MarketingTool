@@ -5,13 +5,15 @@ import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import {
   triggerEnrichment,
+  scrapeLeads,
   type EmailStatus,
   type EnrichmentRouting,
   type EnrichmentSource,
   type Lead,
   type LeadStatus,
+  type SourceRegistry,
 } from "@/lib/api";
-import { leadsOptions, leadEnrichmentOptions, campaignsOptions, keys, type LeadsParams } from "@/lib/queries";
+import { leadsOptions, leadEnrichmentOptions, campaignsOptions, registrySourcesOptions, keys, type LeadsParams } from "@/lib/queries";
 import Pagination from "@/components/pagination";
 
 const statusConfig: Record<LeadStatus, { label: string; className: string }> = {
@@ -46,6 +48,7 @@ interface Props {
   emailStatusFilter: string;
   routingFilter: string;
   campaignIdFilter: string;
+  searchFilter: string;
 }
 
 export default function LeadsClient({
@@ -54,12 +57,15 @@ export default function LeadsClient({
   emailStatusFilter,
   routingFilter,
   campaignIdFilter,
+  searchFilter,
 }: Props) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [isPending, startTransition] = useTransition();
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [searchInput, setSearchInput] = useState(searchFilter);
+  const [showScrapeModal, setShowScrapeModal] = useState(false);
 
   // Build the same params object the server prefetched with, so the query key
   // matches and hydration is reused (no refetch on first paint).
@@ -70,6 +76,7 @@ export default function LeadsClient({
     email_status: emailStatusFilter || undefined,
     routing: routingFilter || undefined,
     campaign_id: campaignIdFilter || undefined,
+    search: searchFilter || undefined,
   };
 
   const { data: leadsResult, isFetching } = useQuery({
@@ -77,6 +84,7 @@ export default function LeadsClient({
     placeholderData: keepPreviousData,
   });
   const { data: allCampaigns = [] } = useQuery(campaignsOptions());
+  const { data: allSources = [] } = useQuery(registrySourcesOptions());
 
   const data = leadsResult?.data ?? [];
   const total = leadsResult?.total ?? 0;
@@ -87,6 +95,20 @@ export default function LeadsClient({
     setToast(message);
     setTimeout(() => setToast(null), 4000);
   }
+
+  const scrapeMutation = useMutation({
+    mutationFn: (args: Parameters<typeof scrapeLeads>[0]) => scrapeLeads(args),
+    onSuccess: (result) => {
+      setShowScrapeModal(false);
+      if (result === null) {
+        showToast("Scrape failed — check server logs.");
+      } else {
+        showToast(`Scraping ${result.queued} source${result.queued === 1 ? "" : "s"} in the background.`);
+        queryClient.invalidateQueries({ queryKey: keys.leads });
+      }
+    },
+    onError: () => showToast("Scrape failed — check server logs."),
+  });
 
   const enrichMutation = useMutation({
     mutationFn: () => triggerEnrichment(),
@@ -113,6 +135,7 @@ export default function LeadsClient({
       email_status: emailStatusFilter,
       routing: routingFilter,
       campaign_id: campaignIdFilter,
+      search: searchFilter,
     };
     const merged = { ...current, ...Object.fromEntries(Object.entries(updates).map(([k, v]) => [k, v === null ? "" : String(v)])) };
     for (const [key, val] of Object.entries(merged)) {
@@ -122,6 +145,11 @@ export default function LeadsClient({
     startTransition(() => {
       router.push(`/leads${qs ? `?${qs}` : ""}`);
     });
+  }
+
+  function submitSearch(e: React.FormEvent) {
+    e.preventDefault();
+    navigate({ search: searchInput.trim(), page: 1 });
   }
 
   const start = total === 0 ? 0 : (page - 1) * 50 + 1;
@@ -140,9 +168,45 @@ export default function LeadsClient({
 
   return (
     <div className={`p-4 sm:p-6 lg:p-10 max-w-[1600px] mx-auto transition-opacity duration-150 ${isPending || isFetching ? "opacity-60" : ""}`}>
-      <div className="mb-8">
-        <h1 className="text-[20px] font-bold text-primary">All Leads</h1>
-        <p className="text-[13px] text-grey-500 mt-1">{total.toLocaleString()} leads total</p>
+      <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-[20px] font-bold text-primary">All Leads</h1>
+          <p className="text-[13px] text-grey-500 mt-1">{total.toLocaleString()} leads total</p>
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          <form onSubmit={submitSearch} className="flex">
+            <input
+              type="text"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="Search name, email, company…"
+              className="px-3 py-2 border border-grey-200 rounded-l-lg text-[13px] w-56 focus:outline-none focus:border-primary"
+            />
+            <button
+              type="submit"
+              className="px-3 py-2 bg-primary text-white rounded-r-lg text-[13px]"
+            >
+              <span className="material-symbols-outlined text-[18px]">search</span>
+            </button>
+          </form>
+          {searchFilter && (
+            <button
+              type="button"
+              onClick={() => { setSearchInput(""); navigate({ search: "", page: 1 }); }}
+              className="px-3 py-2 border border-grey-200 rounded-lg text-[13px] text-grey-500 hover:text-primary"
+            >
+              Clear
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowScrapeModal(true)}
+            className="flex items-center gap-1.5 px-4 py-2 bg-primary text-white rounded-lg text-[13px] font-semibold"
+          >
+            <span className="material-symbols-outlined text-[18px]">travel_explore</span>
+            Fetch Leads
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6 mb-8">
@@ -307,11 +371,168 @@ export default function LeadsClient({
         <EnrichmentDrawer lead={selectedLead} onClose={() => setSelectedLead(null)} />
       )}
 
+      {showScrapeModal && (
+        <ScrapeModal
+          sources={allSources}
+          isPending={scrapeMutation.isPending}
+          onClose={() => setShowScrapeModal(false)}
+          onSubmit={(args) => scrapeMutation.mutate(args)}
+        />
+      )}
+
       {toast && (
         <div className="fixed bottom-6 right-6 z-50 bg-primary text-white px-4 py-3 rounded-lg shadow-lg text-[14px] max-w-xs">
           {toast}
         </div>
       )}
+    </div>
+  );
+}
+
+type ScrapeMode = "registry" | "urls" | "both";
+
+function ScrapeModal({
+  sources,
+  isPending,
+  onClose,
+  onSubmit,
+}: {
+  sources: SourceRegistry[];
+  isPending: boolean;
+  onClose: () => void;
+  onSubmit: (args: { source_ids?: string[]; urls?: string[]; scraper_type?: "cheerio" | "crawl4ai" }) => void;
+}) {
+  const [mode, setMode] = useState<ScrapeMode>("registry");
+  const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
+  const [urlsText, setUrlsText] = useState("");
+  const [scraperType, setScraperType] = useState<"cheerio" | "crawl4ai">("cheerio");
+
+  const activeSources = sources.filter((s) => s.active);
+
+  function toggleSource(id: string) {
+    setSelectedSourceIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const urls = urlsText.split("\n").map((u) => u.trim()).filter(Boolean);
+    const source_ids = selectedSourceIds;
+
+    if ((mode === "registry" || mode === "both") && source_ids.length === 0) return;
+    if ((mode === "urls" || mode === "both") && urls.length === 0) return;
+
+    onSubmit({
+      source_ids: mode === "urls" ? undefined : source_ids,
+      urls: mode === "registry" ? undefined : urls,
+      scraper_type: scraperType,
+    });
+  }
+
+  const showRegistry = mode === "registry" || mode === "both";
+  const showUrls = mode === "urls" || mode === "both";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+      <div className="bg-white rounded-lg w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-[18px] font-bold">Fetch Leads</h3>
+          <button type="button" onClick={onClose} className="text-grey-400 hover:text-primary text-[20px] leading-none">×</button>
+        </div>
+
+        <div className="flex gap-2 mb-5">
+          {(["registry", "urls", "both"] as ScrapeMode[]).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              className={[
+                "px-3 py-1.5 rounded text-[13px] font-medium border",
+                mode === m ? "bg-primary text-white border-primary" : "bg-white border-grey-200 text-grey-600",
+              ].join(" ")}
+            >
+              {m === "registry" ? "Source Registry" : m === "urls" ? "Custom URLs" : "Both"}
+            </button>
+          ))}
+        </div>
+
+        <form onSubmit={handleSubmit} className="flex flex-col gap-5">
+          {showRegistry && (
+            <div>
+              <p className="text-[12px] font-semibold text-grey-500 uppercase tracking-wide mb-2">
+                Select registry sources
+              </p>
+              {activeSources.length === 0 ? (
+                <p className="text-[13px] text-grey-400">No active sources in the registry.</p>
+              ) : (
+                <div className="space-y-1.5 max-h-48 overflow-y-auto border border-grey-100 rounded-lg p-2">
+                  {activeSources.map((s) => (
+                    <label key={s.id} className="flex items-center gap-2.5 px-2 py-1.5 rounded hover:bg-grey-50 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={selectedSourceIds.includes(s.id)}
+                        onChange={() => toggleSource(s.id)}
+                        className="accent-primary"
+                      />
+                      <span className="text-[13px] flex-1">{s.name}</span>
+                      <span className="text-[11px] text-grey-400">{s.geo} · {s.vertical}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() =>
+                  setSelectedSourceIds(
+                    selectedSourceIds.length === activeSources.length ? [] : activeSources.map((s) => s.id)
+                  )
+                }
+                className="mt-1.5 text-[12px] text-primary hover:underline"
+              >
+                {selectedSourceIds.length === activeSources.length ? "Deselect all" : "Select all"}
+              </button>
+            </div>
+          )}
+
+          {showUrls && (
+            <div>
+              <label className="block text-[12px] font-semibold text-grey-500 uppercase tracking-wide mb-1.5">
+                Custom URLs <span className="font-normal normal-case">(one per line)</span>
+              </label>
+              <textarea
+                rows={4}
+                value={urlsText}
+                onChange={(e) => setUrlsText(e.target.value)}
+                placeholder={"https://example.com/staff\nhttps://school.edu/contacts"}
+                className="w-full border border-grey-200 rounded-lg px-3 py-2 text-[13px] font-mono focus:outline-none focus:border-primary"
+              />
+              <label className="flex items-center gap-2 mt-2 text-[13px]">
+                <span className="text-grey-500">Scraper:</span>
+                <select
+                  value={scraperType}
+                  onChange={(e) => setScraperType(e.target.value as "cheerio" | "crawl4ai")}
+                  className="border border-grey-200 rounded px-2 py-1 text-[13px]"
+                >
+                  <option value="cheerio">Cheerio (static HTML)</option>
+                  <option value="crawl4ai">Crawl4AI (JS-rendered)</option>
+                </select>
+              </label>
+            </div>
+          )}
+
+          <div className="flex gap-3 justify-end pt-1">
+            <button type="button" onClick={onClose} className="px-4 py-2 border border-grey-200 rounded-lg text-[13px]">
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={isPending}
+              className="px-6 py-2 bg-primary text-white rounded-lg text-[13px] font-semibold disabled:opacity-50"
+            >
+              {isPending ? "Starting…" : "Run Scrape"}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }
