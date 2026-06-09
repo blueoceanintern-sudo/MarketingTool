@@ -349,8 +349,8 @@ campaignsRouter.post("/:id/enrich", async (c) => {
 
   void (async () => {
     const results = await Promise.allSettled(leadIds.map((id) => enrichLead(id)));
-    const enriched = results.filter((r) => r.status === "fulfilled").length;
-    console.log(`[enrich] campaign ${campaignId}: ${enriched}/${leadIds.length} succeeded`);
+    const enriched = results.filter((r) => r.status === "fulfilled" && r.value.fullyEnriched).length;
+    console.log(`[enrich] campaign ${campaignId}: ${enriched}/${leadIds.length} fully enriched`);
     await emitJobEvent({ kind: "enrichment_complete", campaignId, count: enriched });
   })();
 

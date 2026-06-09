@@ -1,4 +1,5 @@
 import { lookup } from "node:dns/promises";
+import { inArray } from "drizzle-orm";
 import { db } from "../../db";
 import { sourceRegistry, normalizeVertical, normalizeGeo } from "../../db/schema";
 
@@ -124,8 +125,12 @@ export async function discoverSources(
   const results = await tavilySearch(config.query, config.domains);
   if (results.length === 0) return 0;
 
-  // Load existing URLs once to deduplicate without per-row queries
-  const existing = await db.select({ url: sourceRegistry.url }).from(sourceRegistry);
+  // Load only candidate URLs to check for duplicates — avoid a full table scan
+  const candidateUrls = results.map((r) => r.url);
+  const existing = await db
+    .select({ url: sourceRegistry.url })
+    .from(sourceRegistry)
+    .where(inArray(sourceRegistry.url, candidateUrls));
   const existingUrls = new Set(existing.map((r) => r.url));
 
   const novel = results.filter((r) => !existingUrls.has(r.url));
