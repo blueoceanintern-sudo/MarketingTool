@@ -24,11 +24,12 @@ Given a partial lead record, find and fill in as much accurate information as po
 PROCESS
 
 1. Navigate to the company website provided — this is mandatory as the first step.
-2. Identify any missing or potentially outdated fields.
-3. Search team pages, about pages, contact pages, and staff directories.
-4. Update fields with the most accurate and current information you find.
-5. Return all valid contacts found.
-6. Stop when no reliable information remains or you have exhausted available pages.
+2. From the homepage, immediately look for links to About Us, Contact Us, Team, or Staff pages and navigate there — do not stay on the homepage.
+3. Identify any missing or potentially outdated fields.
+4. Extract contact information, role/title, and email from those pages.
+5. Update fields with the most accurate and current information you find.
+6. Return all valid contacts found.
+7. Stop when no reliable information remains or you have exhausted available pages.
 
 ALLOWED SOURCES
 
@@ -37,8 +38,6 @@ ALLOWED SOURCES
 * Contact pages
 * Staff directories
 * Press releases
-* LinkedIn profiles
-* LinkedIn company pages
 * Professional biographies
 
 RULES
@@ -56,7 +55,6 @@ Before enriching a contact, verify they belong to the target company.
 Accept a contact only if at least one is true:
 
 * Listed on the company website.
-* Current employment shown on LinkedIn.
 * Email domain matches the company domain.
 * Biography explicitly links them to the company.
 * Multiple sources confirm affiliation.
@@ -80,12 +78,9 @@ VALIDATION
 
 COMPANY SIZE
 
-Determine "size" from the company's OWN website first (About, Team, or
-Careers pages — a stated headcount or a team roster you can count). Only
-if the website gives no usable headcount, make ONE attempt at the LinkedIn
-company page for its employee band. If the website already yields a
-headcount, do NOT visit LinkedIn. Do not visit any other external site
-for size.
+Determine "size" from the company's OWN website only (About, Team, or
+Careers pages — a stated headcount or a team roster you can count). Do not
+visit any external site for size.
 
 Map the headcount to a band:
 
@@ -101,6 +96,14 @@ EMAILS
 
 * Record only verified emails.
 * Generate pattern_guessed emails only if a real email from the same domain establishes the format.
+
+ROLE-BASED CONTACTS
+
+Some contacts have a role-based email address (e.g. admissions@, registrar@, dean@) rather
+than a personal one. If no individual person name can be found for such a contact, use the
+capitalised local-part of the email as full_name (e.g. "Admissions" for admissions@school.edu,
+"Registrar" for registrar@school.edu). Do not leave full_name null solely because no individual
+could be identified — the role label is a valid placeholder.
 
 When you have enough information OR no further progress is possible, call the "finish" tool.
 The "finish" result must use the same JSON schema as the input record, with fields updated where confidently verified.`;
@@ -146,6 +149,11 @@ export const coworkProvider: EnrichmentProvider = {
         ),
       ]);
       if (!result) return null;
+
+      // Cowork physically visits the company website — any email it finds is treated as verified.
+      if (result.contact?.email) {
+        result.contact.email_status = "verified";
+      }
 
       return {
         source: "cowork_claude",
@@ -202,7 +210,7 @@ function buildRecord(input: EnrichmentInput): object {
     contact: {
       full_name: [seed.firstName, seed.lastName].filter(Boolean).join(" ") || null,
       first_name: seed.firstName ?? null,
-      role: seed.role ?? null,
+      role: seed.role ?? "-",
       email: seed.email ?? null,
       email_status: seed.email ? "pattern_guessed" : null,
     },
