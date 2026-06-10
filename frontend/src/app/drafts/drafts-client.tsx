@@ -328,14 +328,50 @@ function ReviewQueue() {
                   </div>
                   <div className="col-span-4">
                     <div className="bg-white rounded-lg shadow-[0_1px_3px_rgba(27,45,91,0.08)] p-6">
-                      <p className="text-[13px] font-medium mb-2">Confidence Score</p>
-                      <div className="w-full bg-grey-100 h-2 rounded-full overflow-hidden mb-2">
-                        <div
-                          className={`h-full rounded-full ${conf.barClass} transition-all duration-300`}
-                          style={{ width: `${selected.confidence_score}%` }}
-                        />
+                      <div className="flex items-center justify-between mb-3">
+                        <p className="text-[13px] font-medium">Confidence Score</p>
+                        <span className={`px-2 py-0.5 text-[11px] font-medium rounded ${conf.className}`}>
+                          {Math.round(selected.confidence_score)}/100
+                        </span>
                       </div>
-                      <p className="text-[13px] text-grey-500 text-right">{Math.round(selected.confidence_score)}%</p>
+                      {selected.score_breakdown ? (
+                        <div className="flex flex-col gap-2">
+                          {(
+                            [
+                              { key: "painPointFit", label: "Pain point fit" },
+                              { key: "campaignAlignment", label: "Campaign alignment" },
+                              { key: "personalisationQuality", label: "Personalisation" },
+                              { key: "lengthCompliance", label: "Length" },
+                            ] as const
+                          ).map(({ key, label }) => {
+                            const val = selected.score_breakdown![key];
+                            return (
+                              <div key={key}>
+                                <div className="flex justify-between text-[11px] text-grey-500 mb-0.5">
+                                  <span>{label}</span>
+                                  <span>{val}/25</span>
+                                </div>
+                                <div className="w-full bg-grey-100 h-1.5 rounded-full overflow-hidden">
+                                  <div
+                                    className={`h-full rounded-full ${conf.barClass} transition-all duration-300`}
+                                    style={{ width: `${(val / 25) * 100}%` }}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div>
+                          <div className="w-full bg-grey-100 h-2 rounded-full overflow-hidden mb-2">
+                            <div
+                              className={`h-full rounded-full ${conf.barClass} transition-all duration-300`}
+                              style={{ width: `${selected.confidence_score}%` }}
+                            />
+                          </div>
+                          <p className="text-[11px] text-grey-400 text-right">No breakdown available</p>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>

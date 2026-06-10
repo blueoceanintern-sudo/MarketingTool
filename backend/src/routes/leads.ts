@@ -1,15 +1,18 @@
 import { Hono } from "hono";
 import { db } from "../db";
-import { leads, companies, campaigns, campaignLeads, campaignLeadExclusions, suppressionList, enrichmentRecords, emailDrafts, emailEvents, followUps } from "../db/schema";
-import { count, sql, eq, desc, and, inArray, isNull, isNotNull } from "drizzle-orm";
+import { leads, companies, campaigns, campaignLeads, campaignLeadExclusions, suppressionList, enrichmentRecords, emailDrafts, emailEvents, followUps, sourceRegistry } from "../db/schema";
+import { scrapeWebsite } from "../services/scrapers/cheerioScraper";
+import { scrapeWithFallback } from "../services/scrapers/crawl4aiScraper";
+import { count, sql, eq, desc, and, or, ilike, inArray, isNull, isNotNull } from "drizzle-orm";
 import { logAudit } from "../services/audit/log";
+import type { AuthUser } from "../middleware/auth";
 import { enrichLead } from "../services/enrichment/orchestrator";
+import { emitJobEvent } from "../services/events";
 import { isValidLeadEmail } from "../services/scrapers/emailFilter";
 
 interface LeadRow {
   id: string;
-  firstName: string | null;
-  lastName: string | null;
+  name: string | null;
   email: string;
   role: string | null;
   isVerified: boolean;
@@ -26,8 +29,7 @@ interface LeadRow {
 function formatLead(row: LeadRow, campaignsForLead: { id: string; name: string }[]) {
   return {
     id: row.id,
-    first_name: row.firstName ?? "",
-    last_name: row.lastName ?? "",
+    name: row.name ?? "",
     email: row.email,
     role: row.role ?? "",
     is_verified: row.isVerified,
@@ -65,8 +67,7 @@ async function attachCampaignsToLeads(leadIds: string[]): Promise<Map<string, { 
 
 const LEAD_SELECT = {
   id: leads.id,
-  firstName: leads.firstName,
-  lastName: leads.lastName,
+  name: leads.name,
   email: leads.email,
   role: leads.role,
   isVerified: leads.isVerified,
@@ -88,7 +89,7 @@ const SUMMARY_SELECT = {
 } as const;
 
 // Mounted at /api/v1/leads — all leads, no campaign filter
-export const allLeadsRouter = new Hono();
+export const allLeadsRouter = new Hono<{ Variables: { user: AuthUser } }>();
 
 allLeadsRouter.get("/", async (c) => {
   const page = Math.max(1, parseInt(c.req.query("page") ?? "1", 10) || 1);
@@ -99,11 +100,21 @@ allLeadsRouter.get("/", async (c) => {
   const emailStatusParam = c.req.query("email_status") as string | undefined;
   const routingParam = c.req.query("routing") as string | undefined;
   const campaignIdParam = c.req.query("campaign_id");
+  const searchParam = c.req.query("search")?.trim() || undefined;
+
+  const searchCond = searchParam
+    ? or(
+        ilike(leads.name, `%${searchParam}%`),
+        ilike(leads.email, `%${searchParam}%`),
+        ilike(companies.name, `%${searchParam}%`),
+      )
+    : undefined;
 
   const filterConds = and(
     statusParam ? eq(leads.status, statusParam as "new" | "contacted" | "replied" | "converted" | "suppressed") : undefined,
     emailStatusParam ? eq(leads.emailStatus, emailStatusParam as "verified" | "pattern_guessed" | "not_found") : undefined,
     routingParam ? eq(leads.routing, routingParam as "auto_queue" | "rep_review") : undefined,
+    searchCond,
   );
 
   let rows: LeadRow[];
@@ -165,7 +176,7 @@ allLeadsRouter.get("/", async (c) => {
 });
 
 // Mounted at /api/v1/campaigns — campaign-scoped lead endpoints
-export const leadsRouter = new Hono();
+export const leadsRouter = new Hono<{ Variables: { user: AuthUser } }>();
 
 leadsRouter.get("/:id/leads", async (c) => {
   const campaignId = c.req.param("id");
@@ -214,8 +225,7 @@ leadsRouter.get("/:id/leads/excluded", async (c) => {
       excludedBy: campaignLeadExclusions.excludedBy,
       reason: campaignLeadExclusions.reason,
       email: leads.email,
-      firstName: leads.firstName,
-      lastName: leads.lastName,
+      name: leads.name,
       role: leads.role,
       companyName: companies.name,
     })
@@ -228,8 +238,7 @@ leadsRouter.get("/:id/leads/excluded", async (c) => {
   return c.json(rows.map((r) => ({
     lead_id: r.leadId,
     email: r.email,
-    first_name: r.firstName ?? "",
-    last_name: r.lastName ?? "",
+    name: r.name ?? "",
     role: r.role ?? "",
     company_name: r.companyName,
     excluded_at: r.excludedAt.toISOString(),
@@ -323,14 +332,11 @@ leadsRouter.post("/:id/leads/import", async (c) => {
       company = inserted!;
     }
 
-    const nameParts = (row["contact_name"] ?? "").trim().split(/\s+/);
-    const firstName = nameParts[0] ?? "";
-    const lastName = nameParts.slice(1).join(" ") || "";
+    const name = (row["contact_name"] ?? "").trim() || null;
 
     const [lead] = await db.insert(leads).values({
       companyId: company.id,
-      firstName,
-      lastName,
+      name,
       email,
       role: row["role"] ?? "",
       isVerified: false,
@@ -403,7 +409,7 @@ allLeadsRouter.post("/:id/campaigns", async (c) => {
   await db.insert(campaignLeads).values({ leadId, campaignId: body.campaign_id, source: "manual" });
 
   await logAudit({
-    actor: "user",
+    actor: c.get("user"),
     action: "lead.add_to_campaign",
     targetId: leadId,
     targetType: "lead",
@@ -508,7 +514,7 @@ allLeadsRouter.delete("/:id/campaigns/:campaignId", async (c) => {
   });
 
   await logAudit({
-    actor: "user",
+    actor: c.get("user"),
     action: "lead.remove_from_campaign",
     targetId: leadId,
     targetType: "lead",
@@ -544,14 +550,104 @@ allLeadsRouter.post("/enrich", async (c) => {
   const queued = unenriched.length;
   console.log(`[leads/enrich] queuing ${queued} scraped lead(s) for enrichment`);
 
-  for (const { id } of unenriched) {
-    void enrichLead(id).catch((err) => {
-      console.error(`[leads/enrich] enrichment failed for ${id}:`, err);
-    });
-  }
+  void (async () => {
+    let enriched = 0;
+    for (const { id } of unenriched) {
+      await enrichLead(id).then(({ fullyEnriched }) => { if (fullyEnriched) enriched++; }).catch((err) => {
+        console.error(`[leads/enrich] enrichment failed for ${id}:`, err);
+      });
+    }
+    await emitJobEvent({ kind: "enrichment_complete", campaignId: "", count: enriched });
+  })();
 
   console.log(`[task:2] ✓ POST /api/v1/leads/enrich returned queued=${queued}`);
   return c.json({ queued });
+});
+
+// Scrape leads from source registry entries and/or custom URLs, without campaign linkage.
+// Returns immediately; scraping + enrichment runs in the background.
+allLeadsRouter.post("/scrape", async (c) => {
+  const body = await c.req.json<{
+    source_ids?: string[];
+    urls?: string[];
+    scraper_type?: string;
+  }>();
+
+  const sourceIds = body.source_ids ?? [];
+  const customUrls = body.urls ?? [];
+  const scraperType = (body.scraper_type ?? "cheerio") as "cheerio" | "crawl4ai";
+
+  if (sourceIds.length === 0 && customUrls.length === 0) {
+    return c.json({ error: "Provide at least one source_id or url" }, 400);
+  }
+
+  type ScrapeSource = { url: string; scraperType: "cheerio" | "crawl4ai"; name: string };
+  const sources: ScrapeSource[] = [];
+
+  if (sourceIds.length > 0) {
+    const registrySources = await db
+      .select({ id: sourceRegistry.id, url: sourceRegistry.url, scraperType: sourceRegistry.scraperType, name: sourceRegistry.name })
+      .from(sourceRegistry)
+      .where(inArray(sourceRegistry.id, sourceIds));
+    for (const s of registrySources) {
+      sources.push({ url: s.url, scraperType: s.scraperType as "cheerio" | "crawl4ai", name: s.name });
+    }
+  }
+
+  for (const url of customUrls) {
+    sources.push({ url, scraperType, name: url });
+  }
+
+  void (async () => {
+    let saved = 0;
+    for (const source of sources) {
+      try {
+        const result = source.scraperType === "crawl4ai"
+          ? await scrapeWithFallback(source.url)
+          : { leads: await scrapeWebsite(source.url), scraper: "cheerio" as const };
+
+        for (const scraped of result.leads) {
+          if (!scraped.email) continue;
+          const email = scraped.email.trim().toLowerCase();
+          if (!isValidLeadEmail(email)) continue;
+
+          const [existing] = await db.select({ id: leads.id }).from(leads).where(eq(leads.email, email)).limit(1);
+          if (existing) continue;
+
+          const companyName = scraped.company?.trim() || new URL(scraped.website).hostname;
+          let [company] = await db.select().from(companies).where(eq(companies.name, companyName)).limit(1);
+          if (!company) {
+            const [inserted] = await db.insert(companies).values({
+              name: companyName,
+              industry: "general",
+              companySize: "unknown",
+              location: "unknown",
+              source: scraped.website,
+            }).returning();
+            company = inserted!;
+          }
+
+          await db.insert(leads).values({
+            companyId: company.id,
+            email,
+            name: scraped.name ?? null,
+            role: scraped.role ?? null,
+            isVerified: false,
+            emailStatus: "pattern_guessed",
+            scraperUsed: result.scraper,
+            status: "new",
+          });
+          saved++;
+        }
+      } catch (err) {
+        console.error(`[leads/scrape] failed for ${source.url}:`, err);
+      }
+    }
+    console.log(`[leads/scrape] saved ${saved} new lead(s) across ${sources.length} source(s)`);
+    await emitJobEvent({ kind: "enrichment_complete", campaignId: "", count: saved });
+  })();
+
+  return c.json({ queued: sources.length });
 });
 
 allLeadsRouter.get("/:id/enrichment", async (c) => {

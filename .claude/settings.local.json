@@ -52,7 +52,38 @@
       "PowerShell(docker cp \"C:\\\\Users\\\\jachi\\\\Desktop\\\\MarketingTool\\\\backend\\\\src\\\\db\\\\migrations\\\\0000_classy_zzzax.sql\" blueocean-pg:/tmp/0000.sql)",
       "Bash(docker cp *)",
       "Bash(Get-Content \"C:\\\\Users\\\\jachi\\\\Desktop\\\\MarketingTool\\\\backend\\\\src\\\\db\\\\migrations\\\\0006_remove_hostile_enum.sql\")",
-      "PowerShell(docker exec *)"
+      "PowerShell(docker exec *)",
+      "PowerShell(New-Item *)",
+      "Bash(git *)",
+      "Bash(grep \"DATABASE_URL\" ../.env)",
+      "Bash(grep \"DATABASE_URL\" .env)",
+      "Bash(psql *)",
+      "Bash(cat)",
+      "Bash(bun src/db/check_drafts_temp.ts)",
+      "Bash(bun src/db/check_tmpl_temp.ts)",
+      "Bash(rm src/db/check_tmpl_temp.ts)",
+      "Bash(dir /s /b \"C:\\\\Users\\\\jachi\\\\Desktop\\\\MarketingTool\\\\backend\\\\src\\\\services\")",
+      "Bash(rm test-mutation.ts)",
+      "Bash(bun drizzle-kit *)",
+      "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\jachi\\\\Desktop\\\\MarketingTool\" -Recurse -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -match \"^\\\\.env\" } | ForEach-Object { $_.FullName })",
+      "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\jachi\\\\Desktop\\\\MarketingTool\\\\frontend\" -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -match \"^\\\\.env\" } | ForEach-Object { $_.FullName })",
+      "PowerShell(Remove-Item *)",
+      "PowerShell(Stop-Process *)",
+      "PowerShell(Get-Content *)",
+      "Bash(bun *)",
+      "PowerShell(docker start blueocean-pg 2>&1; Start-Sleep -Seconds 2; docker exec blueocean-pg psql -U postgres -d blueocean -c \"SELECT name, vertical, geography, status FROM campaigns ORDER BY created_at;\" 2>&1)",
+      "PowerShell(Invoke-RestMethod -Uri \"http://localhost:3001/api/v1/campaigns\" -Method GET 2>&1 | ConvertTo-Json -Depth 3)",
+      "Bash(xargs grep -l \"Unauthorized\\\\|auth\\\\|middleware\")",
+      "Bash(xargs grep -l \"backendToken\\\\|auth.*route\\\\|nextauth\")",
+      "PowerShell(Select-String -Path \"C:\\\\Users\\\\jachi\\\\Desktop\\\\MarketingTool\\\\frontend\\\\.env.local\" -Pattern \"NEXT_PUBLIC_API_URL|ALLOWED_EMAILS|ADMIN_EMAILS\" | ForEach-Object { $_.Line })",
+      "Bash(xargs cat)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.local)",
+      "Bash(cat .env*)",
+      "Bash(grep .env*)",
+      "Bash(less .env*)"
     ]
   }
 }

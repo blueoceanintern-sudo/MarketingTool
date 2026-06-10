@@ -9,23 +9,28 @@ export const eventsRouter = new Hono();
 // react-query invalidation (and component listeners).
 eventsRouter.get("/events", (c) =>
   streamSSE(c, async (stream) => {
-    let open = true;
+    let abortResolve!: () => void;
+    const aborted = new Promise<void>((r) => { abortResolve = r; });
 
     const unsubscribe = subscribeJobEvents((event) => {
-      void stream.writeSSE({ event: "job", data: JSON.stringify(event) });
+      void stream.writeSSE({ event: "job", data: JSON.stringify(event) }).catch(() => {});
     });
 
     stream.onAbort(() => {
-      open = false;
+      abortResolve();
     });
 
     try {
-      await stream.writeSSE({ event: "ready", data: "ok" });
+      await stream.writeSSE({ event: "ready", data: "ok" }).catch(() => {});
       // Keepalive so idle connections aren't dropped by proxies/timeouts.
-      while (open) {
-        await stream.sleep(25_000);
-        if (!open) break;
-        await stream.writeSSE({ event: "ping", data: String(Date.now()) });
+      // Race against aborted so we exit immediately on disconnect (not after 25s).
+      while (true) {
+        const result = await Promise.race([
+          stream.sleep(25_000).then(() => "ping" as const),
+          aborted.then(() => "abort" as const),
+        ]);
+        if (result === "abort") break;
+        await stream.writeSSE({ event: "ping", data: String(Date.now()) }).catch(() => {});
       }
     } finally {
       unsubscribe();

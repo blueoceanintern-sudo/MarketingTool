@@ -2,11 +2,17 @@
 
 import { useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { resolveGeo } from "@/lib/geo";
 import { toast } from "sonner";
 import {
   createRegistrySource,
   importRegistrySources,
   triggerDiscovery,
+  createDirectoryConfig,
+  updateDirectoryConfig,
+  deleteDirectoryConfig,
+  scrapeRegistrySource,
+  type DirectoryConfig,
   type RegistryImportResult,
   type ScraperType,
 } from "@/lib/api";
@@ -17,6 +23,7 @@ import {
   keys,
 } from "@/lib/queries";
 import { useJobEvents } from "@/lib/job-events";
+import Pagination from "@/components/pagination";
 
 const scraperTypeLabel: Record<ScraperType, string> = {
   cheerio: "Cheerio (static HTML)",
@@ -43,30 +50,61 @@ MOE Schools Directory,education,SG,https://moe.gov.sg/schools,cheerio,true,true
 ACECQA Provider List,childcare,AU,https://www.acecqa.gov.au/providers,crawl4ai,false,true
 US Daycare Registry,childcare,US,https://childcare.gov/index/registry,cheerio,false,false`;
 
-export default function RegistryClient() {
+const SOURCES_PAGE_SIZE = 25;
+const BLANK_COVERAGE_FORM = { vertical: "", geo: "", query: "", domains: "" };
+const BLANK_SOURCE_FORM = { name: "", vertical: "", geo: "", url: "", scraper_type: "cheerio" as ScraperType, legal_flag: false, active: true };
+
+const EMPTY_SOURCES_RESULT = {
+  data: [],
+  total: 0,
+  page: 1,
+  limit: SOURCES_PAGE_SIZE,
+  total_pages: 0,
+  summary: { total: 0, active: 0 },
+  facets: { geos: [] as string[], verticals: [] as string[] },
+};
+
+export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
   const queryClient = useQueryClient();
-  const { data: sources = [] } = useQuery(registrySourcesOptions());
   const { data: directoryConfigs = [] } = useQuery(directoryConfigsOptions());
   const { data: activeCombinations = [] } = useQuery(activeCombinationsOptions());
   const [refreshing, setRefreshing] = useState<string | null>(null);
+  const [scrapingSource, setScrapingSource] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
   const [geoFilter, setGeoFilter] = useState<string>("all");
   const [verticalFilter, setVerticalFilter] = useState<string>("all");
   const [activeOnly, setActiveOnly] = useState(false);
+  const [sourcesPage, setSourcesPage] = useState(1);
+
+  const { data: sourcesResult = EMPTY_SOURCES_RESULT } = useQuery(
+    registrySourcesOptions({
+      page: sourcesPage,
+      limit: SOURCES_PAGE_SIZE,
+      geo: geoFilter !== "all" ? geoFilter : undefined,
+      vertical: verticalFilter !== "all" ? verticalFilter : undefined,
+      active: activeOnly || undefined,
+    }),
+  );
+  const sources = sourcesResult.data;
+  const { summary, facets } = sourcesResult;
   const [showAddModal, setShowAddModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<RegistryImportResult | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [form, setForm] = useState({
-    name: "",
-    vertical: "",
-    geo: "SG",
-    url: "",
-    scraper_type: "cheerio" as ScraperType,
-    legal_flag: false,
-    active: true,
-  });
+  const [form, setForm] = useState(BLANK_SOURCE_FORM);
+
+  // Coverage config modals (admin only)
+  const [showAddCoverageModal, setShowAddCoverageModal] = useState(false);
+  const [editingConfig, setEditingConfig] = useState<DirectoryConfig | null>(null);
+  const [coverageForm, setCoverageForm] = useState(BLANK_COVERAGE_FORM);
+  const [coverageError, setCoverageError] = useState<string | null>(null);
+  const [coverageDuplicate, setCoverageDuplicate] = useState<DirectoryConfig | null>(null);
+  const [deletingConfig, setDeletingConfig] = useState<DirectoryConfig | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+
+  const invalidateConfigs = () => queryClient.invalidateQueries({ queryKey: ["registry", "directory-configs"] });
 
   const createMutation = useMutation({
     mutationFn: async () => {
@@ -84,7 +122,7 @@ export default function RegistryClient() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: keys.registry });
       setShowAddModal(false);
-      setForm({ name: "", vertical: "", geo: "SG", url: "", scraper_type: "cheerio", legal_flag: false, active: true });
+      setForm(BLANK_SOURCE_FORM);
     },
     onError: (err) => setFormError(err instanceof Error ? err.message : "Failed to add source"),
   });
@@ -102,17 +140,84 @@ export default function RegistryClient() {
     onError: (err) => setImportError(err instanceof Error ? err.message : "Import failed"),
   });
 
-  const geos = useMemo(() => Array.from(new Set(sources.map((s) => s.geo))).sort(), [sources]);
-  const verticals = useMemo(() => Array.from(new Set(sources.map((s) => s.vertical))).sort(), [sources]);
+  const createConfigMutation = useMutation({
+    mutationFn: async () => {
+      const domains = coverageForm.domains.split(",").map((d) => d.trim()).filter(Boolean);
+      return createDirectoryConfig({
+        vertical: coverageForm.vertical.trim().toLowerCase(),
+        geo: resolveGeo(coverageForm.geo),
+        query: coverageForm.query.trim(),
+        domains,
+      });
+    },
+    onSuccess: (result) => {
+      if (result.isDuplicate) {
+        const vertical = coverageForm.vertical.trim().toLowerCase();
+        const geo = resolveGeo(coverageForm.geo);
+        const existing = directoryConfigs.find((c) => c.vertical === vertical && c.geo === geo) ?? null;
+        setCoverageDuplicate(existing);
+        return;
+      }
+      if (result.error || !result.config) {
+        setCoverageError(result.error ?? "Failed to create config");
+        return;
+      }
+      invalidateConfigs();
+      setShowAddCoverageModal(false);
+      setCoverageForm(BLANK_COVERAGE_FORM);
+      setCoverageError(null);
+      setCoverageDuplicate(null);
+    },
+  });
 
-  const filtered = useMemo(() => {
-    return sources.filter((s) => {
-      if (geoFilter !== "all" && s.geo !== geoFilter) return false;
-      if (verticalFilter !== "all" && s.vertical !== verticalFilter) return false;
-      if (activeOnly && !s.active) return false;
-      return true;
-    });
-  }, [sources, geoFilter, verticalFilter, activeOnly]);
+  const updateConfigMutation = useMutation({
+    mutationFn: async () => {
+      if (!editingConfig) return;
+      const domains = coverageForm.domains.split(",").map((d) => d.trim()).filter(Boolean);
+      const { config, error } = await updateDirectoryConfig(editingConfig.id, {
+        query: coverageForm.query.trim(),
+        domains,
+      });
+      if (error || !config) throw new Error(error ?? "Failed to update config");
+    },
+    onSuccess: () => {
+      invalidateConfigs();
+      setEditingConfig(null);
+      setCoverageForm(BLANK_COVERAGE_FORM);
+      setCoverageError(null);
+    },
+    onError: (err) => setCoverageError(err instanceof Error ? err.message : "Failed to update config"),
+  });
+
+  const deleteConfigMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const { ok, error } = await deleteDirectoryConfig(id);
+      if (!ok) throw new Error(error ?? "Failed to delete config");
+    },
+    onSuccess: () => {
+      invalidateConfigs();
+      setDeletingConfig(null);
+      setDeleteConfirmText("");
+      toast.success("Coverage config deleted");
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : "Failed to delete config"),
+  });
+
+  // Distinct values across the registry (server facets) ∪ configured coverage.
+  // Single source of truth for the stat cards, the filter dropdowns, and the
+  // modal autocompletes — so a vertical/geo that only exists in sources or only
+  // in a directory config still shows up everywhere and is filterable.
+  const verticals = useMemo(
+    () => Array.from(new Set([...facets.verticals, ...directoryConfigs.map((c) => c.vertical)])).sort(),
+    [facets.verticals, directoryConfigs],
+  );
+  const geos = useMemo(
+    () => Array.from(new Set([...facets.geos, ...directoryConfigs.map((c) => c.geo)])).sort(),
+    [facets.geos, directoryConfigs],
+  );
+
+  const sourcesTotalPages = Math.max(1, sourcesResult.total_pages);
+  const sourcesPageClamped = Math.min(sourcesPage, sourcesTotalPages);
 
   function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -138,15 +243,22 @@ export default function RegistryClient() {
     a.click();
   }
 
-  // Discovery is an async backend job. When it finishes it emits an SSE event
-  // that (a) invalidates the registry queries globally and (b) lets us clear the
-  // "Refreshing…" state here. Only one refresh runs at a time (cooldown), so any
-  // discovery event clears it.
   useJobEvents((event) => {
     if (event.kind === "discovery") {
       setRefreshing(null);
     }
   });
+
+  async function handleScrapeSource(sourceId: string, sourceName: string) {
+    setScrapingSource(sourceId);
+    const result = await scrapeRegistrySource(sourceId);
+    setScrapingSource(null);
+    if (!result) {
+      toast.error(`Scrape failed for ${sourceName}`);
+    } else {
+      toast.info(`Scraping ${sourceName} in the background — new leads will appear shortly.`);
+    }
+  }
 
   async function handleRefresh(vertical: string, geo: string, domains: string[]) {
     const key = `${vertical}:${geo}`;
@@ -165,33 +277,54 @@ export default function RegistryClient() {
       return;
     }
 
-    // Leave "Refreshing…" on until the discovery completion event arrives.
     toast.info(result.message ?? `Discovering sources for ${key}`, {
       description: domains.length ? `Searching: ${domains.join(", ")}` : undefined,
       duration: 8000,
     });
   }
 
-  // Coverage rows shown in the "Auto-discovery coverage" card:
-  // - everything from DIRECTORY_CONFIGS (always show what's wired)
-  // - plus any active-campaign (vertical, geo) NOT in DIRECTORY_CONFIGS,
-  //   flagged so the rep can see the gap.
+  function openEditConfig(cfg: DirectoryConfig) {
+    setEditingConfig(cfg);
+    setCoverageForm({
+      vertical: cfg.vertical,
+      geo: cfg.geo,
+      query: cfg.query,
+      domains: cfg.domains.join(", "),
+    });
+    setCoverageError(null);
+  }
+
+  function handleCoverageSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setCoverageError(null);
+    setCoverageDuplicate(null);
+    if (editingConfig) {
+      updateConfigMutation.mutate();
+    } else {
+      createConfigMutation.mutate();
+    }
+  }
+
+  // Coverage rows: configured entries + gaps from active campaigns
   const coverageRows = useMemo(() => {
     const configured = directoryConfigs.map((c) => ({
       vertical: c.vertical,
       geo: c.geo,
       has_config: true,
       domains: c.domains,
+      config: c,
     }));
     const configuredKeys = new Set(configured.map((c) => `${c.vertical}:${c.geo}`));
     const gaps = activeCombinations
       .filter((c) => !configuredKeys.has(`${c.vertical}:${c.geo}`))
-      .map((c) => ({ ...c, domains: [] as string[] }));
+      .map((c) => ({ ...c, domains: [] as string[], config: null }));
     return [...configured, ...gaps];
   }, [directoryConfigs, activeCombinations]);
 
+  const isCoveragePending = createConfigMutation.isPending || updateConfigMutation.isPending;
+
   return (
-    <div className="p-4 sm:p-6 lg:p-10 max-w-[1600px] mx-auto">
+    <div className="p-4 sm:p-6 lg:p-10 max-w-400 mx-auto">
       <div className="flex justify-between items-end mb-8">
         <div>
           <nav className="flex items-center gap-2 mb-2">
@@ -204,29 +337,31 @@ export default function RegistryClient() {
             Scrape sources used when running a campaign. Sources are matched by vertical + geography.
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleImport} />
-          <button
-            type="button"
-            onClick={() => setShowImportModal(true)}
-            disabled={importMutation.isPending}
-            className="flex items-center gap-2 px-5 py-2 border border-grey-200 bg-white text-primary rounded-lg text-[14px] font-semibold hover:bg-grey-50 disabled:opacity-50"
-          >
-            <span className="material-symbols-outlined text-[20px]">upload_file</span>
-            {importMutation.isPending ? "Importing…" : "Import CSV"}
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowAddModal(true)}
-            className="flex items-center gap-2 px-6 py-2 bg-primary text-white rounded-lg text-[14px] font-semibold"
-          >
-            <span className="material-symbols-outlined text-[20px]">add</span>
-            Add Source
-          </button>
-        </div>
+        {isAdmin && (
+          <div className="flex items-center gap-3">
+            <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleImport} />
+            <button
+              type="button"
+              onClick={() => setShowImportModal(true)}
+              disabled={importMutation.isPending}
+              className="flex items-center gap-2 px-5 py-2 border border-grey-200 bg-white text-primary rounded-lg text-[14px] font-semibold hover:bg-grey-50 disabled:opacity-50"
+            >
+              <span className="material-symbols-outlined text-[20px]">upload_file</span>
+              {importMutation.isPending ? "Importing…" : "Import CSV"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowAddModal(true)}
+              className="flex items-center gap-2 px-6 py-2 bg-primary text-white rounded-lg text-[14px] font-semibold"
+            >
+              <span className="material-symbols-outlined text-[20px]">add</span>
+              Add Source
+            </button>
+          </div>
+        )}
       </div>
 
-      {importError && (
+      {isAdmin && importError && (
         <div className="mb-6 px-4 py-3 rounded-lg bg-danger-bg text-danger text-[13px] flex items-center justify-between">
           <span>{importError}</span>
           <button type="button" onClick={() => setImportError(null)} className="ml-4 hover:opacity-70">
@@ -235,7 +370,7 @@ export default function RegistryClient() {
         </div>
       )}
 
-      {importResult && (
+      {isAdmin && importResult && (
         <div className="mb-6 px-4 py-3 rounded-lg bg-success-bg text-[13px] flex flex-col gap-2">
           <div className="flex items-center justify-between">
             <span className="text-success font-semibold">
@@ -261,12 +396,12 @@ export default function RegistryClient() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6 mb-8">
         <div className="bg-white p-5 rounded-lg border border-grey-100">
           <p className="text-[13px] text-grey-500">Total sources</p>
-          <h3 className="text-[24px] font-bold font-mono mt-2">{sources.length}</h3>
+          <h3 className="text-[24px] font-bold font-mono mt-2">{summary.total}</h3>
         </div>
         <div className="bg-white p-5 rounded-lg border border-grey-100">
           <p className="text-[13px] text-grey-500">Active</p>
           <h3 className="text-[24px] font-bold text-success font-mono mt-2">
-            {sources.filter((s) => s.active).length}
+            {summary.active}
           </h3>
         </div>
         <div className="bg-white p-5 rounded-lg border border-grey-100">
@@ -281,12 +416,24 @@ export default function RegistryClient() {
 
       {coverageRows.length > 0 && (
         <div className="bg-white rounded-lg border border-grey-100 overflow-hidden mb-8">
-          <div className="px-5 py-4 border-b border-grey-100 bg-grey-50">
-            <h3 className="text-[14px] font-semibold text-primary">Auto-discovery coverage</h3>
-            <p className="text-[12px] text-grey-500 mt-1">
-              Tavily searches the whitelisted directories below and inserts new sources automatically.
-              Refresh runs the search again — useful when a directory adds new entries.
-            </p>
+          <div className="px-5 py-4 border-b border-grey-100 bg-grey-50 flex items-start justify-between gap-4">
+            <div>
+              <h3 className="text-[14px] font-semibold text-primary">Auto-discovery coverage</h3>
+              <p className="text-[12px] text-grey-500 mt-1">
+                Tavily searches the whitelisted directories below and inserts new sources automatically.
+                Refresh runs the search again — useful when a directory adds new entries.
+              </p>
+            </div>
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => { setCoverageForm(BLANK_COVERAGE_FORM); setCoverageError(null); setCoverageDuplicate(null); setShowAddCoverageModal(true); }}
+                className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-primary text-white rounded-lg text-[12px] font-semibold"
+              >
+                <span className="material-symbols-outlined text-[16px]">add</span>
+                Add coverage
+              </button>
+            )}
           </div>
           <table className="w-full border-collapse">
             <thead className="bg-grey-50 border-b border-grey-100">
@@ -323,18 +470,45 @@ export default function RegistryClient() {
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-right pr-5">
-                      {row.has_config && (
-                        <button
-                          type="button"
-                          onClick={() => handleRefresh(row.vertical, row.geo, row.domains)}
-                          disabled={refreshing === key}
-                          className="flex items-center gap-1.5 ml-auto px-3 py-1.5 border border-grey-200 rounded-lg text-[12px] font-medium text-grey-700 hover:bg-grey-50 disabled:opacity-60"
-                        >
-                          <span className="material-symbols-outlined text-[14px]">refresh</span>
-                          {refreshing === key ? "Refreshing…" : "Refresh"}
-                        </button>
-                      )}
+                    <td className="px-4 py-3 pr-5">
+                      <div className="flex items-center gap-2 justify-end">
+                        {isAdmin && row.config && (
+                          <button
+                            type="button"
+                            onClick={() => openEditConfig(row.config!)}
+                            className="flex items-center gap-1 px-2.5 py-1.5 border border-grey-200 rounded-lg text-[12px] font-medium text-grey-700 hover:bg-grey-50"
+                          >
+                            <span className="material-symbols-outlined text-[14px]">edit</span>
+                            Edit
+                          </button>
+                        )}
+                        {row.has_config && (
+                          <button
+                            type="button"
+                            onClick={() => handleRefresh(row.vertical, row.geo, row.domains)}
+                            disabled={refreshing === key}
+                            className="flex items-center gap-1.5 px-3 py-1.5 border border-grey-200 rounded-lg text-[12px] font-medium text-grey-700 hover:bg-grey-50 disabled:opacity-60"
+                          >
+                            <span className="material-symbols-outlined text-[14px]">refresh</span>
+                            {refreshing === key ? "Refreshing…" : "Refresh"}
+                          </button>
+                        )}
+                        {isAdmin && !row.has_config && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCoverageForm({ vertical: row.vertical, geo: row.geo, query: "", domains: "" });
+                              setCoverageError(null);
+                              setCoverageDuplicate(null);
+                              setShowAddCoverageModal(true);
+                            }}
+                            className="flex items-center gap-1 px-2.5 py-1.5 border border-grey-200 rounded-lg text-[12px] font-medium text-grey-700 hover:bg-grey-50"
+                          >
+                            <span className="material-symbols-outlined text-[14px]">add</span>
+                            Add config
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -346,10 +520,22 @@ export default function RegistryClient() {
 
       <div className="bg-white rounded-lg border border-grey-100 overflow-hidden">
         <div className="px-5 py-4 border-b border-grey-100 bg-grey-50 flex flex-wrap gap-3 items-center justify-between">
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2 items-center">
+            <div className="flex">
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search sources…"
+                className="px-3 py-1.5 border border-grey-200 rounded-l text-[13px] w-40 focus:outline-none focus:border-primary"
+              />
+              <span className="flex items-center px-2 border border-l-0 border-grey-200 rounded-r bg-white text-grey-400">
+                <span className="material-symbols-outlined text-[16px]">search</span>
+              </span>
+            </div>
             <select
               value={geoFilter}
-              onChange={(e) => setGeoFilter(e.target.value)}
+              onChange={(e) => { setGeoFilter(e.target.value); setSourcesPage(1); }}
               className="px-3 py-1.5 border border-grey-100 rounded text-[13px] bg-white"
             >
               <option value="all">All Geographies</option>
@@ -357,7 +543,7 @@ export default function RegistryClient() {
             </select>
             <select
               value={verticalFilter}
-              onChange={(e) => setVerticalFilter(e.target.value)}
+              onChange={(e) => { setVerticalFilter(e.target.value); setSourcesPage(1); }}
               className="px-3 py-1.5 border border-grey-100 rounded text-[13px] bg-white"
             >
               <option value="all">All Verticals</option>
@@ -365,7 +551,7 @@ export default function RegistryClient() {
             </select>
             <button
               type="button"
-              onClick={() => setActiveOnly((v) => !v)}
+              onClick={() => { setActiveOnly((v) => !v); setSourcesPage(1); }}
               className={[
                 "px-3 py-1.5 border rounded text-[13px] font-medium",
                 activeOnly ? "bg-primary text-white border-primary" : "bg-white border-grey-100",
@@ -374,14 +560,18 @@ export default function RegistryClient() {
               Active only
             </button>
           </div>
-          <p className="text-[13px] text-grey-500">Showing {filtered.length} sources</p>
+          <p className="text-[13px] text-grey-500">
+            {sourcesResult.total === 0
+              ? "No sources"
+              : `Showing ${(sourcesPageClamped - 1) * sourcesResult.limit + 1}–${Math.min(sourcesPageClamped * sourcesResult.limit, sourcesResult.total)} of ${sourcesResult.total} sources`}
+          </p>
         </div>
 
-        {sources.length === 0 ? (
+        {summary.total === 0 ? (
           <p className="px-6 py-16 text-center text-grey-400 text-[14px]">
             No sources yet. Add one to enable scraping for a campaign.
           </p>
-        ) : filtered.length === 0 ? (
+        ) : sourcesResult.total === 0 ? (
           <p className="px-6 py-12 text-center text-grey-400">No sources match these filters.</p>
         ) : (
           <table className="w-full border-collapse">
@@ -394,10 +584,11 @@ export default function RegistryClient() {
                 <th className="px-4 py-4 text-[14px] font-semibold" title="Engine to try first; falls back to Cheerio if it fails">Engine (preferred)</th>
                 <th className="px-4 py-4 text-[14px] font-semibold text-center">Active</th>
                 <th className="px-4 py-4 text-[14px] font-semibold">Created</th>
+                <th className="px-4 py-4 text-[14px] font-semibold"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-grey-100">
-              {filtered.map((s) => (
+              {sources.map((s) => (
                 <tr key={s.id} className="hover:bg-ocean-wash">
                   <td className="px-6 py-3 text-[14px] font-medium">{s.name}</td>
                   <td className="px-4 py-3 text-[13px]">{s.vertical}</td>
@@ -414,15 +605,37 @@ export default function RegistryClient() {
                     )}
                   </td>
                   <td className="px-4 py-3 text-[13px] text-grey-500">{formatDate(s.created_at)}</td>
+                  <td className="px-4 py-3">
+                    <button
+                      type="button"
+                      disabled={!s.active || scrapingSource === s.id}
+                      onClick={() => handleScrapeSource(s.id, s.name)}
+                      title={!s.active ? "Source is inactive" : "Scrape this source for new leads"}
+                      className="flex items-center gap-1 px-2.5 py-1.5 border border-grey-200 rounded-lg text-[12px] font-medium text-grey-700 hover:bg-grey-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <span className="material-symbols-outlined text-[14px]">travel_explore</span>
+                      {scrapingSource === s.id ? "Running…" : "Run Scrape"}
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
+
+        {sourcesTotalPages > 1 && (
+          <div className="px-5 py-3 border-t border-grey-100 flex justify-center">
+            <Pagination
+              page={sourcesPageClamped}
+              totalPages={sourcesTotalPages}
+              onPageChange={setSourcesPage}
+            />
+          </div>
+        )}
       </div>
 
       {/* ── Import CSV format modal ─────────────────────────────────────────── */}
-      {showImportModal && (
+      {isAdmin && showImportModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
           <div className="bg-white rounded-xl w-full max-w-2xl p-6 flex flex-col gap-5 max-h-[90vh] overflow-y-auto">
             <div className="flex items-start justify-between">
@@ -486,7 +699,7 @@ export default function RegistryClient() {
       )}
 
       {/* ── Add source modal ────────────────────────────────────────────────── */}
-      {showAddModal && (
+      {isAdmin && showAddModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
           <div className="bg-white rounded-lg w-full max-w-md p-6">
             <h3 className="text-[18px] font-bold mb-4">Add Source</h3>
@@ -505,23 +718,31 @@ export default function RegistryClient() {
                 Vertical
                 <input
                   required
+                  list="source-verticals"
                   value={form.vertical}
                   onChange={(e) => setForm((f) => ({ ...f, vertical: e.target.value }))}
                   placeholder="e.g. education"
                   className="border border-grey-200 rounded-lg px-3 py-2"
                 />
+                <datalist id="source-verticals">
+                  {verticals.map((v) => <option key={v} value={v} />)}
+                </datalist>
               </label>
               <label className="flex flex-col gap-1 text-[13px]">
                 Geography
-                <select
+                <input
+                  required
+                  list="source-geos"
                   value={form.geo}
                   onChange={(e) => setForm((f) => ({ ...f, geo: e.target.value }))}
+                  onBlur={(e) => setForm((f) => ({ ...f, geo: resolveGeo(e.target.value) }))}
+                  onKeyDown={(e) => { if (e.key === "Enter") setForm((f) => ({ ...f, geo: resolveGeo(f.geo) })); }}
+                  placeholder="e.g. SG"
                   className="border border-grey-200 rounded-lg px-3 py-2"
-                >
-                  <option value="SG">SG</option>
-                  <option value="AU">AU</option>
-                  <option value="US">US</option>
-                </select>
+                />
+                <datalist id="source-geos">
+                  {geos.map((g) => <option key={g} value={g} />)}
+                </datalist>
               </label>
               <label className="flex flex-col gap-1 text-[13px]">
                 URL
@@ -574,6 +795,182 @@ export default function RegistryClient() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Add / Edit coverage config modal (admin only) ───────────────────── */}
+      {isAdmin && (showAddCoverageModal || editingConfig) && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+          <div className="bg-white rounded-lg w-full max-w-md p-6">
+            <h3 className="text-[18px] font-bold mb-4">
+              {editingConfig ? `Edit coverage — ${editingConfig.vertical}:${editingConfig.geo}` : "Add coverage config"}
+            </h3>
+            <form onSubmit={handleCoverageSubmit} className="flex flex-col gap-4">
+              {!editingConfig && (
+                <>
+                  <label className="flex flex-col gap-1 text-[13px]">
+                    Vertical
+                    <input
+                      required
+                      list="coverage-verticals"
+                      value={coverageForm.vertical}
+                      onChange={(e) => setCoverageForm((f) => ({ ...f, vertical: e.target.value }))}
+                      placeholder="e.g. education"
+                      className="border border-grey-200 rounded-lg px-3 py-2"
+                    />
+                    <datalist id="coverage-verticals">
+                      {verticals.map((v) => <option key={v} value={v} />)}
+                    </datalist>
+                  </label>
+                  <label className="flex flex-col gap-1 text-[13px]">
+                    Geography
+                    <input
+                      required
+                      list="coverage-geos"
+                      value={coverageForm.geo}
+                      onChange={(e) => setCoverageForm((f) => ({ ...f, geo: e.target.value }))}
+                      onBlur={(e) => setCoverageForm((f) => ({ ...f, geo: resolveGeo(e.target.value) }))}
+                      onKeyDown={(e) => { if (e.key === "Enter") setCoverageForm((f) => ({ ...f, geo: resolveGeo(f.geo) })); }}
+                      placeholder="e.g. SG"
+                      className="border border-grey-200 rounded-lg px-3 py-2"
+                    />
+                    <datalist id="coverage-geos">
+                      {geos.map((g) => <option key={g} value={g} />)}
+                    </datalist>
+                  </label>
+                </>
+              )}
+              <label className="flex flex-col gap-1 text-[13px]">
+                Tavily search query
+                <input
+                  required
+                  value={coverageForm.query}
+                  onChange={(e) => setCoverageForm((f) => ({ ...f, query: e.target.value }))}
+                  placeholder="e.g. Singapore school contact principal"
+                  className="border border-grey-200 rounded-lg px-3 py-2"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-[13px]">
+                Domains to search
+                <input
+                  required
+                  value={coverageForm.domains}
+                  onChange={(e) => setCoverageForm((f) => ({ ...f, domains: e.target.value }))}
+                  placeholder="e.g. moe.edu.sg, cpe.gov.sg"
+                  className="border border-grey-200 rounded-lg px-3 py-2 font-mono"
+                />
+                <span className="text-[11px] text-grey-400">Comma-separated. Tavily restricts results to these domains.</span>
+              </label>
+              {coverageDuplicate && !editingConfig && (
+                <div className="flex items-center justify-between gap-2 rounded-lg bg-warning/10 border border-warning/30 px-3 py-2 text-[13px]">
+                  <span>A config for <span className="font-mono font-semibold">{coverageDuplicate.vertical}:{coverageDuplicate.geo}</span> already exists.</span>
+                  <button
+                    type="button"
+                    onClick={() => { setShowAddCoverageModal(false); setCoverageDuplicate(null); openEditConfig(coverageDuplicate); }}
+                    className="shrink-0 text-primary hover:underline font-semibold"
+                  >
+                    Edit existing →
+                  </button>
+                </div>
+              )}
+              {coverageError && !coverageDuplicate && <p className="text-danger text-[13px]">{coverageError}</p>}
+              <div className="flex items-center justify-between gap-3 pt-1">
+                {editingConfig ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingConfig(null);
+                      setDeletingConfig(editingConfig);
+                      setDeleteConfirmText("");
+                      setCoverageError(null);
+                    }}
+                    className="text-[13px] text-danger hover:underline"
+                  >
+                    Delete config
+                  </button>
+                ) : (
+                  <span />
+                )}
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => { setShowAddCoverageModal(false); setEditingConfig(null); setCoverageError(null); setCoverageDuplicate(null); }}
+                    className="px-4 py-2 border rounded-lg text-[14px]"
+                  >
+                    Cancel
+                  </button>
+                  <button type="submit" disabled={isCoveragePending} className="px-6 py-2 bg-primary text-white rounded-lg text-[14px] font-semibold">
+                    {isCoveragePending ? "Saving…" : editingConfig ? "Save changes" : "Add coverage"}
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Delete coverage config confirmation modal (admin only) ──────────── */}
+      {isAdmin && deletingConfig && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+          <div className="bg-white rounded-lg w-full max-w-md p-6 flex flex-col gap-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-[18px] font-bold text-primary">Delete coverage config</h3>
+                <p className="text-[13px] text-grey-500 mt-1">
+                  <span className="font-mono font-semibold text-primary">{deletingConfig.vertical}:{deletingConfig.geo}</span>
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setDeletingConfig(null); setDeleteConfirmText(""); }}
+                className="text-grey-400 hover:text-grey-600 shrink-0"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="rounded-lg border border-warning/40 bg-warning/5 px-4 py-3 flex flex-col gap-2">
+              <p className="text-[13px] font-semibold text-warning">What this does</p>
+              <ul className="text-[13px] text-grey-700 space-y-1 list-disc pl-4">
+                <li>Tavily auto-discovery will <strong>stop running</strong> for <span className="font-mono">{deletingConfig.vertical}:{deletingConfig.geo}</span>. No new sources will be found automatically.</li>
+                <li>All <strong>existing sources</strong> already in the registry for this vertical and geography are unaffected — they remain and can still be scraped.</li>
+                <li>The next campaign run for this vertical/geo will show a &quot;no directory config&quot; gap in the coverage table.</li>
+                <li>You can re-add coverage at any time via <strong>Add coverage</strong>.</li>
+              </ul>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[13px] text-grey-600">
+                Type <span className="font-mono font-semibold text-primary">delete</span> to confirm
+              </label>
+              <input
+                type="text"
+                value={deleteConfirmText}
+                onChange={(e) => setDeleteConfirmText(e.target.value)}
+                placeholder="delete"
+                className="border border-grey-200 rounded-lg px-3 py-2 text-[14px] font-mono"
+                autoFocus
+              />
+            </div>
+
+            <div className="flex gap-3 justify-end">
+              <button
+                type="button"
+                onClick={() => { setDeletingConfig(null); setDeleteConfirmText(""); }}
+                className="px-4 py-2 border border-grey-200 rounded-lg text-[14px]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => deleteConfigMutation.mutate(deletingConfig.id)}
+                disabled={deleteConfirmText !== "delete" || deleteConfigMutation.isPending}
+                className="px-6 py-2 bg-danger text-white rounded-lg text-[14px] font-semibold disabled:opacity-40"
+              >
+                {deleteConfigMutation.isPending ? "Deleting…" : "Delete config"}
+              </button>
+            </div>
           </div>
         </div>
       )}

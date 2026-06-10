@@ -3,6 +3,7 @@ import { db } from "../db";
 import { emailDrafts, leads, campaigns } from "../db/schema";
 import { count, eq, and } from "drizzle-orm";
 import { logAudit } from "../services/audit/log";
+import type { AuthUser } from "../middleware/auth";
 
 function formatDraft(row: {
   id: string;
@@ -12,17 +13,17 @@ function formatDraft(row: {
   subject: string;
   body: string;
   confidenceScore: number;
+  scoreBreakdown: { painPointFit: number; campaignAlignment: number; personalisationQuality: number; lengthCompliance: number } | null;
   status: string;
   createdAt: Date;
-  leadFirstName: string | null;
-  leadLastName: string | null;
+  leadName: string | null;
   leadRole: string | null;
   campaignName: string;
 }) {
   return {
     id: row.id,
     lead_id: row.leadId,
-    lead_name: [row.leadFirstName, row.leadLastName].filter(Boolean).join(" "),
+    lead_name: row.leadName ?? "",
     lead_role: row.leadRole ?? "",
     campaign_id: row.campaignId,
     campaign_name: row.campaignName,
@@ -30,6 +31,7 @@ function formatDraft(row: {
     subject: row.subject,
     body: row.body,
     confidence_score: row.confidenceScore,
+    score_breakdown: row.scoreBreakdown,
     status: row.status,
     created_at: row.createdAt.toISOString(),
   };
@@ -45,10 +47,10 @@ async function getDraftWithJoins(draftId: string) {
       subject: emailDrafts.subject,
       body: emailDrafts.body,
       confidenceScore: emailDrafts.confidenceScore,
+      scoreBreakdown: emailDrafts.scoreBreakdown,
       status: emailDrafts.status,
       createdAt: emailDrafts.createdAt,
-      leadFirstName: leads.firstName,
-      leadLastName: leads.lastName,
+      leadName: leads.name,
       leadRole: leads.role,
       campaignName: campaigns.name,
     })
@@ -60,7 +62,7 @@ async function getDraftWithJoins(draftId: string) {
   return row;
 }
 
-export const draftsRouter = new Hono();
+export const draftsRouter = new Hono<{ Variables: { user: AuthUser } }>();
 
 // GET /drafts?status=scheduled|sent  — for the scheduled/sent views in the UI.
 // Returns drafts grouped by campaign_id (client sorts/groups from the flat array).
@@ -94,10 +96,10 @@ draftsRouter.get("/", async (c) => {
       subject: emailDrafts.subject,
       body: emailDrafts.body,
       confidenceScore: emailDrafts.confidenceScore,
+      scoreBreakdown: emailDrafts.scoreBreakdown,
       status: emailDrafts.status,
       createdAt: emailDrafts.createdAt,
-      leadFirstName: leads.firstName,
-      leadLastName: leads.lastName,
+      leadName: leads.name,
       leadRole: leads.role,
       campaignName: campaigns.name,
     })
@@ -128,10 +130,10 @@ draftsRouter.get("/queue", async (c) => {
       subject: emailDrafts.subject,
       body: emailDrafts.body,
       confidenceScore: emailDrafts.confidenceScore,
+      scoreBreakdown: emailDrafts.scoreBreakdown,
       status: emailDrafts.status,
       createdAt: emailDrafts.createdAt,
-      leadFirstName: leads.firstName,
-      leadLastName: leads.lastName,
+      leadName: leads.name,
       leadRole: leads.role,
       campaignName: campaigns.name,
     })
@@ -154,7 +156,7 @@ draftsRouter.patch("/:id/approve", async (c) => {
 
   await db.update(emailDrafts).set({ status: "scheduled" }).where(eq(emailDrafts.id, draftId));
   await logAudit({
-    actor: "user",
+    actor: c.get("user"),
     action: "draft.approve",
     targetId: draftId,
     targetType: "email_draft",
@@ -175,7 +177,7 @@ draftsRouter.patch("/:id/reject", async (c) => {
 
   await db.update(emailDrafts).set({ status: "rejected" }).where(eq(emailDrafts.id, draftId));
   await logAudit({
-    actor: "user",
+    actor: c.get("user"),
     action: "draft.reject",
     targetId: draftId,
     targetType: "email_draft",
@@ -208,7 +210,7 @@ draftsRouter.patch("/:id/edit", async (c) => {
 
   await db.update(emailDrafts).set(updates).where(eq(emailDrafts.id, draftId));
   await logAudit({
-    actor: "user",
+    actor: c.get("user"),
     action: "draft.edit",
     targetId: draftId,
     targetType: "email_draft",
