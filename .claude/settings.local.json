@@ -1,7 +1,6 @@
 {
   "permissions": {
     "allow": [
-<<<<<<< HEAD
       "PowerShell(Get-ChildItem)",
       "PowerShell(& \"$env:USERPROFILE\\\\.bun\\\\bin\\\\bun.exe\" --version 2>$null; cmd /c \"where bun\" 2>$null)",
       "Bash(git pull *)",
@@ -68,8 +67,15 @@
       "Bash(bun drizzle-kit *)",
       "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\jachi\\\\Desktop\\\\MarketingTool\" -Recurse -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -match \"^\\\\.env\" } | ForEach-Object { $_.FullName })",
       "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\jachi\\\\Desktop\\\\MarketingTool\\\\frontend\" -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -match \"^\\\\.env\" } | ForEach-Object { $_.FullName })",
-      "PowerShell(Remove-Item *)"
-=======
+      "PowerShell(Remove-Item *)",
+      "PowerShell(Stop-Process *)",
+      "PowerShell(Get-Content *)",
+      "Bash(bun *)",
+      "PowerShell(docker start blueocean-pg 2>&1; Start-Sleep -Seconds 2; docker exec blueocean-pg psql -U postgres -d blueocean -c \"SELECT name, vertical, geography, status FROM campaigns ORDER BY created_at;\" 2>&1)",
+      "PowerShell(Invoke-RestMethod -Uri \"http://localhost:3001/api/v1/campaigns\" -Method GET 2>&1 | ConvertTo-Json -Depth 3)",
+      "Bash(xargs grep -l \"Unauthorized\\\\|auth\\\\|middleware\")",
+      "Bash(xargs grep -l \"backendToken\\\\|auth.*route\\\\|nextauth\")",
+      "PowerShell(Select-String -Path \"C:\\\\Users\\\\jachi\\\\Desktop\\\\MarketingTool\\\\frontend\\\\.env.local\" -Pattern \"NEXT_PUBLIC_API_URL|ALLOWED_EMAILS|ADMIN_EMAILS\" | ForEach-Object { $_.Line })"
     ],
     "deny": [
       "Read(./.env)",
@@ -77,7 +83,6 @@
       "Bash(cat .env*)",
       "Bash(grep .env*)",
       "Bash(less .env*)"
->>>>>>> e7358ee365ae7ddf051334cb17632e48400aa80a
     ]
   }
 }
