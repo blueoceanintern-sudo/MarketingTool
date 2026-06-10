@@ -10,14 +10,13 @@ function formatDemo(row: {
   assignedTo: string | null;
   status: string;
   createdAt: Date;
-  leadFirstName: string | null;
-  leadLastName: string | null;
+  leadName: string | null;
   companyName: string;
 }) {
   return {
     id: row.id,
     lead_id: row.leadId,
-    lead_name: [row.leadFirstName, row.leadLastName].filter(Boolean).join(" "),
+    lead_name: row.leadName ?? "",
     lead_company: row.companyName,
     campaign_id: row.campaignId,
     assigned_to: row.assignedTo ?? "",
@@ -35,8 +34,7 @@ const demosJoinQuery = () =>
       assignedTo: demos.assignedTo,
       status: demos.status,
       createdAt: demos.createdAt,
-      leadFirstName: leads.firstName,
-      leadLastName: leads.lastName,
+      leadName: leads.name,
       companyName: companies.name,
     })
     .from(demos)

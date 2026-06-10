@@ -1,7 +1,10 @@
 import { Hono } from "hono";
 import { db } from "../db";
-import { sourceRegistry, suppressionList, promptTemplates, emailDrafts, campaigns, directoryConfigs, normalizeVertical, normalizeGeo } from "../db/schema";
+import { sourceRegistry, suppressionList, promptTemplates, emailDrafts, campaigns, directoryConfigs, leads, companies, normalizeVertical, normalizeGeo } from "../db/schema";
 import { eq, and, inArray, count, sql } from "drizzle-orm";
+import { scrapeWebsite } from "../services/scrapers/cheerioScraper";
+import { scrapeWithFallback } from "../services/scrapers/crawl4aiScraper";
+import { isValidLeadEmail } from "../services/scrapers/emailFilter";
 import { logAudit } from "../services/audit/log";
 import { discoverSources, getDirectoryConfig, getAllDirectoryConfigs, resolveGeo } from "../services/sourceRegistry";
 import { emitJobEvent } from "../services/events";
@@ -433,6 +436,63 @@ adminRouter.get("/registry/active-combinations", async (c) => {
   );
 
   return c.json(withConfig);
+});
+
+// Scrape a specific registry source — persists new leads without campaign linkage.
+adminRouter.post("/registry/sources/:id/scrape", async (c) => {
+  const sourceId = c.req.param("id");
+  const [source] = await db.select().from(sourceRegistry).where(eq(sourceRegistry.id, sourceId)).limit(1);
+  if (!source) return c.json({ error: "Source not found" }, 404);
+  if (!source.active) return c.json({ error: "Source is inactive" }, 400);
+
+  void (async () => {
+    try {
+      const result = source.scraperType === "crawl4ai"
+        ? await scrapeWithFallback(source.url)
+        : { leads: await scrapeWebsite(source.url), scraper: "cheerio" as const };
+
+      let saved = 0;
+      for (const scraped of result.leads) {
+        if (!scraped.email) continue;
+        const email = scraped.email.trim().toLowerCase();
+        if (!isValidLeadEmail(email)) continue;
+
+        const [existing] = await db.select({ id: leads.id }).from(leads).where(eq(leads.email, email)).limit(1);
+        if (existing) continue;
+
+        const companyName = scraped.company?.trim() || new URL(scraped.website).hostname;
+        let [company] = await db.select().from(companies).where(eq(companies.name, companyName)).limit(1);
+        if (!company) {
+          const [inserted] = await db.insert(companies).values({
+            name: companyName,
+            industry: source.vertical,
+            companySize: "unknown",
+            location: source.geo,
+            source: scraped.website,
+          }).returning();
+          company = inserted!;
+        }
+
+        await db.insert(leads).values({
+          companyId: company.id,
+          email,
+          name: scraped.name ?? null,
+          role: scraped.role ?? null,
+          isVerified: false,
+          emailStatus: "pattern_guessed",
+          scraperUsed: result.scraper,
+          status: "new",
+        });
+        saved++;
+      }
+      console.log(`[registry/scrape] ${source.name} → saved=${saved}`);
+      await emitJobEvent({ kind: "enrichment_complete", campaignId: "", count: saved });
+    } catch (err) {
+      console.error(`[registry/scrape] failed for ${source.name}:`, err);
+    }
+  })();
+
+  return c.json({ status: "queued", source_id: sourceId, source_name: source.name }, 202);
 });
 
 // ---------------------------------------------------------------------------

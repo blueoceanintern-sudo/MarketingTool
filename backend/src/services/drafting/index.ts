@@ -19,8 +19,7 @@ const ATTEMPT_TO_TYPE: Record<number, TemplateType> = {
 };
 
 interface LeadContext {
-  firstName?: string;
-  lastName?: string;
+  name?: string;
   role?: string;
   companyName?: string;
   industry?: string;
@@ -247,7 +246,7 @@ async function scoreEmailsBatch(
 // ---------------------------------------------------------------------------
 
 function buildLeadBlock(lead: LeadContext): string {
-  const name = [lead.firstName, lead.lastName].filter(Boolean).join(" ") || "Unknown";
+  const name = lead.name || "Unknown";
   return `## Lead data
 - contact_name: ${name}
 - role: ${lead.role ?? "Unknown"}

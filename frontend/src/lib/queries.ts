@@ -35,6 +35,7 @@ export type LeadsParams = {
   email_status?: string;
   routing?: string;
   campaign_id?: string;
+  search?: string;
 };
 
 export const leadsOptions = (params: LeadsParams) =>

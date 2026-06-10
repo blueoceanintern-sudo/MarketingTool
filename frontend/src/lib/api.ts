@@ -78,8 +78,7 @@ export type EnrichmentRouting = "auto_queue" | "rep_review";
 
 export interface Lead {
   id: string;
-  first_name: string;
-  last_name: string;
+  name: string;
   email: string;
   role: string;
   is_verified: boolean;
@@ -380,6 +379,7 @@ export async function getLeadsPaginated(params?: {
   email_status?: string;
   routing?: string;
   campaign_id?: string;
+  search?: string;
 }): Promise<PaginatedLeads> {
   const q = new URLSearchParams();
   if (params?.page && params.page > 1) q.set("page", String(params.page));
@@ -388,6 +388,7 @@ export async function getLeadsPaginated(params?: {
   if (params?.email_status) q.set("email_status", params.email_status);
   if (params?.routing) q.set("routing", params.routing);
   if (params?.campaign_id) q.set("campaign_id", params.campaign_id);
+  if (params?.search) q.set("search", params.search);
   const qs = q.toString();
   const result = await apiFetch<PaginatedLeads>(`/leads${qs ? `?${qs}` : ""}`);
   return result ?? { data: [], total: 0, page: 1, limit: 50, total_pages: 0, summary: { verified: 0, auto_queue: 0, rep_review: 0 } };
@@ -833,6 +834,34 @@ export async function triggerEnrichment(): Promise<{ queued: number } | null> {
     const res = await apiRequest(`${BASE}/api/v1/leads/enrich`, { method: "POST" });
     if (!res.ok) return null;
     return res.json() as Promise<{ queued: number }>;
+  } catch {
+    return null;
+  }
+}
+
+export async function scrapeLeads(params: {
+  source_ids?: string[];
+  urls?: string[];
+  scraper_type?: "cheerio" | "crawl4ai";
+}): Promise<{ queued: number } | null> {
+  try {
+    const res = await apiRequest(`${BASE}/api/v1/leads/scrape`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) return null;
+    return res.json() as Promise<{ queued: number }>;
+  } catch {
+    return null;
+  }
+}
+
+export async function scrapeRegistrySource(sourceId: string): Promise<{ status: string; source_name: string } | null> {
+  try {
+    const res = await apiRequest(`${BASE}/api/v1/admin/registry/sources/${sourceId}/scrape`, { method: "POST" });
+    if (!res.ok) return null;
+    return res.json() as Promise<{ status: string; source_name: string }>;
   } catch {
     return null;
   }

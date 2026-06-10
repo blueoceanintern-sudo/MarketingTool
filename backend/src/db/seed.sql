@@ -748,8 +748,8 @@ WITH
   ),
   cid AS (SELECT id FROM co UNION ALL SELECT id FROM companies WHERE name = 'Melbourne Private Hospital' LIMIT 1),
   le AS (
-    INSERT INTO leads (company_id, first_name, last_name, email, role, is_verified, status, email_status, routing)
-    SELECT (SELECT id FROM cid LIMIT 1), 'Rachel', 'Chen', 'rachel.chen@melbprivate.com.au', 'Head of Patient Services', true, 'new', 'verified', 'auto_queue'
+    INSERT INTO leads (company_id, name, email, role, is_verified, status, email_status, routing)
+    SELECT (SELECT id FROM cid LIMIT 1), 'Rachel Chen', 'rachel.chen@melbprivate.com.au', 'Head of Patient Services', true, 'new', 'verified', 'auto_queue'
     WHERE NOT EXISTS (SELECT 1 FROM leads WHERE email = 'rachel.chen@melbprivate.com.au')
     RETURNING id
   ),
@@ -768,8 +768,8 @@ WITH
   ),
   cid AS (SELECT id FROM co UNION ALL SELECT id FROM companies WHERE name = 'Stackline Technologies' LIMIT 1),
   le AS (
-    INSERT INTO leads (company_id, first_name, last_name, email, role, is_verified, status, email_status, routing)
-    SELECT (SELECT id FROM cid LIMIT 1), 'Marcus', 'Johnson', 'marcus.johnson@stackline.io', 'VP Engineering', true, 'new', 'verified', 'auto_queue'
+    INSERT INTO leads (company_id, name, email, role, is_verified, status, email_status, routing)
+    SELECT (SELECT id FROM cid LIMIT 1), 'Marcus Johnson', 'marcus.johnson@stackline.io', 'VP Engineering', true, 'new', 'verified', 'auto_queue'
     WHERE NOT EXISTS (SELECT 1 FROM leads WHERE email = 'marcus.johnson@stackline.io')
     RETURNING id
   ),
@@ -788,8 +788,8 @@ WITH
   ),
   cid AS (SELECT id FROM co UNION ALL SELECT id FROM companies WHERE name = 'Marina Bay Suites' LIMIT 1),
   le AS (
-    INSERT INTO leads (company_id, first_name, last_name, email, role, is_verified, status, email_status, routing)
-    SELECT (SELECT id FROM cid LIMIT 1), 'Priya', 'Nair', 'priya.nair@marinabaysuites.com.sg', 'Director of Guest Experience', true, 'new', 'verified', 'auto_queue'
+    INSERT INTO leads (company_id, name, email, role, is_verified, status, email_status, routing)
+    SELECT (SELECT id FROM cid LIMIT 1), 'Priya Nair', 'priya.nair@marinabaysuites.com.sg', 'Director of Guest Experience', true, 'new', 'verified', 'auto_queue'
     WHERE NOT EXISTS (SELECT 1 FROM leads WHERE email = 'priya.nair@marinabaysuites.com.sg')
     RETURNING id
   ),

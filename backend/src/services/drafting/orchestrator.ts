@@ -51,8 +51,7 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
   const eligible = await db
     .select({
       id: leads.id,
-      firstName: leads.firstName,
-      lastName: leads.lastName,
+      name: leads.name,
       role: leads.role,
       companyName: companies.name,
       industry: companies.industry,
@@ -68,13 +67,13 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
     return { generated: 0, skipped_no_eligible: true, errors: [] };
   }
 
-  const incomplete = eligible.filter((l) => !l.role || (!l.firstName && !l.lastName));
+  const incomplete = eligible.filter((l) => !l.role || !l.name);
   if (incomplete.length > 0) {
     console.warn(
       `[drafting] skipping ${incomplete.length} lead(s) with missing role or name: ${incomplete.map((l) => l.id).join(", ")}`,
     );
   }
-  const complete = eligible.filter((l) => l.role && (l.firstName || l.lastName));
+  const complete = eligible.filter((l) => l.role && l.name);
 
   if (complete.length === 0) {
     return { generated: 0, skipped_no_eligible: true, errors: [] };
@@ -85,8 +84,7 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
     leadId: lead.id,
     campaignId,
     lead: {
-      firstName: lead.firstName ?? undefined,
-      lastName: lead.lastName ?? undefined,
+      name: lead.name ?? undefined,
       role: lead.role ?? undefined,
       companyName: lead.companyName,
       industry: lead.industry ?? undefined,
