@@ -16,15 +16,14 @@ function formatDraft(row: {
   scoreBreakdown: { painPointFit: number; campaignAlignment: number; personalisationQuality: number; lengthCompliance: number } | null;
   status: string;
   createdAt: Date;
-  leadFirstName: string | null;
-  leadLastName: string | null;
+  leadName: string | null;
   leadRole: string | null;
   campaignName: string;
 }) {
   return {
     id: row.id,
     lead_id: row.leadId,
-    lead_name: [row.leadFirstName, row.leadLastName].filter(Boolean).join(" "),
+    lead_name: row.leadName ?? "",
     lead_role: row.leadRole ?? "",
     campaign_id: row.campaignId,
     campaign_name: row.campaignName,
@@ -51,8 +50,7 @@ async function getDraftWithJoins(draftId: string) {
       scoreBreakdown: emailDrafts.scoreBreakdown,
       status: emailDrafts.status,
       createdAt: emailDrafts.createdAt,
-      leadFirstName: leads.firstName,
-      leadLastName: leads.lastName,
+      leadName: leads.name,
       leadRole: leads.role,
       campaignName: campaigns.name,
     })
@@ -101,8 +99,7 @@ draftsRouter.get("/", async (c) => {
       scoreBreakdown: emailDrafts.scoreBreakdown,
       status: emailDrafts.status,
       createdAt: emailDrafts.createdAt,
-      leadFirstName: leads.firstName,
-      leadLastName: leads.lastName,
+      leadName: leads.name,
       leadRole: leads.role,
       campaignName: campaigns.name,
     })
@@ -136,8 +133,7 @@ draftsRouter.get("/queue", async (c) => {
       scoreBreakdown: emailDrafts.scoreBreakdown,
       status: emailDrafts.status,
       createdAt: emailDrafts.createdAt,
-      leadFirstName: leads.firstName,
-      leadLastName: leads.lastName,
+      leadName: leads.name,
       leadRole: leads.role,
       campaignName: campaigns.name,
     })

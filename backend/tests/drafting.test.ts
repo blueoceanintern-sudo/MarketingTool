@@ -57,7 +57,7 @@ function succeededItem(customId: string, json: object) {
 const baseRequest = {
   leadId: "lead_a",
   campaignId: "camp_x",
-  lead: { firstName: "Jane", role: "CTO", companyName: "Acme", industry: "SaaS" },
+  lead: { name: "Jane", role: "CTO", companyName: "Acme", industry: "SaaS" },
 };
 
 describe("drafting — generateDraftsBatch", () => {

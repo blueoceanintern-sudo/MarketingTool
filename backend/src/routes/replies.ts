@@ -193,8 +193,7 @@ function formatReply(row: {
   receivedAt: Date;
   resolvedAt: Date | null;
   leadId: string;
-  leadFirstName: string | null;
-  leadLastName: string | null;
+  leadName: string | null;
   leadEmail: string;
   companyName: string;
   campaignId: string;
@@ -203,7 +202,7 @@ function formatReply(row: {
   return {
     id:            row.id,
     lead_id:       row.leadId,
-    lead_name:     [row.leadFirstName, row.leadLastName].filter(Boolean).join(" "),
+    lead_name:     row.leadName ?? "",
     lead_email:    row.leadEmail,
     lead_company:  row.companyName,
     campaign_id:   row.campaignId,
@@ -227,8 +226,7 @@ const repliesJoinQuery = () =>
       receivedAt:    replies.receivedAt,
       resolvedAt:    replies.resolvedAt,
       leadId:        leads.id,
-      leadFirstName: leads.firstName,
-      leadLastName:  leads.lastName,
+      leadName:      leads.name,
       leadEmail:     leads.email,
       companyName:   companies.name,
       campaignId:    campaigns.id,

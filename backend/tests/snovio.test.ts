@@ -33,8 +33,7 @@ function input(seed: Partial<EnrichmentInput["seed"]>): EnrichmentInput {
     campaignId: null,
     market: "SG",
     seed: {
-      firstName: null,
-      lastName: null,
+      name: null,
       email: null,
       role: null,
       companyName: "Acme",

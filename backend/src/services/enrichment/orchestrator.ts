@@ -56,8 +56,8 @@ export async function enrichLead(leadId: string): Promise<{ record: EnrichmentRe
   const contact: Partial<EnrichmentContact> = {
     email: input.seed.email ?? undefined,
     email_status: input.seed.email ? "pattern_guessed" : undefined,
-    full_name: [input.seed.firstName, input.seed.lastName].filter(Boolean).join(" ") || undefined,
-    first_name: input.seed.firstName ?? undefined,
+    full_name: input.seed.name ?? undefined,
+    first_name: input.seed.name?.split(" ")[0] ?? undefined,
     role: input.seed.role ?? undefined,
   };
 
@@ -117,8 +117,7 @@ async function buildInput(leadId: string): Promise<EnrichmentInput> {
   const [row] = await db
     .select({
       leadId: leads.id,
-      firstName: leads.firstName,
-      lastName: leads.lastName,
+      name: leads.name,
       email: leads.email,
       role: leads.role,
       companyName: companies.name,
@@ -145,8 +144,7 @@ async function buildInput(leadId: string): Promise<EnrichmentInput> {
     campaignId: null,
     market,
     seed: {
-      firstName: row.firstName ?? deriveRoleEmailName(row.email),
-      lastName: row.lastName,
+      name: row.name ?? deriveRoleEmailName(row.email),
       email: row.email,
       role: row.role,
       companyName: row.companyName,
@@ -283,12 +281,9 @@ function computeRouting(
 }
 
 async function persist(record: EnrichmentRecord, campaignId: string | null): Promise<boolean> {
-  const { first_name, full_name, role, email } = record.contact;
+  const { full_name, role, email } = record.contact;
 
-  // Full name (or first_name when full_name is absent) goes into firstName.
-  // lastName is always cleared — the schema splits first/last but we store the whole name in firstName.
-  const nameForDb = full_name ?? first_name ?? null;
-  const fullyEnriched = Boolean(nameForDb && role && email);
+  const fullyEnriched = Boolean(full_name && role && email);
 
   await db.transaction(async (tx) => {
     await tx.insert(enrichmentRecords).values({
@@ -307,8 +302,7 @@ async function persist(record: EnrichmentRecord, campaignId: string | null): Pro
     await tx
       .update(leads)
       .set({
-        ...(nameForDb ? { firstName: nameForDb } : {}),
-        lastName: "",
+        ...(full_name ? { name: full_name } : {}),
         ...(role ? { role } : {}),
         ...(email ? { email } : {}),
         emailStatus: record.contact.email_status,

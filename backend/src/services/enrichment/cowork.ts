@@ -208,9 +208,9 @@ function buildRecord(input: EnrichmentInput): object {
       region: market,
     },
     contact: {
-      full_name: [seed.firstName, seed.lastName].filter(Boolean).join(" ") || null,
-      first_name: seed.firstName ?? null,
-      role: seed.role ?? "-",
+      full_name: seed.name ?? null,
+      first_name: seed.name?.split(" ")[0] ?? null,
+      role: seed.role ?? null,
       email: seed.email ?? null,
       email_status: seed.email ? "pattern_guessed" : null,
     },
