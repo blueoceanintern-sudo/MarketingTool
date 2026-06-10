@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import {
   triggerEnrichment,
   scrapeLeads,
+  createRegistrySource,
   type EmailStatus,
   type EnrichmentRouting,
   type EnrichmentSource,
@@ -83,8 +84,10 @@ export default function LeadsClient({
     ...leadsOptions(params),
     placeholderData: keepPreviousData,
   });
-  const { data: allCampaigns = [] } = useQuery(campaignsOptions());
-  const { data: allSources = [] } = useQuery(registrySourcesOptions());
+  const { data: rawCampaigns = [] } = useQuery(campaignsOptions());
+  const allCampaigns = useMemo(() => [...rawCampaigns].sort((a, b) => a.name.localeCompare(b.name)), [rawCampaigns]);
+  const { data: sourcesResult } = useQuery(registrySourcesOptions({ limit: 200 }));
+  const allSources = sourcesResult?.data ?? [];
 
   const data = leadsResult?.data ?? [];
   const total = leadsResult?.total ?? 0;
