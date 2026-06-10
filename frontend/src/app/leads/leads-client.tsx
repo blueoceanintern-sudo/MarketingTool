@@ -86,7 +86,7 @@ export default function LeadsClient({
   });
   const { data: rawCampaigns = [] } = useQuery(campaignsOptions());
   const allCampaigns = useMemo(() => [...rawCampaigns].sort((a, b) => a.name.localeCompare(b.name)), [rawCampaigns]);
-  const { data: sourcesResult } = useQuery(registrySourcesOptions({ limit: 200 }));
+  const { data: sourcesResult } = useQuery(registrySourcesOptions({ page: 1, limit: 200 }));
   const allSources = sourcesResult?.data ?? [];
 
   const data = leadsResult?.data ?? [];
