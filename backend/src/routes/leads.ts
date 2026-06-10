@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { db } from "../db";
-import { leads, companies, campaigns, campaignLeads, campaignLeadExclusions, suppressionList, enrichmentRecords, emailDrafts, emailEvents, followUps, sourceRegistry } from "../db/schema";
+import { leads, companies, campaigns, campaignLeads, campaignLeadExclusions, suppressionList, enrichmentRecords, emailDrafts, emailEvents, followUps, sourceRegistry, normalizeVertical, normalizeGeo } from "../db/schema";
 import { scrapeWebsite } from "../services/scrapers/cheerioScraper";
 import { scrapeWithFallback } from "../services/scrapers/crawl4aiScraper";
 import { count, sql, eq, desc, and, or, ilike, inArray, isNull, isNotNull } from "drizzle-orm";
@@ -568,27 +568,32 @@ allLeadsRouter.post("/enrich", async (c) => {
 // Returns immediately; scraping + enrichment runs in the background.
 allLeadsRouter.post("/scrape", async (c) => {
   const body = await c.req.json<{
-    source_ids?: string[];
+    combos?: { vertical?: string; geo?: string }[];
     urls?: string[];
     scraper_type?: string;
   }>();
 
-  const sourceIds = body.source_ids ?? [];
+  const combos = (body.combos ?? []).filter((x) => x.vertical && x.geo);
   const customUrls = body.urls ?? [];
   const scraperType = (body.scraper_type ?? "cheerio") as "cheerio" | "crawl4ai";
 
-  if (sourceIds.length === 0 && customUrls.length === 0) {
-    return c.json({ error: "Provide at least one source_id or url" }, 400);
+  if (combos.length === 0 && customUrls.length === 0) {
+    return c.json({ error: "Provide at least one vertical/geo combo or url" }, 400);
   }
 
   type ScrapeSource = { url: string; scraperType: "cheerio" | "crawl4ai"; name: string };
   const sources: ScrapeSource[] = [];
 
-  if (sourceIds.length > 0) {
+  if (combos.length > 0) {
+    // Resolve each (vertical, geo) to its active registry sources server-side,
+    // so the client never needs the full source list.
+    const comboConds = combos.map((x) =>
+      and(eq(sourceRegistry.vertical, normalizeVertical(x.vertical!)), eq(sourceRegistry.geo, normalizeGeo(x.geo!))),
+    );
     const registrySources = await db
-      .select({ id: sourceRegistry.id, url: sourceRegistry.url, scraperType: sourceRegistry.scraperType, name: sourceRegistry.name })
+      .select({ url: sourceRegistry.url, scraperType: sourceRegistry.scraperType, name: sourceRegistry.name })
       .from(sourceRegistry)
-      .where(inArray(sourceRegistry.id, sourceIds));
+      .where(and(eq(sourceRegistry.active, true), or(...comboConds)));
     for (const s of registrySources) {
       sources.push({ url: s.url, scraperType: s.scraperType as "cheerio" | "crawl4ai", name: s.name });
     }

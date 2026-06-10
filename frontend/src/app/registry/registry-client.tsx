@@ -593,7 +593,7 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
                   <td className="px-6 py-3 text-[14px] font-medium">{s.name}</td>
                   <td className="px-4 py-3 text-[13px]">{s.vertical}</td>
                   <td className="px-4 py-3 text-center text-[12px]">{s.geo}</td>
-                  <td className="px-4 py-3 text-[12px] font-mono text-ocean-light truncate max-w-[300px]">
+                  <td className="px-4 py-3 text-[12px] font-mono text-ocean-light truncate max-w-75">
                     <a href={s.url} target="_blank" rel="noreferrer" className="hover:underline">{s.url}</a>
                   </td>
                   <td className="px-4 py-3 text-[12px] text-grey-500">{scraperTypeLabel[s.scraper_type]}</td>
