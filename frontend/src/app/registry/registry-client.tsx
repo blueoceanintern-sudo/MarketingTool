@@ -216,21 +216,8 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
     [facets.geos, directoryConfigs],
   );
 
-<<<<<<< HEAD
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return sources.filter((s) => {
-      if (geoFilter !== "all" && s.geo !== geoFilter) return false;
-      if (verticalFilter !== "all" && s.vertical !== verticalFilter) return false;
-      if (activeOnly && !s.active) return false;
-      if (q && !s.name.toLowerCase().includes(q) && !s.url.toLowerCase().includes(q) && !s.vertical.toLowerCase().includes(q)) return false;
-      return true;
-    });
-  }, [sources, geoFilter, verticalFilter, activeOnly, search]);
-=======
   const sourcesTotalPages = Math.max(1, sourcesResult.total_pages);
   const sourcesPageClamped = Math.min(sourcesPage, sourcesTotalPages);
->>>>>>> main
 
   function handleCreate(e: React.FormEvent) {
     e.preventDefault();
