@@ -42,9 +42,9 @@ export interface Paginated<T> {
 }
 
 export interface LeadsSummary {
-  verified: number;
   auto_queue: number;
   rep_review: number;
+  pending: number;
 }
 
 export type PaginatedLeads = Paginated<Lead> & { summary: LeadsSummary };
@@ -89,6 +89,7 @@ export interface Lead {
   scraper_used: ScraperType | null;
   status: LeadStatus;
   company_name: string;
+  company_source: string | null;
   campaigns: { id: string; name: string }[];
   created_at: string;
 }
@@ -391,7 +392,7 @@ export async function getLeadsPaginated(params?: {
   if (params?.search) q.set("search", params.search);
   const qs = q.toString();
   const result = await apiFetch<PaginatedLeads>(`/leads${qs ? `?${qs}` : ""}`);
-  return result ?? { data: [], total: 0, page: 1, limit: 50, total_pages: 0, summary: { verified: 0, auto_queue: 0, rep_review: 0 } };
+  return result ?? { data: [], total: 0, page: 1, limit: 50, total_pages: 0, summary: { auto_queue: 0, rep_review: 0, pending: 0 } };
 }
 
 export async function getCampaignLeadsPaginated(

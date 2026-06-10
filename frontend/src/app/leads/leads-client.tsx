@@ -24,13 +24,13 @@ const statusConfig: Record<LeadStatus, { label: string; className: string }> = {
 
 const emailStatusConfig: Record<EmailStatus, { label: string; className: string }> = {
   verified:        { label: "Verified",   className: "bg-success-bg text-success" },
-  pattern_guessed: { label: "Guessed",    className: "bg-warning-bg text-warning" },
+  pattern_guessed: { label: "Pattern Guessed",    className: "bg-warning-bg text-warning" },
   not_found:       { label: "Not found",  className: "bg-neutral-bg text-neutral" },
 };
 
 const routingConfig: Record<EnrichmentRouting, { label: string; className: string }> = {
-  auto_queue: { label: "Auto queue", className: "bg-success-bg text-success" },
-  rep_review: { label: "Rep review", className: "bg-warning-bg text-warning" },
+  auto_queue: { label: "Auto Queue", className: "bg-success-bg text-success" },
+  rep_review: { label: "Rep Review", className: "bg-warning-bg text-warning" },
 };
 
 const sourceLabel: Record<EnrichmentSource, string> = {
@@ -86,7 +86,7 @@ export default function LeadsClient({
   const data = leadsResult?.data ?? [];
   const total = leadsResult?.total ?? 0;
   const totalPages = leadsResult?.total_pages ?? 0;
-  const summary = leadsResult?.summary ?? { verified: 0, auto_queue: 0, rep_review: 0 };
+  const summary = leadsResult?.summary ?? { auto_queue: 0, rep_review: 0, pending: 0 };
 
   function showToast(message: string) {
     setToast(message);
@@ -135,7 +135,7 @@ export default function LeadsClient({
   const start = total === 0 ? 0 : (page - 1) * 50 + 1;
   const end = Math.min(page * 50, total);
 
-  if (total === 0 && !statusFilter && !emailStatusFilter && !routingFilter && !campaignIdFilter) {
+  if (total === 0 && !statusFilter && !emailStatusFilter && !routingFilter && !campaignIdFilter && !searchFilter) {
     return (
       <div className="p-4 sm:p-6 lg:p-10 max-w-400 mx-auto">
         <h1 className="text-[20px] font-bold text-primary">All Leads</h1>
@@ -195,16 +195,16 @@ export default function LeadsClient({
           <h3 className="text-[28px] font-bold font-mono mt-2">{total.toLocaleString()}</h3>
         </div>
         <div className="bg-white p-5 rounded-lg border border-grey-100">
-          <p className="text-[13px] text-grey-500">Verified email</p>
-          <h3 className="text-[28px] font-bold text-success font-mono mt-2">{summary.verified.toLocaleString()}</h3>
-        </div>
-        <div className="bg-white p-5 rounded-lg border border-grey-100">
-          <p className="text-[13px] text-grey-500">Auto queue</p>
+          <p className="text-[13px] text-grey-500">Auto Queue</p>
           <h3 className="text-[28px] font-bold text-success font-mono mt-2">{summary.auto_queue.toLocaleString()}</h3>
         </div>
         <div className="bg-white p-5 rounded-lg border border-grey-100">
-          <p className="text-[13px] text-grey-500">Rep review</p>
+          <p className="text-[13px] text-grey-500">Rep Review</p>
           <h3 className="text-[28px] font-bold text-warning font-mono mt-2">{summary.rep_review.toLocaleString()}</h3>
+        </div>
+        <div className="bg-white p-5 rounded-lg border border-grey-100">
+          <p className="text-[13px] text-grey-500">Pending Enrichment</p>
+          <h3 className="text-[28px] font-bold text-neutral font-mono mt-2">{summary.pending.toLocaleString()}</h3>
         </div>
       </div>
 
@@ -250,6 +250,7 @@ export default function LeadsClient({
               {(Object.keys(routingConfig) as EnrichmentRouting[]).map((r) => (
                 <option key={r} value={r}>{routingConfig[r].label}</option>
               ))}
+              <option value="pending">Pending Enrichment</option>
             </select>
           </div>
           <p className="text-[13px] text-grey-500">
@@ -258,7 +259,23 @@ export default function LeadsClient({
         </div>
 
         {data.length === 0 ? (
-          <p className="px-6 py-12 text-center text-grey-400">No leads match these filters.</p>
+          <div className="px-6 py-12 text-center text-grey-400 text-[13px]">
+            {searchFilter ? (
+              <>
+                No leads match <span className="font-medium text-grey-500">&ldquo;{searchFilter}&rdquo;</span>
+                {(statusFilter || emailStatusFilter || routingFilter || campaignIdFilter) ? " with the current filters." : "."}
+                <button
+                  type="button"
+                  onClick={() => { setSearchInput(""); navigate({ search: "", page: 1 }); }}
+                  className="ml-2 text-primary hover:underline"
+                >
+                  Clear search
+                </button>
+              </>
+            ) : (
+              "No leads match these filters."
+            )}
+          </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full border-collapse">
@@ -268,12 +285,10 @@ export default function LeadsClient({
                   <th className="px-4 py-4 text-[14px] font-semibold">Company</th>
                   <th className="px-4 py-4 text-[14px] font-semibold">Email</th>
                   <th className="px-4 py-4 text-[14px] font-semibold">Routing</th>
-                  <th className="px-4 py-4 text-[14px] font-semibold">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-grey-100">
                 {data.map((lead) => {
-                  const badge = statusConfig[lead.status];
                   const routeBadge = lead.routing ? routingConfig[lead.routing] : null;
                   return (
                     <tr
@@ -291,12 +306,14 @@ export default function LeadsClient({
                           <span className={`px-2 py-0.5 text-xs font-bold rounded-full ${routeBadge.className}`}>
                             {routeBadge.label}
                           </span>
-                        ) : <span className="text-grey-400 text-xs">—</span>}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={`px-2 py-0.5 text-xs font-bold rounded-full ${badge.className}`}>
-                          {badge.label}
-                        </span>
+                        ) : (
+                          <span
+                            className="px-2 py-0.5 text-xs font-bold rounded-full bg-neutral-bg text-neutral"
+                            title="Awaiting enrichment — routing is assigned once the lead is enriched"
+                          >
+                            Pending
+                          </span>
+                        )}
                       </td>
                     </tr>
                   );
@@ -526,7 +543,14 @@ function EnrichmentDrawer({ lead, onClose }: { lead: Lead; onClose: () => void }
         <div className="px-6 py-5 border-b border-grey-100 flex justify-between items-start">
           <div>
             <h2 className="text-[16px] font-bold text-primary">{lead.name}</h2>
-            <p className="text-[12px] text-grey-500 font-mono">{lead.email}</p>
+            <div className="flex items-center gap-2 mt-0.5">
+              <p className="text-[12px] text-grey-500 font-mono">{lead.email}</p>
+              {lead.email_status && (
+                <span className={`px-1.5 py-0.5 text-[10px] font-bold rounded-full ${emailStatusConfig[lead.email_status].className}`}>
+                  {emailStatusConfig[lead.email_status].label}
+                </span>
+              )}
+            </div>
           </div>
           <button
             onClick={onClose}
@@ -538,6 +562,31 @@ function EnrichmentDrawer({ lead, onClose }: { lead: Lead; onClose: () => void }
         </div>
 
         <div className="px-6 py-5 space-y-5">
+          <Section title="Overview">
+            <Field label="Company" value={lead.company_name || "—"} />
+            <Field label="Role" value={lead.role || "—"} />
+            <div className="flex justify-between text-[13px] gap-4">
+              <span className="text-grey-500 whitespace-nowrap">Status</span>
+              <span className={`px-2 py-0.5 text-[11px] font-bold rounded-full ${statusConfig[lead.status].className}`}>
+                {statusConfig[lead.status].label}
+              </span>
+            </div>
+            {lead.company_source && (
+              <div className="flex justify-between text-[13px] gap-4">
+                <span className="text-grey-500 whitespace-nowrap">Scraped from</span>
+                <a
+                  href={lead.company_source}
+                  target="_blank"
+                  rel="noreferrer"
+                  title={lead.company_source}
+                  className="font-mono text-right text-ocean-light hover:underline truncate max-w-[60%]"
+                >
+                  {lead.company_source}
+                </a>
+              </div>
+            )}
+          </Section>
+
           <Section title="Campaigns">
             {lead.campaigns.length === 0 ? (
               <p className="text-[13px] text-grey-400">Not assigned to any campaign.</p>
