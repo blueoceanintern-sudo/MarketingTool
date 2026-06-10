@@ -5,19 +5,33 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: blueocean
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres-init.sql:/docker-entrypoint-initdb.d/01_pgvector.sql:ro
 
   crawl4ai:
     image: unclecode/crawl4ai:latest
-    ports:
-      - "11235:11235"
     environment:
       - CRAWL4AI_API_TOKEN=
     restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://backend:3001
+
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "3001:3001"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/blueocean
+    depends_on:
+      - postgres
 
 volumes:
   postgres_data:
