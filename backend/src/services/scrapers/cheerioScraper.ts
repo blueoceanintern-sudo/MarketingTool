@@ -15,7 +15,7 @@ const EMAIL_REGEX = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g;
 const STAFF_PAGE_PATTERNS = [
   /\/staff/i, /\/team/i, /\/people/i, /\/leadership/i, /\/faculty/i,
   /\/our-people/i, /\/who-we-are/i, /\/management/i, /\/directory/i,
-  /\/meet-the-team/i, /\/about\/people/i, /\/about\/team/i,
+  /\/meet-the-team/i,
 ];
 
 const ROLE_KEYWORDS = [

@@ -1,7 +1,8 @@
 import cron from "node-cron";
 import { db } from "../db";
-import { followUps, leads, emailEvents, emailDrafts, riskFlags, scrapeJobs, campaigns, replies, companies, promptTemplates } from "../db/schema";
-import { eq, and, isNull, lte, isNotNull, lt, or, inArray, notInArray, asc, gte } from "drizzle-orm";
+import { followUps, leads, emailEvents, emailDrafts, riskFlags, scrapeJobs, campaigns, replies, companies, promptTemplates, campaignLeads } from "../db/schema";
+import { eq, and, isNull, lte, isNotNull, lt, or, inArray, notInArray, asc, gte, notExists } from "drizzle-orm";
+import { assignLeadToCampaigns } from "../services/campaign-assigner";
 import { sendDraft, sendFollowUpEmail, getTotalSent, getWarmupWeek, getDailyCap } from "../services/sender";
 import { runScrapeJob } from "../services/scraping/runScrapeJob";
 import { enrichLead } from "../services/enrichment/orchestrator";
@@ -602,6 +603,54 @@ cron.schedule("0 6 * * 1", async () => {
       }
     }
   }
+});
+
+// ---------------------------------------------------------------------------
+// campaign-assigner  — 03:30 daily (after enrichment at 03:00)
+//
+// Picks enriched leads that have no campaign membership yet and runs them
+// through the staged geo+vertical → role → size pipeline. Writes to
+// campaign_leads so the drafting runner can pick them up at 04:30.
+// ---------------------------------------------------------------------------
+cron.schedule("30 3 * * *", async () => {
+  console.log("[campaign-assigner] running");
+
+  const cap = Number(process.env.ASSIGNER_DAILY_RUN_CAP ?? 500);
+
+  const candidates = await db
+    .select({ id: leads.id })
+    .from(leads)
+    .where(
+      and(
+        isNotNull(leads.enrichedAt),
+        notExists(
+          db
+            .select({ leadId: campaignLeads.leadId })
+            .from(campaignLeads)
+            .where(eq(campaignLeads.leadId, leads.id)),
+        ),
+      ),
+    )
+    .limit(cap);
+
+  const counts = { assigned: 0, fallback: 0, skipped: 0, errors: 0 };
+
+  for (const { id } of candidates) {
+    try {
+      const result = await assignLeadToCampaigns(id);
+      if (result.skipped) {
+        counts.skipped++;
+      } else {
+        counts.assigned++;
+        if (result.usedFallback) counts.fallback++;
+      }
+    } catch (err) {
+      counts.errors++;
+      console.error(`[campaign-assigner] lead ${id} failed:`, err);
+    }
+  }
+
+  console.log(`[campaign-assigner] done: ${JSON.stringify(counts)}`);
 });
 
 console.log("[workers] all cron jobs registered");
