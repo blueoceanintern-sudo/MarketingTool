@@ -24,6 +24,7 @@ interface LeadRow {
   scraperUsed: string | null;
   createdAt: Date;
   companyName: string;
+  companySource: string | null;
 }
 
 function formatLead(row: LeadRow, campaignsForLead: { id: string; name: string }[]) {
@@ -40,6 +41,7 @@ function formatLead(row: LeadRow, campaignsForLead: { id: string; name: string }
     scraper_used: row.scraperUsed,
     status: row.status,
     company_name: row.companyName,
+    company_source: row.companySource,
     campaigns: campaignsForLead,
     created_at: row.createdAt.toISOString(),
   };
@@ -79,13 +81,16 @@ const LEAD_SELECT = {
   scraperUsed: leads.scraperUsed,
   createdAt: leads.createdAt,
   companyName: companies.name,
+  companySource: companies.source,
 } as const;
 
 const SUMMARY_SELECT = {
   total: count(),
-  verified: sql<number>`cast(sum(case when ${leads.emailStatus} = 'verified' then 1 else 0 end) as int)`,
+  // Every lead is in exactly one routing bucket; auto_queue + rep_review +
+  // pending (routing IS NULL, not yet enriched) reconciles to the total.
   auto_queue: sql<number>`cast(sum(case when ${leads.routing} = 'auto_queue' then 1 else 0 end) as int)`,
   rep_review: sql<number>`cast(sum(case when ${leads.routing} = 'rep_review' then 1 else 0 end) as int)`,
+  pending: sql<number>`cast(sum(case when ${leads.routing} is null then 1 else 0 end) as int)`,
 } as const;
 
 // Mounted at /api/v1/leads — all leads, no campaign filter
@@ -113,12 +118,16 @@ allLeadsRouter.get("/", async (c) => {
   const filterConds = and(
     statusParam ? eq(leads.status, statusParam as "new" | "contacted" | "replied" | "converted" | "suppressed") : undefined,
     emailStatusParam ? eq(leads.emailStatus, emailStatusParam as "verified" | "pattern_guessed" | "not_found") : undefined,
-    routingParam ? eq(leads.routing, routingParam as "auto_queue" | "rep_review") : undefined,
+    routingParam
+      ? routingParam === "pending"
+        ? isNull(leads.routing)
+        : eq(leads.routing, routingParam as "auto_queue" | "rep_review")
+      : undefined,
     searchCond,
   );
 
   let rows: LeadRow[];
-  let summaryRow: { total: number; verified: number; auto_queue: number; rep_review: number } | undefined;
+  let summaryRow: { total: number; auto_queue: number; rep_review: number; pending: number } | undefined;
 
   if (campaignIdParam) {
     const where = and(eq(campaignLeads.campaignId, campaignIdParam), filterConds);
@@ -158,9 +167,9 @@ allLeadsRouter.get("/", async (c) => {
 
   const total = Number(summaryRow?.total ?? 0);
   const summary = {
-    verified: Number(summaryRow?.verified ?? 0),
     auto_queue: Number(summaryRow?.auto_queue ?? 0),
     rep_review: Number(summaryRow?.rep_review ?? 0),
+    pending: Number(summaryRow?.pending ?? 0),
   };
 
   const campaignMap = await attachCampaignsToLeads(rows.map((r) => r.id));
