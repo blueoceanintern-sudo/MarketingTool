@@ -1,4 +1,4 @@
-import { and, eq, notInArray } from "drizzle-orm";
+import { and, eq, inArray, notInArray } from "drizzle-orm";
 import { db } from "../../db";
 import { campaigns, campaignLeads, companies, emailDrafts, leads, suppressionList } from "../../db/schema";
 import { generateDraftsBatch, type CampaignContext } from "./index";
@@ -33,7 +33,10 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
   // routed it to auto_queue, (3) not suppressed for this campaign, (4) no
   // existing draft yet for this (lead, campaign) pair.
   const [draftedRows, suppressedRows] = await Promise.all([
-    db.select({ leadId: emailDrafts.leadId }).from(emailDrafts).where(eq(emailDrafts.campaignId, campaignId)),
+    db.select({ leadId: emailDrafts.leadId }).from(emailDrafts).where(and(
+      eq(emailDrafts.campaignId, campaignId),
+      inArray(emailDrafts.status, ["pending_review", "approved", "scheduled", "sent"]),
+    )),
     db.select({ email: suppressionList.email }).from(suppressionList).where(eq(suppressionList.campaignId, campaignId)),
   ]);
   const alreadyDrafted = draftedRows.map((r) => r.leadId);
@@ -41,7 +44,6 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
 
   const conditions = [
     eq(campaignLeads.campaignId, campaignId),
-    eq(leads.routing, "auto_queue"),
   ];
   if (alreadyDrafted.length > 0) conditions.push(notInArray(leads.id, alreadyDrafted));
   if (suppressedEmails.length > 0) conditions.push(notInArray(leads.email, suppressedEmails));
@@ -49,8 +51,7 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
   const eligible = await db
     .select({
       id: leads.id,
-      firstName: leads.firstName,
-      lastName: leads.lastName,
+      name: leads.name,
       role: leads.role,
       companyName: companies.name,
       industry: companies.industry,
@@ -66,13 +67,13 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
     return { generated: 0, skipped_no_eligible: true, errors: [] };
   }
 
-  const incomplete = eligible.filter((l) => !l.role || (!l.firstName && !l.lastName));
+  const incomplete = eligible.filter((l) => !l.role || !l.name);
   if (incomplete.length > 0) {
     console.warn(
       `[drafting] skipping ${incomplete.length} lead(s) with missing role or name: ${incomplete.map((l) => l.id).join(", ")}`,
     );
   }
-  const complete = eligible.filter((l) => l.role && (l.firstName || l.lastName));
+  const complete = eligible.filter((l) => l.role && l.name);
 
   if (complete.length === 0) {
     return { generated: 0, skipped_no_eligible: true, errors: [] };
@@ -83,8 +84,7 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
     leadId: lead.id,
     campaignId,
     lead: {
-      firstName: lead.firstName ?? undefined,
-      lastName: lead.lastName ?? undefined,
+      name: lead.name ?? undefined,
       role: lead.role ?? undefined,
       companyName: lead.companyName,
       industry: lead.industry ?? undefined,
@@ -97,15 +97,30 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
   const results = await generateDraftsBatch(requests);
 
   for (const draft of results) {
-    await db.insert(emailDrafts).values({
-      leadId: draft.leadId,
-      campaignId: draft.campaignId,
-      templateId: draft.templateId,
-      subject: draft.subject,
-      body: draft.body,
-      confidenceScore: draft.confidenceScore,
-      status: "pending_review",
-    });
+    await db.insert(emailDrafts)
+      .values({
+        leadId: draft.leadId,
+        campaignId: draft.campaignId,
+        templateId: draft.templateId,
+        subject: draft.subject,
+        body: draft.body,
+        confidenceScore: draft.confidenceScore,
+        scoreBreakdown: draft.scoreBreakdown,
+        status: "pending_review",
+      })
+      .onConflictDoUpdate({
+        target: [emailDrafts.leadId, emailDrafts.campaignId],
+        set: {
+          templateId: draft.templateId,
+          subject: draft.subject,
+          body: draft.body,
+          confidenceScore: draft.confidenceScore,
+          scoreBreakdown: draft.scoreBreakdown,
+          status: "pending_review",
+          approvedBy: null,
+          approvedAt: null,
+        },
+      });
   }
 
   const errors: string[] = [];

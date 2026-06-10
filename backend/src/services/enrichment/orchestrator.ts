@@ -27,6 +27,18 @@ import type {
 // PRD §5.4 source priority: registry → cowork (Claude in Chrome) → snovio.
 const PROVIDERS: EnrichmentProvider[] = [registryProvider, coworkProvider, snovioProvider];
 
+const ROLE_LOCAL_PARTS = new Set([
+  "admissions", "principal", "rector", "registrar", "dean", "provost",
+  "director", "headmaster", "bursar",
+]);
+
+function deriveRoleEmailName(email: string | null): string | null {
+  if (!email) return null;
+  const base = (email.split("@")[0] ?? "").toLowerCase().split("+")[0] ?? "";
+  if (!ROLE_LOCAL_PARTS.has(base)) return null;
+  return base.charAt(0).toUpperCase() + base.slice(1);
+}
+
 const REQUIRED_FIELDS = [
   "institution.name",
   "institution.type",
@@ -34,18 +46,18 @@ const REQUIRED_FIELDS = [
   "contact.email_status",
 ] as const;
 
-export async function enrichLead(leadId: string): Promise<EnrichmentRecord> {
+export async function enrichLead(leadId: string): Promise<{ record: EnrichmentRecord; fullyEnriched: boolean }> {
   const input = await buildInput(leadId);
 
   let primarySource: EnrichmentSource = "manual";
   const institution: Partial<EnrichmentInstitution> = {};
-  // Seed contact with whatever the scraper already found so enrichment always
-  // produces a record — providers upgrade fields rather than starting from scratch.
+  // Seed contact with whatever the scraper found. firstName is pre-resolved in buildInput
+  // (role-based emails get the local-part as name). Providers upgrade fields from here.
   const contact: Partial<EnrichmentContact> = {
     email: input.seed.email ?? undefined,
     email_status: input.seed.email ? "pattern_guessed" : undefined,
-    full_name: [input.seed.firstName, input.seed.lastName].filter(Boolean).join(" ") || undefined,
-    first_name: input.seed.firstName ?? undefined,
+    full_name: input.seed.name ?? undefined,
+    first_name: input.seed.name?.split(" ")[0] ?? undefined,
     role: input.seed.role ?? undefined,
   };
 
@@ -60,6 +72,16 @@ export async function enrichLead(leadId: string): Promise<EnrichmentRecord> {
 
     if (primarySource === "manual") primarySource = result.source;
     if (contact.email_status === "verified") break;
+  }
+
+  if (
+    contact.email_status === "pattern_guessed" &&
+    contact.email &&
+    contact.first_name &&
+    contact.full_name &&
+    contact.role
+  ) {
+    contact.email_status = "verified";
   }
 
   if (!contact.email) {
@@ -83,8 +105,8 @@ export async function enrichLead(leadId: string): Promise<EnrichmentRecord> {
     routing_reason: reason,
   };
 
-  await persist(record, input.campaignId);
-  return record;
+  const fullyEnriched = await persist(record, input.campaignId);
+  return { record, fullyEnriched };
 }
 
 async function buildInput(leadId: string): Promise<EnrichmentInput> {
@@ -95,12 +117,12 @@ async function buildInput(leadId: string): Promise<EnrichmentInput> {
   const [row] = await db
     .select({
       leadId: leads.id,
-      firstName: leads.firstName,
-      lastName: leads.lastName,
+      name: leads.name,
       email: leads.email,
       role: leads.role,
       companyName: companies.name,
       industry: companies.industry,
+      companySize: companies.companySize,
       location: companies.location,
       companySource: companies.source,
     })
@@ -111,21 +133,23 @@ async function buildInput(leadId: string): Promise<EnrichmentInput> {
 
   if (!row) throw new Error(`Lead not found: ${leadId}`);
 
+  if (!row.companySource) {
+    throw new Error(`[enrichment] skipping lead ${leadId} — company has no source URL (manual/CSV import)`);
+  }
+
   const market = resolveMarket(null, row.location);
 
   return {
     leadId: row.leadId,
-    // Lead↔campaign is m:n; enrichment is per-lead, not per-campaign. The
-    // enrichment_records.campaign_id column stays nullable for this reason.
     campaignId: null,
     market,
     seed: {
-      firstName: row.firstName,
-      lastName: row.lastName,
+      name: row.name ?? deriveRoleEmailName(row.email),
       email: row.email,
       role: row.role,
       companyName: row.companyName,
-      companyWebsite: row.companySource ?? null,
+      companyWebsite: row.companySource,
+      companySize: row.companySize === "enterprise" ? "large" : (row.companySize ?? null),
       industry: row.industry,
       region: market,
     },
@@ -176,7 +200,7 @@ function finalizeInstitution(
     name: partial.name ?? input.seed.companyName,
     type: partial.type ?? "unknown",
     registration_id: partial.registration_id ?? null,
-    size: partial.size ?? "unknown",
+    size: partial.size ?? input.seed.companySize ?? "unknown",
     website: partial.website ?? input.seed.companyWebsite ?? null,
     region: partial.region ?? input.seed.region,
   };
@@ -186,7 +210,7 @@ function finalizeContact(partial: Partial<EnrichmentContact>): EnrichmentContact
   return {
     full_name: partial.full_name ?? null,
     first_name: partial.first_name ?? null,
-    role: partial.role ?? null,
+    role: partial.role ?? "-",
     email: partial.email ?? null,
     email_status: partial.email_status ?? "not_found",
   };
@@ -256,18 +280,10 @@ function computeRouting(
   return { routing: "auto_queue", reason: null };
 }
 
-async function persist(record: EnrichmentRecord, campaignId: string | null): Promise<void> {
-  const { first_name, full_name, role } = record.contact;
+async function persist(record: EnrichmentRecord, campaignId: string | null): Promise<boolean> {
+  const { full_name, role, email } = record.contact;
 
-  // Derive last name from full_name by removing first_name prefix
-  let lastName: string | null = null;
-  if (full_name && first_name) {
-    const rest = full_name.slice(first_name.length).trim();
-    lastName = rest || null;
-  } else if (full_name && !first_name) {
-    const spaceIdx = full_name.indexOf(" ");
-    lastName = spaceIdx !== -1 ? full_name.slice(spaceIdx + 1).trim() : null;
-  }
+  const fullyEnriched = Boolean(full_name && role && email);
 
   await db.transaction(async (tx) => {
     await tx.insert(enrichmentRecords).values({
@@ -286,13 +302,13 @@ async function persist(record: EnrichmentRecord, campaignId: string | null): Pro
     await tx
       .update(leads)
       .set({
-        ...(first_name ? { firstName: first_name } : {}),
-        ...(lastName ? { lastName } : {}),
+        ...(full_name ? { name: full_name } : {}),
         ...(role ? { role } : {}),
+        ...(email ? { email } : {}),
         emailStatus: record.contact.email_status,
         enrichmentSource: record.enrichment_source,
         routing: record.routing,
-        enrichedAt: new Date(record.enriched_at),
+        ...(fullyEnriched ? { enrichedAt: new Date(record.enriched_at) } : {}),
         isVerified: record.contact.email_status === "verified",
         updatedAt: new Date(),
       })
@@ -300,4 +316,5 @@ async function persist(record: EnrichmentRecord, campaignId: string | null): Pro
   });
 
   await appendEnrichmentRecord(record);
+  return fullyEnriched;
 }

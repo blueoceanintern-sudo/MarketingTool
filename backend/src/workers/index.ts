@@ -1,12 +1,13 @@
 import cron from "node-cron";
 import { db } from "../db";
-import { followUps, leads, emailEvents, emailDrafts, riskFlags, scrapeJobs, campaigns, replies, companies } from "../db/schema";
-import { eq, and, isNull, lte, isNotNull, lt, or, inArray, notInArray, asc } from "drizzle-orm";
+import { followUps, leads, emailEvents, emailDrafts, riskFlags, scrapeJobs, campaigns, replies, companies, promptTemplates } from "../db/schema";
+import { eq, and, isNull, lte, isNotNull, lt, or, inArray, notInArray, asc, gte } from "drizzle-orm";
 import { sendDraft, sendFollowUpEmail, getTotalSent, getWarmupWeek, getDailyCap } from "../services/sender";
 import { runScrapeJob } from "../services/scraping/runScrapeJob";
 import { enrichLead } from "../services/enrichment/orchestrator";
 import { generateDraftsForCampaign } from "../services/drafting/orchestrator";
-import { generateFollowUpBatch, type FollowUpRequest } from "../services/drafting";
+import { generateFollowUpBatch, thompsonSample, type FollowUpRequest } from "../services/drafting";
+import { generateMutation } from "../services/mutator";
 
 const MAX_FOLLOW_UP_ATTEMPTS = 3;
 
@@ -114,6 +115,7 @@ export async function runFollowUpSender() {
       .select({
         id: followUps.id,
         draftId: followUps.draftId,
+        templateId: followUps.templateId,
         subject: followUps.subject,
         body: followUps.body,
         leadId: followUps.leadId,
@@ -121,8 +123,7 @@ export async function runFollowUpSender() {
         attemptNumber: followUps.attemptNumber,
         leadEmail: leads.email,
         isVerified: leads.isVerified,
-        leadFirstName: leads.firstName,
-        leadLastName: leads.lastName,
+        leadName: leads.name,
         leadRole: leads.role,
         companyName: companies.name,
         companyIndustry: companies.industry,
@@ -179,7 +180,7 @@ export async function runFollowUpSender() {
 
     // Pass 2: batch-generate missing content in a single Batch API call
     const needsContent = qualified.filter((fu) => !fu.subject || !fu.body);
-    const contentMap = new Map<string, { subject: string; body: string }>();
+    const contentMap = new Map<string, { subject: string; body: string; templateId?: string }>();
 
     if (needsContent.length > 0) {
       const batchRequests: FollowUpRequest[] = [];
@@ -219,8 +220,7 @@ export async function runFollowUpSender() {
           leadId: fu.leadId,
           campaignId: fu.campaignId,
           lead: {
-            firstName: fu.leadFirstName ?? undefined,
-            lastName: fu.leadLastName ?? undefined,
+            name: fu.leadName ?? undefined,
             role: fu.leadRole ?? undefined,
             companyName: fu.companyName,
             industry: fu.companyIndustry ?? undefined,
@@ -240,9 +240,9 @@ export async function runFollowUpSender() {
           for (const gen of generated) {
             await db
               .update(followUps)
-              .set({ subject: gen.subject, body: gen.body, angleTag: gen.angleTag })
+              .set({ subject: gen.subject, body: gen.body, angleTag: gen.angleTag, templateId: gen.templateId || null })
               .where(eq(followUps.id, gen.followUpId));
-            contentMap.set(gen.followUpId, { subject: gen.subject, body: gen.body });
+            contentMap.set(gen.followUpId, { subject: gen.subject, body: gen.body, templateId: gen.templateId || undefined });
           }
         } catch (err) {
           console.error("[follow-up-sender] batch content generation failed:", err);
@@ -272,6 +272,7 @@ export async function runFollowUpSender() {
           campaignId: fu.campaignId,
           isVerified: fu.isVerified,
           hasRiskFlags: !!flag,
+          templateId: fu.templateId ?? contentMap.get(fu.id)?.templateId,
         });
       } catch (err) {
         console.error(`[follow-up-sender] Phase B: follow_up ${fu.id} threw:`, err);
@@ -365,7 +366,7 @@ cron.schedule("0 3 * * *", async () => {
   for (const { id } of candidates) {
     counts.attempted++;
     try {
-      const record = await enrichLead(id);
+      const { record } = await enrichLead(id);
       counts[record.contact.email_status]++;
     } catch (err) {
       counts.errors++;
@@ -468,6 +469,137 @@ cron.schedule("*/30 * * * *", async () => {
   console.log(
     `[drafting-runner] done: campaigns=${activeCampaigns.length}, with_work=${campaignsWithWork}, drafts=${totalGenerated}`,
   );
+});
+
+// ---------------------------------------------------------------------------
+// mutation-runner  — Monday 06:00
+//
+// Fires only after 300+ total sends across the pool. Picks the top-performing
+// eligible template (active, generation_depth < 2, send_count >= 50) by
+// positive intent rate, generates one mutation via Claude, inserts it as
+// inactive (requires manual activation), and notifies via webhook if configured.
+// ---------------------------------------------------------------------------
+cron.schedule("0 6 * * 1", async () => {
+  console.log("[mutation-runner] running");
+
+  const totalSent = await getTotalSent();
+  if (totalSent < 300) {
+    console.log(`[mutation-runner] skipped — ${totalSent} total sends so far (need 300+)`);
+    return;
+  }
+
+  const TEMPLATE_TYPES = ["initial", "followup_1", "followup_2", "breakup"] as const;
+  const notifyUrl = process.env.MUTATION_NOTIFY_WEBHOOK_URL;
+
+  for (const templateType of TEMPLATE_TYPES) {
+    // Only mutate human-authored templates to prevent constraint drift across lineages
+    const eligible = await db
+      .select()
+      .from(promptTemplates)
+      .where(
+        and(
+          eq(promptTemplates.active, true),
+          eq(promptTemplates.templateType, templateType),
+          eq(promptTemplates.createdBy, "user"),
+          lt(promptTemplates.generationDepth, 5),
+          gte(promptTemplates.sendCount, 50),
+        ),
+      );
+
+    if (eligible.length < 2) {
+      console.log(`[mutation-runner] ${templateType}: fewer than 2 eligible templates — skipping`);
+      continue;
+    }
+
+    // Rank by positive rate descending — used for percentile calculation and loser selection
+    const rankedTemplates = [...eligible].sort((a, b) => {
+      const rateA = a.sendCount > 0 ? a.positiveIntentCount / a.sendCount : 0;
+      const rateB = b.sendCount > 0 ? b.positiveIntentCount / b.sendCount : 0;
+      return rateB - rateA;
+    });
+
+    const total = rankedTemplates.length;
+
+    // Split by the same percentile thresholds used inside getMutationPrompt
+    const winners = rankedTemplates.filter((_, i) => i / (total - 1) <= 0.25);
+    const losers = rankedTemplates.filter((_, i) => i / (total - 1) >= 0.75);
+
+    // Refine: Thompson explores among top performers so #1 doesn't monopolise the lineage
+    const refineCandidate = thompsonSample(winners);
+    // Replace: always target the single worst performer
+    const replaceCandidate = losers[losers.length - 1];
+
+    const candidates = [
+      { candidate: refineCandidate, label: "refine" },
+      { candidate: replaceCandidate, label: "replace" },
+    ] as const;
+
+    for (const { candidate, label } of candidates) {
+      if (!candidate) {
+        console.log(`[mutation-runner] ${templateType}: no ${label} candidate — skipping`);
+        continue;
+      }
+
+      const candidateRate = candidate.sendCount > 0
+        ? `${(candidate.positiveIntentCount / candidate.sendCount * 100).toFixed(1)}%`
+        : "0.0%";
+      console.log(`[mutation-runner] ${templateType} [${label}]: candidate "${candidate.name}" (${candidateRate} positive rate, ${candidate.sendCount} sends)`);
+
+      const result = await generateMutation(candidate.id, rankedTemplates);
+      if (!result) {
+        console.log(`[mutation-runner] ${templateType} [${label}]: generation failed — skipping`);
+        continue;
+      }
+
+      const [inserted] = await db
+        .insert(promptTemplates)
+        .values({
+          name: result.name,
+          description: result.description,
+          systemPrompt: result.systemPrompt,
+          templateType: candidate.templateType,
+          active: true,
+          parentTemplateId: candidate.id,
+          generationDepth: candidate.generationDepth + 1,
+          createdBy: "ai",
+          mutationMode: result.mutationMode,
+          parentPersuasionStrategy: result.parentPersuasionStrategy,
+          childPersuasionStrategy: result.childPersuasionStrategy,
+          dimensionsChanged: result.dimensionsChanged,
+          mutationDistance: result.mutationDistance,
+          mutationReason: result.mutationReason,
+          hypothesisTested: result.hypothesisTested,
+        })
+        .returning({ id: promptTemplates.id });
+
+      console.log(`[mutation-runner] ${templateType} [${label}]: created "${result.name}" (id: ${inserted?.id}, mode: ${result.mutationMode}, depth: ${candidate.generationDepth + 1})`);
+
+      if (notifyUrl && inserted) {
+        await fetch(notifyUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            event: "mutation_created",
+            template_type: templateType,
+            template_id: inserted.id,
+            template_name: result.name,
+            template_description: result.description,
+            mutation_mode: result.mutationMode,
+            parent_persuasion_strategy: result.parentPersuasionStrategy,
+            child_persuasion_strategy: result.childPersuasionStrategy,
+            dimensions_changed: result.dimensionsChanged,
+            mutation_distance: result.mutationDistance,
+            hypothesis_tested: result.hypothesisTested,
+            parent_id: candidate.id,
+            parent_name: candidate.name,
+            parent_positive_rate: candidateRate,
+            parent_send_count: candidate.sendCount,
+            generation_depth: candidate.generationDepth + 1,
+          }),
+        }).catch((err) => console.error(`[mutation-runner] ${templateType} [${label}]: webhook notify failed:`, err));
+      }
+    }
+  }
 });
 
 console.log("[workers] all cron jobs registered");

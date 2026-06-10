@@ -16,12 +16,12 @@ export interface EnrichmentInput {
   campaignId: string | null;
   market: Market;
   seed: {
-    firstName: string | null;
-    lastName: string | null;
+    name: string | null;
     email: string | null;
     role: string | null;
     companyName: string;
     companyWebsite: string | null;
+    companySize?: "small" | "medium" | "large" | "unknown" | null;
     industry: string | null;
     region: string;
   };

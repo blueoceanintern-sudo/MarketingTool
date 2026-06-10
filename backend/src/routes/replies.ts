@@ -3,8 +3,8 @@ import PostalMime from "postal-mime";
 import { createVerify } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { db } from "../db";
-import { replies, emailEvents, leads, companies, emailDrafts, campaigns, suppressionList, followUps, demos, riskFlags } from "../db/schema";
-import { count, eq, and, isNull, inArray, asc } from "drizzle-orm";
+import { replies, emailEvents, leads, companies, emailDrafts, campaigns, suppressionList, followUps, demos, riskFlags, promptTemplates } from "../db/schema";
+import { count, eq, and, isNull, inArray, asc, sql } from "drizzle-orm";
 
 // ── SNS types ─────────────────────────────────────────────────────────────────
 
@@ -22,7 +22,7 @@ interface SnsEnvelope {
 }
 
 interface SesNotification {
-  notificationType: "Received";
+  notificationType: "Received" | "Complaint" | "Bounce";
   mail: {
     messageId: string;
     source: string;
@@ -34,6 +34,11 @@ interface SesNotification {
     };
   };
   content?: string;            // raw MIME — present when SES rule stores inline
+  complaint?: {
+    complainedRecipients: Array<{ emailAddress: string }>;
+    feedbackId?: string;
+    complaintFeedbackType?: string;
+  };
 }
 
 // ── SNS signature verification ────────────────────────────────────────────────
@@ -100,16 +105,16 @@ Current date: ${currentDate}
 positive — the recipient shows explicit interest, willingness to continue discussion, a request for more information or pricing, scheduling intent, or openness to evaluating the offer.
 Examples: "I'd love to learn more", "Can we set up a call?", "Send me your pricing", "Yes, let's talk", "Please send more details", "Can you explain what you offer?", "What are your rates?"
 
-negative — the recipient is not interested, asks to be removed, expresses frustration, explicitly declines, or the reply is a delivery failure or mailbox error. Also includes replies containing legal threats, cease-and-desist language, or regulatory complaints — these are negative with risk_flag: true.
-Examples: "Please unsubscribe me", "Not interested", "Remove me from your list", "We already have a solution", "Thanks but we're good", "Mailbox full", "Delivery failed", "Stop contacting me or I will file a complaint", "I am forwarding this to our legal team"
-Note: polite phrasing does not override a clear rejection. "Thanks, but we're not interested" is negative.
+negative — the recipient explicitly asks to be removed, expresses hostility, uses legal/regulatory language, or the reply is a delivery failure or mailbox error.
+Examples: "Please unsubscribe me", "Remove me from your list", "Mailbox full", "Delivery failed", "Stop contacting me or I will file a complaint", "I am forwarding this to our legal team"
+IMPORTANT: Polite rejections due to timing, budget, or capacity ("no budget right now", "circle back next quarter", "not in the market", "we already have something similar") are NOT negative — classify them as neutral. Only classify as negative if the recipient explicitly requests removal, expresses hostility, or the message is a delivery failure.
 
 out_of_office — the reply is an automated out-of-office or vacation message, not a human response.
 Examples: "I am out of the office until...", "I will be back on...", "I'm on leave", "Auto-reply: away until..."
 
-neutral — the reply does not clearly fit any of the above. Includes replies that are ambiguous, challenging, or acknowledge receipt without indicating interest or disinterest.
-Examples: "Who are you?", "How did you get my email?", "What company is this?", "Who referred you?", "OK", "Thanks", "Noted", "Got it"
-Note: "Thanks" and similar pleasantries without any engagement signal are neutral, not positive.
+neutral — the reply does not clearly fit any of the above. This includes: ambiguous or challenging replies, acknowledgements without clear intent, AND polite timing/budget/capacity deflections ("circle back next quarter", "no budget right now", "not the right fit at the moment", "we're already sorted").
+Examples: "Who are you?", "How did you get my email?", "What company is this?", "OK", "Thanks", "Noted", "No budget right now", "Reach out next quarter", "Not the right time for us"
+Note: "Thanks" and similar pleasantries without engagement signal are neutral, not positive. Polite deflections are neutral, not negative.
 
 ## Priority order
 
@@ -188,8 +193,7 @@ function formatReply(row: {
   receivedAt: Date;
   resolvedAt: Date | null;
   leadId: string;
-  leadFirstName: string | null;
-  leadLastName: string | null;
+  leadName: string | null;
   leadEmail: string;
   companyName: string;
   campaignId: string;
@@ -198,7 +202,7 @@ function formatReply(row: {
   return {
     id:            row.id,
     lead_id:       row.leadId,
-    lead_name:     [row.leadFirstName, row.leadLastName].filter(Boolean).join(" "),
+    lead_name:     row.leadName ?? "",
     lead_email:    row.leadEmail,
     lead_company:  row.companyName,
     campaign_id:   row.campaignId,
@@ -222,8 +226,7 @@ const repliesJoinQuery = () =>
       receivedAt:    replies.receivedAt,
       resolvedAt:    replies.resolvedAt,
       leadId:        leads.id,
-      leadFirstName: leads.firstName,
-      leadLastName:  leads.lastName,
+      leadName:      leads.name,
       leadEmail:     leads.email,
       companyName:   companies.name,
       campaignId:    campaigns.id,
@@ -343,8 +346,48 @@ repliesRouter.post("/webhooks/ses/reply", async (c) => {
     return c.json({ error: "Could not parse SES notification" }, 400);
   }
 
+  if (ses.notificationType === "Complaint") {
+    const complainedEmails = ses.complaint?.complainedRecipients.map((r) => r.emailAddress) ?? [];
+    for (const email of complainedEmails) {
+      const [complainant] = await db
+        .select({ id: leads.id, lastDeliveredTemplateId: leads.lastDeliveredTemplateId })
+        .from(leads)
+        .where(eq(leads.email, email))
+        .limit(1);
+      if (!complainant?.lastDeliveredTemplateId) continue;
+
+      await db
+        .update(promptTemplates)
+        .set({ spamComplaintCount: sql`${promptTemplates.spamComplaintCount} + 1` })
+        .where(eq(promptTemplates.id, complainant.lastDeliveredTemplateId));
+
+      const [tmpl] = await db
+        .select({ sendCount: promptTemplates.sendCount, spamComplaintCount: promptTemplates.spamComplaintCount })
+        .from(promptTemplates)
+        .where(eq(promptTemplates.id, complainant.lastDeliveredTemplateId))
+        .limit(1);
+
+      if (tmpl && tmpl.sendCount > 0 && tmpl.spamComplaintCount >= 3 && tmpl.spamComplaintCount / tmpl.sendCount >= 0.001) {
+        const killedId = complainant.lastDeliveredTemplateId;
+        await db.update(promptTemplates).set({ active: false }).where(eq(promptTemplates.id, killedId));
+        const directChildren = await db
+          .select({ id: promptTemplates.id })
+          .from(promptTemplates)
+          .where(eq(promptTemplates.parentTemplateId, killedId));
+        await db.update(promptTemplates).set({ active: false }).where(eq(promptTemplates.parentTemplateId, killedId));
+        if (directChildren.length > 0) {
+          const childIds = directChildren.map((c) => c.id);
+          await db.update(promptTemplates).set({ active: false }).where(inArray(promptTemplates.parentTemplateId, childIds));
+        }
+        console.error(`[reply-webhook:kill-switch] template ${killedId} disabled — spam complaint rate exceeded 0.1%. Full lineage frozen.`);
+      }
+    }
+    console.log(`[reply-webhook:complaint] processed ${complainedEmails.length} complaint(s)`);
+    return c.json({ ok: true });
+  }
+
   if (ses.notificationType !== "Received") {
-    return c.json({ ok: true }); // bounce/complaint notifications — not handled here
+    return c.json({ ok: true }); // bounce and other notification types — not handled here
   }
 
   const inReplyTo = ses.mail.commonHeaders.inReplyTo?.trim();
@@ -362,7 +405,7 @@ repliesRouter.post("/webhooks/ses/reply", async (c) => {
 
   // Look up the lead by reply-from address.
   const [lead] = await db
-    .select({ id: leads.id, email: leads.email })
+    .select({ id: leads.id, email: leads.email, lastDeliveredTemplateId: leads.lastDeliveredTemplateId })
     .from(leads)
     .where(eq(leads.email, fromEmail))
     .limit(1);
@@ -449,6 +492,12 @@ repliesRouter.post("/webhooks/ses/reply", async (c) => {
       await db
         .delete(followUps)
         .where(and(eq(followUps.leadId, lead.id), eq(followUps.campaignId, campaignId), isNull(followUps.sentAt)));
+      if (lead.lastDeliveredTemplateId) {
+        await db
+          .update(promptTemplates)
+          .set({ positiveIntentCount: sql`${promptTemplates.positiveIntentCount} + 1` })
+          .where(eq(promptTemplates.id, lead.lastDeliveredTemplateId));
+      }
     } else if (category === "negative") {
       if (risk_flag) {
         await db.insert(riskFlags).values({ leadId: lead.id, flagType: "hostile_interaction" });
@@ -460,6 +509,12 @@ repliesRouter.post("/webhooks/ses/reply", async (c) => {
       await db
         .delete(emailDrafts)
         .where(and(eq(emailDrafts.leadId, lead.id), eq(emailDrafts.campaignId, campaignId), eq(emailDrafts.status, "pending_review")));
+      if (lead.lastDeliveredTemplateId) {
+        await db
+          .update(promptTemplates)
+          .set({ negativeReplyCount: sql`${promptTemplates.negativeReplyCount} + 1` })
+          .where(eq(promptTemplates.id, lead.lastDeliveredTemplateId));
+      }
     } else if (category === "out_of_office") {
       const returnDate = return_date ? new Date(return_date) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 

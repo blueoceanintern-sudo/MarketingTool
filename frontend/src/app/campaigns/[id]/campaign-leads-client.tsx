@@ -8,7 +8,7 @@ import { useJobEvents } from "@/lib/job-events";
 import LeadActions from "./lead-actions";
 import Pagination from "@/components/pagination";
 
-const LEADS_PER_PAGE = 50;
+const LEADS_PER_PAGE = 25;
 
 const AVATAR_COLORS = [
   "bg-primary-fixed text-on-primary-fixed",
@@ -27,7 +27,8 @@ const statusMap: Record<string, { label: string; className: string }> = {
 };
 
 function initials(lead: Lead) {
-  return `${lead.first_name?.[0] ?? ""}${lead.last_name?.[0] ?? ""}`.toUpperCase() || "?";
+  const parts = lead.name.trim().split(/\s+/);
+  return `${parts[0]?.[0] ?? ""}${parts[1]?.[0] ?? ""}`.toUpperCase() || "?";
 }
 
 interface Props {
@@ -109,7 +110,7 @@ export default function CampaignLeadsClient({ campaignId, initialPage }: Props) 
                             {initials(lead)}
                           </div>
                           <span className="text-[14px] font-medium text-primary">
-                            {[lead.first_name, lead.last_name].filter(Boolean).join(" ")}
+                            {lead.name}
                           </span>
                         </div>
                       </td>
@@ -135,7 +136,7 @@ export default function CampaignLeadsClient({ campaignId, initialPage }: Props) 
                       <td className="px-2 py-4 text-right pr-6">
                         <LeadActions
                           leadId={lead.id}
-                          leadName={[lead.first_name, lead.last_name].filter(Boolean).join(" ") || lead.email}
+                          leadName={lead.name || lead.email}
                           currentCampaignId={campaignId}
                         />
                       </td>
