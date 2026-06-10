@@ -83,6 +83,14 @@ export const registrySourcesOptions = (params: RegistrySourcesParams) =>
     queryFn: () => api.getRegistrySourcesPaginated(params),
   });
 
+// Scrapeable (vertical, geo) coverage with source counts — drives the leads
+// scrape picker.
+export const sourceCoverageOptions = () =>
+  queryOptions({
+    queryKey: ["registry", "source-coverage"],
+    queryFn: () => api.getSourceCoverage(),
+  });
+
 export const directoryConfigsOptions = () =>
   queryOptions({ queryKey: ["registry", "directory-configs"], queryFn: () => api.getDirectoryConfigs() });
 

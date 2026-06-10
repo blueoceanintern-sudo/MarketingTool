@@ -839,8 +839,20 @@ export async function triggerEnrichment(): Promise<{ queued: number } | null> {
   }
 }
 
+export interface SourceCoverage {
+  vertical: string;
+  geo: string;
+  source_count: number;
+}
+
+// Distinct (vertical, geo) pairs that have active registry sources, with counts.
+// Drives the leads-page scrape picker.
+export async function getSourceCoverage(): Promise<SourceCoverage[]> {
+  return (await apiFetch<SourceCoverage[]>("/registry/source-coverage")) ?? [];
+}
+
 export async function scrapeLeads(params: {
-  source_ids?: string[];
+  combos?: { vertical: string; geo: string }[];
   urls?: string[];
   scraper_type?: "cheerio" | "crawl4ai";
 }): Promise<{ queued: number } | null> {
