@@ -563,8 +563,37 @@ export async function getDemos(): Promise<Demo[]> {
   return (await apiFetch<Demo[]>("/demos")) ?? [];
 }
 
-export async function getRegistrySources(): Promise<SourceRegistry[]> {
-  return (await apiFetch<SourceRegistry[]>("/registry/sources")) ?? [];
+export interface PaginatedSources extends Paginated<SourceRegistry> {
+  summary: { total: number; active: number };
+  facets: { geos: string[]; verticals: string[] };
+}
+
+const EMPTY_SOURCES: PaginatedSources = {
+  data: [],
+  total: 0,
+  page: 1,
+  limit: 25,
+  total_pages: 0,
+  summary: { total: 0, active: 0 },
+  facets: { geos: [], verticals: [] },
+};
+
+export async function getRegistrySourcesPaginated(params?: {
+  page?: number;
+  limit?: number;
+  geo?: string;
+  vertical?: string;
+  active?: boolean;
+}): Promise<PaginatedSources> {
+  const q = new URLSearchParams();
+  if (params?.page && params.page > 1) q.set("page", String(params.page));
+  if (params?.limit) q.set("limit", String(params.limit));
+  if (params?.geo) q.set("geo", params.geo);
+  if (params?.vertical) q.set("vertical", params.vertical);
+  if (params?.active) q.set("active", "true");
+  const qs = q.toString();
+  const result = await apiFetch<PaginatedSources>(`/registry/sources${qs ? `?${qs}` : ""}`);
+  return result ?? EMPTY_SOURCES;
 }
 
 export interface DirectoryConfig {

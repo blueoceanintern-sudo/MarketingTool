@@ -604,7 +604,7 @@ allLeadsRouter.post("/scrape", async (c) => {
       try {
         const result = source.scraperType === "crawl4ai"
           ? await scrapeWithFallback(source.url)
-          : { leads: await scrapeWebsite(source.url, "generic"), scraper: "cheerio" as const };
+          : { leads: await scrapeWebsite(source.url), scraper: "cheerio" as const };
 
         for (const scraped of result.leads) {
           if (!scraped.email) continue;

@@ -23,6 +23,7 @@ import {
   keys,
 } from "@/lib/queries";
 import { useJobEvents } from "@/lib/job-events";
+import Pagination from "@/components/pagination";
 
 const scraperTypeLabel: Record<ScraperType, string> = {
   cheerio: "Cheerio (static HTML)",
@@ -49,12 +50,22 @@ MOE Schools Directory,education,SG,https://moe.gov.sg/schools,cheerio,true,true
 ACECQA Provider List,childcare,AU,https://www.acecqa.gov.au/providers,crawl4ai,false,true
 US Daycare Registry,childcare,US,https://childcare.gov/index/registry,cheerio,false,false`;
 
+const SOURCES_PAGE_SIZE = 25;
 const BLANK_COVERAGE_FORM = { vertical: "", geo: "", query: "", domains: "" };
 const BLANK_SOURCE_FORM = { name: "", vertical: "", geo: "", url: "", scraper_type: "cheerio" as ScraperType, legal_flag: false, active: true };
 
+const EMPTY_SOURCES_RESULT = {
+  data: [],
+  total: 0,
+  page: 1,
+  limit: SOURCES_PAGE_SIZE,
+  total_pages: 0,
+  summary: { total: 0, active: 0 },
+  facets: { geos: [] as string[], verticals: [] as string[] },
+};
+
 export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
   const queryClient = useQueryClient();
-  const { data: sources = [] } = useQuery(registrySourcesOptions());
   const { data: directoryConfigs = [] } = useQuery(directoryConfigsOptions());
   const { data: activeCombinations = [] } = useQuery(activeCombinationsOptions());
   const [refreshing, setRefreshing] = useState<string | null>(null);
@@ -63,6 +74,19 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
   const [geoFilter, setGeoFilter] = useState<string>("all");
   const [verticalFilter, setVerticalFilter] = useState<string>("all");
   const [activeOnly, setActiveOnly] = useState(false);
+  const [sourcesPage, setSourcesPage] = useState(1);
+
+  const { data: sourcesResult = EMPTY_SOURCES_RESULT } = useQuery(
+    registrySourcesOptions({
+      page: sourcesPage,
+      limit: SOURCES_PAGE_SIZE,
+      geo: geoFilter !== "all" ? geoFilter : undefined,
+      vertical: verticalFilter !== "all" ? verticalFilter : undefined,
+      active: activeOnly || undefined,
+    }),
+  );
+  const sources = sourcesResult.data;
+  const { summary, facets } = sourcesResult;
   const [showAddModal, setShowAddModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -179,15 +203,20 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
     onError: (err) => toast.error(err instanceof Error ? err.message : "Failed to delete config"),
   });
 
-  const geos = useMemo(
-    () => Array.from(new Set([...sources.map((s) => s.geo), ...directoryConfigs.map((c) => c.geo)])).sort(),
-    [sources, directoryConfigs],
-  );
+  // Distinct values across the registry (server facets) ∪ configured coverage.
+  // Single source of truth for the stat cards, the filter dropdowns, and the
+  // modal autocompletes — so a vertical/geo that only exists in sources or only
+  // in a directory config still shows up everywhere and is filterable.
   const verticals = useMemo(
-    () => Array.from(new Set([...sources.map((s) => s.vertical), ...directoryConfigs.map((c) => c.vertical)])).sort(),
-    [sources, directoryConfigs],
+    () => Array.from(new Set([...facets.verticals, ...directoryConfigs.map((c) => c.vertical)])).sort(),
+    [facets.verticals, directoryConfigs],
+  );
+  const geos = useMemo(
+    () => Array.from(new Set([...facets.geos, ...directoryConfigs.map((c) => c.geo)])).sort(),
+    [facets.geos, directoryConfigs],
   );
 
+<<<<<<< HEAD
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return sources.filter((s) => {
@@ -198,6 +227,10 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
       return true;
     });
   }, [sources, geoFilter, verticalFilter, activeOnly, search]);
+=======
+  const sourcesTotalPages = Math.max(1, sourcesResult.total_pages);
+  const sourcesPageClamped = Math.min(sourcesPage, sourcesTotalPages);
+>>>>>>> main
 
   function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -305,13 +338,6 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
 
   return (
     <div className="p-4 sm:p-6 lg:p-10 max-w-400 mx-auto">
-      {/* Shared datalists — referenced by all modals */}
-      <datalist id="all-verticals">
-        {verticals.map((v) => <option key={v} value={v} />)}
-      </datalist>
-      <datalist id="all-geos">
-        {Array.from(new Set(["SG", "AU", "US", ...geos])).sort().map((g) => <option key={g} value={g} />)}
-      </datalist>
       <div className="flex justify-between items-end mb-8">
         <div>
           <nav className="flex items-center gap-2 mb-2">
@@ -383,12 +409,12 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6 mb-8">
         <div className="bg-white p-5 rounded-lg border border-grey-100">
           <p className="text-[13px] text-grey-500">Total sources</p>
-          <h3 className="text-[24px] font-bold font-mono mt-2">{sources.length}</h3>
+          <h3 className="text-[24px] font-bold font-mono mt-2">{summary.total}</h3>
         </div>
         <div className="bg-white p-5 rounded-lg border border-grey-100">
           <p className="text-[13px] text-grey-500">Active</p>
           <h3 className="text-[24px] font-bold text-success font-mono mt-2">
-            {sources.filter((s) => s.active).length}
+            {summary.active}
           </h3>
         </div>
         <div className="bg-white p-5 rounded-lg border border-grey-100">
@@ -522,7 +548,7 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
             </div>
             <select
               value={geoFilter}
-              onChange={(e) => setGeoFilter(e.target.value)}
+              onChange={(e) => { setGeoFilter(e.target.value); setSourcesPage(1); }}
               className="px-3 py-1.5 border border-grey-100 rounded text-[13px] bg-white"
             >
               <option value="all">All Geographies</option>
@@ -530,7 +556,7 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
             </select>
             <select
               value={verticalFilter}
-              onChange={(e) => setVerticalFilter(e.target.value)}
+              onChange={(e) => { setVerticalFilter(e.target.value); setSourcesPage(1); }}
               className="px-3 py-1.5 border border-grey-100 rounded text-[13px] bg-white"
             >
               <option value="all">All Verticals</option>
@@ -538,7 +564,7 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
             </select>
             <button
               type="button"
-              onClick={() => setActiveOnly((v) => !v)}
+              onClick={() => { setActiveOnly((v) => !v); setSourcesPage(1); }}
               className={[
                 "px-3 py-1.5 border rounded text-[13px] font-medium",
                 activeOnly ? "bg-primary text-white border-primary" : "bg-white border-grey-100",
@@ -547,14 +573,18 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
               Active only
             </button>
           </div>
-          <p className="text-[13px] text-grey-500">Showing {filtered.length} sources</p>
+          <p className="text-[13px] text-grey-500">
+            {sourcesResult.total === 0
+              ? "No sources"
+              : `Showing ${(sourcesPageClamped - 1) * sourcesResult.limit + 1}–${Math.min(sourcesPageClamped * sourcesResult.limit, sourcesResult.total)} of ${sourcesResult.total} sources`}
+          </p>
         </div>
 
-        {sources.length === 0 ? (
+        {summary.total === 0 ? (
           <p className="px-6 py-16 text-center text-grey-400 text-[14px]">
             No sources yet. Add one to enable scraping for a campaign.
           </p>
-        ) : filtered.length === 0 ? (
+        ) : sourcesResult.total === 0 ? (
           <p className="px-6 py-12 text-center text-grey-400">No sources match these filters.</p>
         ) : (
           <table className="w-full border-collapse">
@@ -571,7 +601,7 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-grey-100">
-              {filtered.map((s) => (
+              {sources.map((s) => (
                 <tr key={s.id} className="hover:bg-ocean-wash">
                   <td className="px-6 py-3 text-[14px] font-medium">{s.name}</td>
                   <td className="px-4 py-3 text-[13px]">{s.vertical}</td>
@@ -604,6 +634,16 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
               ))}
             </tbody>
           </table>
+        )}
+
+        {sourcesTotalPages > 1 && (
+          <div className="px-5 py-3 border-t border-grey-100 flex justify-center">
+            <Pagination
+              page={sourcesPageClamped}
+              totalPages={sourcesTotalPages}
+              onPageChange={setSourcesPage}
+            />
+          </div>
         )}
       </div>
 
@@ -691,18 +731,21 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
                 Vertical
                 <input
                   required
-                  list="all-verticals"
+                  list="source-verticals"
                   value={form.vertical}
                   onChange={(e) => setForm((f) => ({ ...f, vertical: e.target.value }))}
                   placeholder="e.g. education"
                   className="border border-grey-200 rounded-lg px-3 py-2"
                 />
+                <datalist id="source-verticals">
+                  {verticals.map((v) => <option key={v} value={v} />)}
+                </datalist>
               </label>
               <label className="flex flex-col gap-1 text-[13px]">
                 Geography
                 <input
                   required
-                  list="all-geos"
+                  list="source-geos"
                   value={form.geo}
                   onChange={(e) => setForm((f) => ({ ...f, geo: e.target.value }))}
                   onBlur={(e) => setForm((f) => ({ ...f, geo: resolveGeo(e.target.value) }))}
@@ -710,6 +753,9 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
                   placeholder="e.g. SG"
                   className="border border-grey-200 rounded-lg px-3 py-2"
                 />
+                <datalist id="source-geos">
+                  {geos.map((g) => <option key={g} value={g} />)}
+                </datalist>
               </label>
               <label className="flex flex-col gap-1 text-[13px]">
                 URL
@@ -780,18 +826,21 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
                     Vertical
                     <input
                       required
-                      list="all-verticals"
+                      list="coverage-verticals"
                       value={coverageForm.vertical}
                       onChange={(e) => setCoverageForm((f) => ({ ...f, vertical: e.target.value }))}
                       placeholder="e.g. education"
                       className="border border-grey-200 rounded-lg px-3 py-2"
                     />
+                    <datalist id="coverage-verticals">
+                      {verticals.map((v) => <option key={v} value={v} />)}
+                    </datalist>
                   </label>
                   <label className="flex flex-col gap-1 text-[13px]">
                     Geography
                     <input
                       required
-                      list="all-geos"
+                      list="coverage-geos"
                       value={coverageForm.geo}
                       onChange={(e) => setCoverageForm((f) => ({ ...f, geo: e.target.value }))}
                       onBlur={(e) => setCoverageForm((f) => ({ ...f, geo: resolveGeo(e.target.value) }))}
@@ -799,6 +848,9 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
                       placeholder="e.g. SG"
                       className="border border-grey-200 rounded-lg px-3 py-2"
                     />
+                    <datalist id="coverage-geos">
+                      {geos.map((g) => <option key={g} value={g} />)}
+                    </datalist>
                   </label>
                 </>
               )}

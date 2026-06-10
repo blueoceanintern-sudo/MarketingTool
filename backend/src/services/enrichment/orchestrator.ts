@@ -27,6 +27,18 @@ import type {
 // PRD §5.4 source priority: registry → cowork (Claude in Chrome) → snovio.
 const PROVIDERS: EnrichmentProvider[] = [registryProvider, coworkProvider, snovioProvider];
 
+const ROLE_LOCAL_PARTS = new Set([
+  "admissions", "principal", "rector", "registrar", "dean", "provost",
+  "director", "headmaster", "bursar",
+]);
+
+function deriveRoleEmailName(email: string | null): string | null {
+  if (!email) return null;
+  const base = (email.split("@")[0] ?? "").toLowerCase().split("+")[0] ?? "";
+  if (!ROLE_LOCAL_PARTS.has(base)) return null;
+  return base.charAt(0).toUpperCase() + base.slice(1);
+}
+
 const REQUIRED_FIELDS = [
   "institution.name",
   "institution.type",
@@ -39,8 +51,8 @@ export async function enrichLead(leadId: string): Promise<{ record: EnrichmentRe
 
   let primarySource: EnrichmentSource = "manual";
   const institution: Partial<EnrichmentInstitution> = {};
-  // Seed contact with whatever the scraper already found so enrichment always
-  // produces a record — providers upgrade fields rather than starting from scratch.
+  // Seed contact with whatever the scraper found. firstName is pre-resolved in buildInput
+  // (role-based emails get the local-part as name). Providers upgrade fields from here.
   const contact: Partial<EnrichmentContact> = {
     email: input.seed.email ?? undefined,
     email_status: input.seed.email ? "pattern_guessed" : undefined,
@@ -110,6 +122,7 @@ async function buildInput(leadId: string): Promise<EnrichmentInput> {
       role: leads.role,
       companyName: companies.name,
       industry: companies.industry,
+      companySize: companies.companySize,
       location: companies.location,
       companySource: companies.source,
     })
@@ -120,20 +133,23 @@ async function buildInput(leadId: string): Promise<EnrichmentInput> {
 
   if (!row) throw new Error(`Lead not found: ${leadId}`);
 
+  if (!row.companySource) {
+    throw new Error(`[enrichment] skipping lead ${leadId} — company has no source URL (manual/CSV import)`);
+  }
+
   const market = resolveMarket(null, row.location);
 
   return {
     leadId: row.leadId,
-    // Lead↔campaign is m:n; enrichment is per-lead, not per-campaign. The
-    // enrichment_records.campaign_id column stays nullable for this reason.
     campaignId: null,
     market,
     seed: {
-      name: row.name,
+      name: row.name ?? deriveRoleEmailName(row.email),
       email: row.email,
       role: row.role,
       companyName: row.companyName,
-      companyWebsite: row.companySource ?? null,
+      companyWebsite: row.companySource,
+      companySize: row.companySize === "enterprise" ? "large" : (row.companySize ?? null),
       industry: row.industry,
       region: market,
     },
@@ -184,7 +200,7 @@ function finalizeInstitution(
     name: partial.name ?? input.seed.companyName,
     type: partial.type ?? "unknown",
     registration_id: partial.registration_id ?? null,
-    size: partial.size ?? "unknown",
+    size: partial.size ?? input.seed.companySize ?? "unknown",
     website: partial.website ?? input.seed.companyWebsite ?? null,
     region: partial.region ?? input.seed.region,
   };
@@ -194,7 +210,7 @@ function finalizeContact(partial: Partial<EnrichmentContact>): EnrichmentContact
   return {
     full_name: partial.full_name ?? null,
     first_name: partial.first_name ?? null,
-    role: partial.role ?? null,
+    role: partial.role ?? "-",
     email: partial.email ?? null,
     email_status: partial.email_status ?? "not_found",
   };
@@ -267,7 +283,6 @@ function computeRouting(
 async function persist(record: EnrichmentRecord, campaignId: string | null): Promise<boolean> {
   const { full_name, role, email } = record.contact;
 
-  // Only mark the lead as fully enriched if all key contact fields are present
   const fullyEnriched = Boolean(full_name && role && email);
 
   await db.transaction(async (tx) => {

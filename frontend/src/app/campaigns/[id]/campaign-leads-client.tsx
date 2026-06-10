@@ -8,7 +8,7 @@ import { useJobEvents } from "@/lib/job-events";
 import LeadActions from "./lead-actions";
 import Pagination from "@/components/pagination";
 
-const LEADS_PER_PAGE = 50;
+const LEADS_PER_PAGE = 25;
 
 const AVATAR_COLORS = [
   "bg-primary-fixed text-on-primary-fixed",

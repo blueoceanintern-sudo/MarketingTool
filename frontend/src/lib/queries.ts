@@ -69,8 +69,19 @@ export const templateEngagementOptions = () =>
   queryOptions({ queryKey: ["templates", "engagement"], queryFn: () => api.getTemplateEngagement() });
 
 // ── Registry ──────────────────────────────────────────────────────────────--
-export const registrySourcesOptions = () =>
-  queryOptions({ queryKey: ["registry", "sources"], queryFn: () => api.getRegistrySources() });
+export type RegistrySourcesParams = {
+  page: number;
+  limit?: number;
+  geo?: string;
+  vertical?: string;
+  active?: boolean;
+};
+
+export const registrySourcesOptions = (params: RegistrySourcesParams) =>
+  queryOptions({
+    queryKey: ["registry", "sources", params],
+    queryFn: () => api.getRegistrySourcesPaginated(params),
+  });
 
 export const directoryConfigsOptions = () =>
   queryOptions({ queryKey: ["registry", "directory-configs"], queryFn: () => api.getDirectoryConfigs() });
