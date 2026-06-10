@@ -84,7 +84,7 @@ export default function RepliesClient() {
         {/* Split pane */}
         <div className="flex-1 flex overflow-hidden">
           {/* Left list */}
-          <section className="w-[260px] lg:w-[340px] bg-white border-r border-grey-100 flex flex-col overflow-y-auto shrink-0">
+          <section className="w-65 lg:w-85 bg-white border-r border-grey-100 flex flex-col overflow-y-auto shrink-0">
             {allVisible.length === 0 ? (
               <div className="flex-1 flex items-center justify-center text-grey-300 text-[13px]">
                 No replies
@@ -106,7 +106,7 @@ export default function RepliesClient() {
                     ].join(" ")}
                   >
                     <div className="flex items-start justify-between mb-1">
-                      <span className="text-[14px] font-semibold text-primary truncate max-w-[160px]">
+                      <span className="text-[14px] font-semibold text-primary truncate max-w-40">
                         {r.lead_name}
                       </span>
                       <span className={`px-2 py-0.5 text-[11px] font-medium rounded-full shrink-0 ${cfg.className}`}>

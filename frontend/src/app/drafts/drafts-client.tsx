@@ -84,7 +84,7 @@ function DraftsTable({ drafts, emptyMessage }: { drafts: Draft[]; emptyMessage: 
                             <p className="font-medium text-primary">{d.lead_name}</p>
                             <p className="text-grey-400 text-[11px]">{d.lead_role}</p>
                           </td>
-                          <td className="px-4 py-3 text-grey-600 truncate max-w-[300px]">{d.subject}</td>
+                          <td className="px-4 py-3 text-grey-600 truncate max-w-75">{d.subject}</td>
                           <td className="px-4 py-3">
                             <span className={`px-2 py-0.5 text-[11px] font-medium rounded ${conf.className}`}>
                               {conf.label} ({Math.round(d.confidence_score)}%)
@@ -259,7 +259,7 @@ function ReviewQueue() {
     <>
       <div className="h-[calc(100vh-8rem)] flex flex-col overflow-hidden">
         <div className="flex-1 flex overflow-hidden">
-          <section className="w-[260px] lg:w-[320px] bg-white border-r border-grey-100 flex flex-col overflow-y-auto shrink-0">
+          <section className="w-65 lg:w-[320px] bg-white border-r border-grey-100 flex flex-col overflow-y-auto shrink-0">
             <div className="px-5 py-4 border-b border-grey-100 sticky top-0 bg-white z-10">
               <h2 className="text-[16px] font-semibold text-primary">Queue ({drafts.length})</h2>
             </div>
@@ -282,7 +282,7 @@ function ReviewQueue() {
                   ].join(" ")}
                 >
                   <div className="flex justify-between items-start mb-1">
-                    <h3 className="text-[14px] font-semibold text-primary truncate max-w-[170px]">{draft.lead_name}</h3>
+                    <h3 className="text-[14px] font-semibold text-primary truncate max-w-42.5">{draft.lead_name}</h3>
                     <span className={`px-2 py-0.5 text-[11px] font-medium rounded shrink-0 ${c.className}`}>
                       {c.label}
                     </span>
@@ -307,9 +307,9 @@ function ReviewQueue() {
 
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                   <div className="col-span-8">
-                    <div className="bg-white rounded-lg border border-grey-100 flex flex-col min-h-[400px]">
+                    <div className="bg-white rounded-lg border border-grey-100 flex flex-col min-h-100">
                       <textarea
-                        className="flex-1 p-6 font-mono text-[13px] bg-transparent border-none focus:outline-none resize-none min-h-[300px]"
+                        className="flex-1 p-6 font-mono text-[13px] bg-transparent border-none focus:outline-none resize-none min-h-75"
                         spellCheck={false}
                         value={selectedBody}
                         onChange={(e) => {

@@ -404,6 +404,25 @@ adminRouter.post("/registry/discover", async (c) => {
   );
 });
 
+// Scrapeable coverage: distinct (vertical, geo) pairs that have active sources
+// in the registry, with a count. Drives the leads-page scrape picker — every
+// row here resolves to real URLs (unlike directory_configs, which are discovery
+// intent and may have zero sources behind them).
+adminRouter.get("/registry/source-coverage", async (c) => {
+  const rows = await db
+    .select({
+      vertical: sourceRegistry.vertical,
+      geo: sourceRegistry.geo,
+      source_count: count(),
+    })
+    .from(sourceRegistry)
+    .where(eq(sourceRegistry.active, true))
+    .groupBy(sourceRegistry.vertical, sourceRegistry.geo)
+    .orderBy(sourceRegistry.vertical, sourceRegistry.geo);
+
+  return c.json(rows.map((r) => ({ vertical: r.vertical, geo: r.geo, source_count: Number(r.source_count) })));
+});
+
 // Convenience: returns (vertical, geo) tuples currently used by any active
 // campaign. The UI uses this to render a "Refresh" button per active
 // combination, regardless of whether DIRECTORY_CONFIGS has them.
