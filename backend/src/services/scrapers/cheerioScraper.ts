@@ -1,5 +1,4 @@
 import * as cheerio from "cheerio";
-import { sourceRegistry } from "../../config/sourceRegistry";
 import { isValidLeadEmail } from "./emailFilter";
 
 export interface Lead {
@@ -24,6 +23,57 @@ const ROLE_KEYWORDS = [
   "counselor", "adviser", "advisor", "administrator", "executive",
   "assistant", "associate", "superintendent", "provost",
 ];
+
+// Words that appear in page titles but are not the institution name.
+const PAGE_NAME_WORDS = new Set([
+  "home", "contact", "about", "welcome", "us", "page", "news", "blog",
+  "events", "gallery", "admissions", "index", "main", "site", "website",
+]);
+
+// Words that indicate an organisation unit, not a person's name.
+const INSTITUTION_WORDS = new Set([
+  "school", "high", "college", "university", "institute", "institution",
+  "department", "office", "academy", "centre", "center", "campus",
+  "faculty", "foundation", "association", "polytechnic", "seminary",
+]);
+
+// Local-parts that represent a role/inbox, not an individual.
+const ROLE_LOCAL_PARTS = new Set([
+  "admissions", "principal", "rector", "registrar", "dean", "provost",
+  "director", "headmaster", "bursar",
+]);
+
+// Extracts a clean institution name from a page. Prefers og:site_name/application-name
+// meta tags; falls back to the page <title> with page-name segments stripped.
+function cleanCompanyName($: cheerio.CheerioAPI): string | undefined {
+  const ogSiteName = $('meta[property="og:site_name"]').attr("content")?.trim();
+  if (ogSiteName) return ogSiteName;
+
+  const appName = $('meta[name="application-name"]').attr("content")?.trim();
+  if (appName) return appName;
+
+  const title = $("title").first().text().trim();
+  if (!title) return undefined;
+
+  // Split on common title separators and drop parts made entirely of page-name words.
+  const parts = title.split(/\s*[|\-—–·]\s*/);
+  if (parts.length < 2) return title;
+
+  const meaningful = parts.filter((p) => {
+    const words = p.trim().toLowerCase().split(/\s+/);
+    return words.some((w) => !PAGE_NAME_WORDS.has(w));
+  });
+
+  if (meaningful.length === 0) return title;
+  // Longer parts tend to be institution names; shorter ones tend to be page labels.
+  return meaningful.sort((a, b) => b.length - a.length)[0]!.trim();
+}
+
+function deriveRoleEmailName(local: string): string | null {
+  const base = local.toLowerCase().split("+")[0] ?? "";
+  if (!ROLE_LOCAL_PARTS.has(base)) return null;
+  return base.charAt(0).toUpperCase() + base.slice(1);
+}
 
 async function fetchPage(url: string): Promise<string | null> {
   const controller = new AbortController();
@@ -67,6 +117,7 @@ function parseName(text: string): string | null {
   const cleaned = text.replace(/[^a-zA-Z\s\-'.]/g, "").trim();
   const words = cleaned.split(/\s+/).filter((w) => w.length >= 2);
   if (words.length < 2 || words.length > 4) return null;
+  if (words.some((w) => INSTITUTION_WORDS.has(w.toLowerCase()))) return null;
   return words.join(" ");
 }
 
@@ -95,25 +146,32 @@ function extractLeadsFromPage(
 
     const lead: Lead = { email: emailRaw, website, company };
 
-    // If the link text is a name (not the email itself), use it
-    const linkText = $(el).text().trim();
-    if (linkText && !linkText.includes("@")) {
-      const parsed = parseName(linkText);
-      if (parsed) lead.name = parsed;
-    }
+    const local = emailRaw.split("@")[0] ?? "";
+    const roleName = deriveRoleEmailName(local);
 
-    // Look in nearest container for name heading + role
-    const $container = $(el).closest("div, li, article, section, td, tr, p");
-    if ($container.length) {
-      if (!lead.name) {
-        const heading = $container.find("h1,h2,h3,h4,h5,h6,strong,b").first().text().trim();
-        if (heading && !heading.includes("@")) {
-          const parsed = parseName(heading);
-          if (parsed) lead.name = parsed;
-        }
+    if (roleName) {
+      lead.name = roleName;
+    } else {
+      // If the link text is a name (not the email itself), use it
+      const linkText = $(el).text().trim();
+      if (linkText && !linkText.includes("@")) {
+        const parsed = parseName(linkText);
+        if (parsed) lead.name = parsed;
       }
-      if (!lead.role) {
-        lead.role = extractRole($container.text()) ?? undefined;
+
+      // Look in nearest container for name heading + role
+      const $container = $(el).closest("div, li, article, section, td, tr, p");
+      if ($container.length) {
+        if (!lead.name) {
+          const heading = $container.find("h1,h2,h3,h4,h5,h6,strong,b").first().text().trim();
+          if (heading && !heading.includes("@")) {
+            const parsed = parseName(heading);
+            if (parsed) lead.name = parsed;
+          }
+        }
+        if (!lead.role) {
+          lead.role = extractRole($container.text()) ?? undefined;
+        }
       }
     }
 
@@ -131,10 +189,7 @@ function extractLeadsFromPage(
   return results;
 }
 
-export async function scrapeWebsite(
-  url: string,
-  source: keyof typeof sourceRegistry = "generic"
-): Promise<Lead[]> {
+export async function scrapeWebsite(url: string): Promise<Lead[]> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
   let response: Response;
@@ -148,8 +203,7 @@ export async function scrapeWebsite(
   const html = await response.text();
   const $ = cheerio.load(html);
 
-  const selectors = sourceRegistry[source];
-  const company = $(selectors.company).first().text().trim() || undefined;
+  const company = cleanCompanyName($);
 
   const allLeads = extractLeadsFromPage($, url, company);
 

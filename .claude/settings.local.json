@@ -75,7 +75,8 @@
       "PowerShell(Invoke-RestMethod -Uri \"http://localhost:3001/api/v1/campaigns\" -Method GET 2>&1 | ConvertTo-Json -Depth 3)",
       "Bash(xargs grep -l \"Unauthorized\\\\|auth\\\\|middleware\")",
       "Bash(xargs grep -l \"backendToken\\\\|auth.*route\\\\|nextauth\")",
-      "PowerShell(Select-String -Path \"C:\\\\Users\\\\jachi\\\\Desktop\\\\MarketingTool\\\\frontend\\\\.env.local\" -Pattern \"NEXT_PUBLIC_API_URL|ALLOWED_EMAILS|ADMIN_EMAILS\" | ForEach-Object { $_.Line })"
+      "PowerShell(Select-String -Path \"C:\\\\Users\\\\jachi\\\\Desktop\\\\MarketingTool\\\\frontend\\\\.env.local\" -Pattern \"NEXT_PUBLIC_API_URL|ALLOWED_EMAILS|ADMIN_EMAILS\" | ForEach-Object { $_.Line })",
+      "Bash(xargs cat)"
     ],
     "deny": [
       "Read(./.env)",

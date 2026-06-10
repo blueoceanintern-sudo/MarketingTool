@@ -21,6 +21,7 @@ export interface EnrichmentInput {
     role: string | null;
     companyName: string;
     companyWebsite: string | null;
+    companySize?: "small" | "medium" | "large" | "unknown" | null;
     industry: string | null;
     region: string;
   };

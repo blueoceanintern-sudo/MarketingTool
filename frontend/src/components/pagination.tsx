@@ -13,20 +13,19 @@ export default function Pagination({ page, totalPages, onPageChange, className =
   const pages = buildPageList(page, totalPages);
 
   return (
-    <div className={`flex items-center gap-1 ${className}`}>
+    <div className={`flex items-center gap-1 text-[13px] ${className}`}>
       <button
         type="button"
         onClick={() => onPageChange(page - 1)}
         disabled={page <= 1}
-        aria-label="Previous page"
-        className="flex items-center justify-center w-8 h-8 rounded text-grey-500 hover:bg-grey-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        className="px-3 py-1.5 mr-1 border border-grey-200 rounded-lg font-medium text-grey-600 hover:bg-grey-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
       >
-        <span className="material-symbols-outlined text-[18px]">chevron_left</span>
+        Previous
       </button>
 
       {pages.map((p, i) =>
         p === "…" ? (
-          <span key={`ellipsis-${i}`} className="w-8 text-center text-[13px] text-grey-400 select-none">
+          <span key={`ellipsis-${i}`} className="w-8 text-center text-grey-400 select-none">
             …
           </span>
         ) : (
@@ -35,7 +34,7 @@ export default function Pagination({ page, totalPages, onPageChange, className =
             type="button"
             onClick={() => onPageChange(p as number)}
             className={[
-              "min-w-[32px] h-8 px-2 rounded text-[13px] font-medium transition-colors",
+              "min-w-8 h-8 px-2 rounded font-medium transition-colors",
               p === page
                 ? "bg-primary text-white"
                 : "text-grey-600 hover:bg-grey-50",
@@ -50,10 +49,9 @@ export default function Pagination({ page, totalPages, onPageChange, className =
         type="button"
         onClick={() => onPageChange(page + 1)}
         disabled={page >= totalPages}
-        aria-label="Next page"
-        className="flex items-center justify-center w-8 h-8 rounded text-grey-500 hover:bg-grey-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        className="px-3 py-1.5 ml-1 border border-grey-200 rounded-lg font-medium text-grey-600 hover:bg-grey-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
       >
-        <span className="material-symbols-outlined text-[18px]">chevron_right</span>
+        Next
       </button>
     </div>
   );

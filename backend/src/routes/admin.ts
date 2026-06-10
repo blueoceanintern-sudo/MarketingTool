@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { db } from "../db";
 import { sourceRegistry, suppressionList, promptTemplates, emailDrafts, campaigns, directoryConfigs, leads, companies, normalizeVertical, normalizeGeo } from "../db/schema";
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and, inArray, count, sql } from "drizzle-orm";
 import { scrapeWebsite } from "../services/scrapers/cheerioScraper";
 import { scrapeWithFallback } from "../services/scrapers/crawl4aiScraper";
 import { isValidLeadEmail } from "../services/scrapers/emailFilter";
@@ -45,20 +45,73 @@ export const adminRouter = new Hono<{ Variables: { user: AuthUser } }>();
 // ---------------------------------------------------------------------------
 
 adminRouter.get("/registry/sources", async (c) => {
-  const rows = await db.select().from(sourceRegistry).orderBy(sourceRegistry.createdAt);
-  return c.json(rows.map((r) => ({
-    id: r.id,
-    name: r.name,
-    vertical: r.vertical,
-    geo: r.geo,
-    url: r.url,
-    scraper_type: r.scraperType,
-    legal_flag: r.legalFlag,
-    selectors: r.selectors,
-    active: r.active,
-    created_at: r.createdAt.toISOString(),
-    updated_at: r.updatedAt.toISOString(),
-  })));
+  const page = Math.max(1, parseInt(c.req.query("page") ?? "1", 10) || 1);
+  const limit = Math.min(200, Math.max(1, parseInt(c.req.query("limit") ?? "25", 10) || 25));
+  const offset = (page - 1) * limit;
+
+  const geoParam = c.req.query("geo");
+  const verticalParam = c.req.query("vertical");
+  const activeParam = c.req.query("active");
+
+  const where = and(
+    geoParam ? eq(sourceRegistry.geo, geoParam) : undefined,
+    verticalParam ? eq(sourceRegistry.vertical, verticalParam) : undefined,
+    activeParam === "true" ? eq(sourceRegistry.active, true) : undefined,
+  );
+
+  const [filteredCount] = await db.select({ total: count() }).from(sourceRegistry).where(where);
+  const total = Number(filteredCount?.total ?? 0);
+
+  const rows = await db
+    .select()
+    .from(sourceRegistry)
+    .where(where)
+    .orderBy(sourceRegistry.createdAt)
+    .limit(limit)
+    .offset(offset);
+
+  // Global stats + distinct facets (unfiltered) — power the overview cards,
+  // the filter dropdowns, and the vertical/geo autocomplete in the modals.
+  const [globalRow] = await db
+    .select({
+      total: count(),
+      active: sql<number>`count(*) filter (where ${sourceRegistry.active})`,
+    })
+    .from(sourceRegistry);
+
+  const geoRows = await db.selectDistinct({ geo: sourceRegistry.geo }).from(sourceRegistry).orderBy(sourceRegistry.geo);
+  const verticalRows = await db
+    .selectDistinct({ vertical: sourceRegistry.vertical })
+    .from(sourceRegistry)
+    .orderBy(sourceRegistry.vertical);
+
+  return c.json({
+    data: rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      vertical: r.vertical,
+      geo: r.geo,
+      url: r.url,
+      scraper_type: r.scraperType,
+      legal_flag: r.legalFlag,
+      selectors: r.selectors,
+      active: r.active,
+      created_at: r.createdAt.toISOString(),
+      updated_at: r.updatedAt.toISOString(),
+    })),
+    total,
+    page,
+    limit,
+    total_pages: Math.ceil(total / limit),
+    summary: {
+      total: Number(globalRow?.total ?? 0),
+      active: Number(globalRow?.active ?? 0),
+    },
+    facets: {
+      geos: geoRows.map((r) => r.geo),
+      verticals: verticalRows.map((r) => r.vertical),
+    },
+  });
 });
 
 adminRouter.post("/registry/sources", requireAdmin, async (c) => {
@@ -396,7 +449,7 @@ adminRouter.post("/registry/sources/:id/scrape", async (c) => {
     try {
       const result = source.scraperType === "crawl4ai"
         ? await scrapeWithFallback(source.url)
-        : { leads: await scrapeWebsite(source.url, "generic"), scraper: "cheerio" as const };
+        : { leads: await scrapeWebsite(source.url), scraper: "cheerio" as const };
 
       let saved = 0;
       for (const scraped of result.leads) {
