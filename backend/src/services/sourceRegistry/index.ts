@@ -118,17 +118,17 @@ export async function discoverSources(
   vertical: string,
   geo: string,
   campaignId: string | null,
-): Promise<number> {
+): Promise<{ inserted: number; sourceIds: string[] }> {
   const key = `${normalizeVertical(vertical)}:${resolveGeo(geo)}`;
   const config = await getDirectoryConfig(vertical, geo);
 
   if (!config) {
     console.warn(`[source-registry] no directory config for ${key} — skipping discovery`);
-    return 0;
+    return { inserted: 0, sourceIds: [] };
   }
 
   const results = await tavilySearch(config.query, config.domains);
-  if (results.length === 0) return 0;
+  if (results.length === 0) return { inserted: 0, sourceIds: [] };
 
   const candidateUrls = results.map((r) => r.url);
   const existing = await db
@@ -138,19 +138,19 @@ export async function discoverSources(
   const existingUrls = new Set(existing.map((r) => r.url));
 
   const novel = results.filter((r) => !existingUrls.has(r.url));
-  if (novel.length === 0) return 0;
+  if (novel.length === 0) return { inserted: 0, sourceIds: [] };
 
   const validated = await Promise.allSettled(
     novel.map(async (r) => ({ ...r, ok: await validateUrl(r.url) })),
   );
 
-  let inserted = 0;
+  const sourceIds: string[] = [];
   for (const result of validated) {
     if (result.status !== "fulfilled" || !result.value.ok) continue;
     const { url, title } = result.value;
     try {
       const name = title?.trim() || new URL(url).hostname;
-      await db
+      const [row] = await db
         .insert(sourceRegistry)
         .values({
           name,
@@ -163,13 +163,14 @@ export async function discoverSources(
           active: true,
           generatedBy: campaignId,
         })
-        .onConflictDoNothing();
-      inserted++;
+        .onConflictDoNothing()
+        .returning({ id: sourceRegistry.id });
+      if (row) sourceIds.push(row.id);
     } catch (err) {
       console.error(`[source-registry] failed to insert ${url}:`, err);
     }
   }
 
-  console.log(`[source-registry] ${key}: inserted ${inserted}/${novel.length} new sources`);
-  return inserted;
+  console.log(`[source-registry] ${key}: inserted ${sourceIds.length}/${novel.length} new sources`);
+  return { inserted: sourceIds.length, sourceIds };
 }

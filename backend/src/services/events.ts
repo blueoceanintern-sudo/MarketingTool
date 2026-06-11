@@ -6,8 +6,10 @@ import { client } from "../db";
 export type JobEvent =
   | { kind: "scrape"; campaignId: string; status: "complete" | "failed" | "blocked"; leadsScraped?: number }
   | { kind: "scrape_progress"; campaignId: string; leadsScraped: number }
+  | { kind: "scrape_complete"; count: number }
   | { kind: "drafts"; campaignId: string; generated: number }
   | { kind: "discovery"; vertical: string; geo: string; inserted: number }
+  | { kind: "discovery_scrape_complete"; vertical: string; geo: string; leadsAdded: number }
   | { kind: "enrichment_complete"; campaignId: string; count: number };
 
 const CHANNEL = "job_events";

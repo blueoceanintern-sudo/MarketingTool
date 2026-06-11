@@ -10,9 +10,11 @@ import {
   type Lead,
   type LeadStatus,
 } from "@/lib/api";
+import { toast } from "sonner";
 import { leadsOptions, campaignsOptions, sourceCoverageOptions, keys, type LeadsParams } from "@/lib/queries";
 import Pagination from "@/components/pagination";
 import { LeadEnrichmentDrawer, statusConfig, emailStatusConfig, routingConfig } from "@/components/lead-enrichment-drawer";
+import { useJobEvents } from "@/lib/job-events";
 
 
 interface Props {
@@ -36,7 +38,6 @@ export default function LeadsClient({
   const queryClient = useQueryClient();
   const [isPending, startTransition] = useTransition();
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState(searchFilter);
   const [showScrapeModal, setShowScrapeModal] = useState(false);
 
@@ -63,23 +64,30 @@ export default function LeadsClient({
   const totalPages = leadsResult?.total_pages ?? 0;
   const summary = leadsResult?.summary ?? { auto_queue: 0, rep_review: 0, pending: 0 };
 
-  function showToast(message: string) {
-    setToast(message);
-    setTimeout(() => setToast(null), 4000);
-  }
-
   const scrapeMutation = useMutation({
     mutationFn: (args: Parameters<typeof scrapeLeads>[0]) => scrapeLeads(args),
     onSuccess: (result) => {
       setShowScrapeModal(false);
       if (result === null) {
-        showToast("Scrape failed — check server logs.");
+        toast.error("Scrape failed — check server logs.");
       } else {
-        showToast(`Scraping ${result.queued} source${result.queued === 1 ? "" : "s"} in the background.`);
+        toast.success(`Scraping ${result.queued} source${result.queued === 1 ? "" : "s"}`, {
+          description: "New leads will appear here when done.",
+        });
         queryClient.invalidateQueries({ queryKey: keys.leads });
       }
     },
-    onError: () => showToast("Scrape failed — check server logs."),
+    onError: () => toast.error("Scrape failed — check server logs."),
+  });
+
+  useJobEvents((event) => {
+    if (event.kind === "scrape_complete") {
+      if (event.count > 0) {
+        toast.success(`${event.count} new lead${event.count === 1 ? "" : "s"} added.`);
+      } else {
+        toast.info("Scrape complete — no new leads found.");
+      }
+    }
   });
 
   function navigate(updates: Record<string, string | number | null>) {
@@ -324,11 +332,6 @@ export default function LeadsClient({
         />
       )}
 
-      {toast && (
-        <div className="fixed bottom-6 right-6 z-50 bg-primary text-white px-4 py-3 rounded-lg shadow-lg text-[14px] max-w-xs">
-          {toast}
-        </div>
-      )}
     </div>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Draft } from "@/lib/api";
 import { approveDraft, editDraft, rejectDraft } from "@/lib/api";
@@ -74,9 +74,8 @@ function DraftsTable({ drafts, emptyMessage }: { drafts: Draft[]; emptyMessage: 
                     const conf = confidenceLabel(d.confidence_score);
                     const isOpen = expanded === d.id;
                     return (
-                      <>
+                      <React.Fragment key={d.id}>
                         <tr
-                          key={d.id}
                           className="border-b border-grey-100 last:border-0 hover:bg-grey-50 cursor-pointer"
                           onClick={() => setExpanded(isOpen ? null : d.id)}
                         >
@@ -100,7 +99,7 @@ function DraftsTable({ drafts, emptyMessage }: { drafts: Draft[]; emptyMessage: 
                           </td>
                         </tr>
                         {isOpen && (
-                          <tr key={`${d.id}-body`} className="bg-grey-50 border-b border-grey-100 last:border-0">
+                          <tr className="bg-grey-50 border-b border-grey-100 last:border-0">
                             <td colSpan={5} className="px-6 py-4">
                               <pre className="font-mono text-[12px] text-grey-700 whitespace-pre-wrap leading-relaxed">
                                 {d.body}
@@ -109,7 +108,7 @@ function DraftsTable({ drafts, emptyMessage }: { drafts: Draft[]; emptyMessage: 
                             </td>
                           </tr>
                         )}
-                      </>
+                      </React.Fragment>
                     );
                   })}
                 </tbody>
@@ -140,8 +139,9 @@ function DraftsTable({ drafts, emptyMessage }: { drafts: Draft[]; emptyMessage: 
 function ReviewQueue() {
   const queryClient = useQueryClient();
   const { data: queueData } = useQuery(draftQueueOptions());
-  const drafts = (queueData ?? []).filter((d) => d.status === "pending_review");
+  const allDrafts = (queueData ?? []).filter((d) => d.status === "pending_review");
 
+  const [campaignFilter, setCampaignFilter] = useState<string>("");
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [bodyEdits, setBodyEdits] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -150,6 +150,15 @@ function ReviewQueue() {
   const [rejectReason, setRejectReason] = useState("");
   const [showReject, setShowReject] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Unique campaigns present in the queue, for the filter dropdown.
+  const campaignOptions = Array.from(
+    new Map(allDrafts.map((d) => [d.campaign_id, d.campaign_name])).entries(),
+  );
+
+  const drafts = campaignFilter
+    ? allDrafts.filter((d) => d.campaign_id === campaignFilter)
+    : allDrafts;
 
   const selected = drafts[selectedIdx];
   const selectedBody = selected ? (bodyEdits[selected.id] ?? selected.body) : "";
@@ -189,6 +198,9 @@ function ReviewQueue() {
     });
     setLastSaved(new Date());
   }
+
+  // Reset selection when filter changes so we don't land on an out-of-bounds index.
+  useEffect(() => { setSelectedIdx(0); }, [campaignFilter]);
 
   // The debounce is scheduled from the textarea's onChange; this just clears a
   // pending timer on unmount.
@@ -242,7 +254,7 @@ function ReviewQueue() {
     rejectMutation.mutate({ id: selected.id, reason: rejectReason });
   }
 
-  if (drafts.length === 0) {
+  if (allDrafts.length === 0) {
     return (
       <div className="h-[calc(100vh-8rem)] flex items-center justify-center flex-col gap-4 text-grey-400">
         <span className="material-symbols-outlined text-[48px]">check_circle</span>
@@ -260,10 +272,28 @@ function ReviewQueue() {
       <div className="h-[calc(100vh-8rem)] flex flex-col overflow-hidden">
         <div className="flex-1 flex overflow-hidden">
           <section className="w-65 lg:w-[320px] bg-white border-r border-grey-100 flex flex-col overflow-y-auto shrink-0">
-            <div className="px-5 py-4 border-b border-grey-100 sticky top-0 bg-white z-10">
-              <h2 className="text-[16px] font-semibold text-primary">Queue ({drafts.length})</h2>
+            <div className="px-5 py-4 border-b border-grey-100 sticky top-0 bg-white z-10 flex flex-col gap-3">
+              <h2 className="text-[16px] font-semibold text-primary">
+                Queue ({drafts.length}{campaignFilter ? ` of ${allDrafts.length}` : ""})
+              </h2>
+              {campaignOptions.length > 1 && (
+                <select
+                  value={campaignFilter}
+                  onChange={(e) => setCampaignFilter(e.target.value)}
+                  className="w-full px-2.5 py-1.5 border border-grey-100 rounded text-[12px] bg-white text-grey-700"
+                >
+                  <option value="">All campaigns</option>
+                  {campaignOptions.map(([id, name]) => (
+                    <option key={id} value={id}>{name}</option>
+                  ))}
+                </select>
+              )}
             </div>
-            {drafts.map((draft, idx) => {
+            {drafts.length === 0 ? (
+              <div className="flex-1 flex items-center justify-center p-6 text-center text-grey-400 text-[13px]">
+                No drafts for this campaign.
+              </div>
+            ) : drafts.map((draft, idx) => {
               const c = confidenceLabel(draft.confidence_score);
               return (
                 <button
@@ -288,6 +318,9 @@ function ReviewQueue() {
                     </span>
                   </div>
                   <p className="text-[13px] text-grey-500 truncate">{draft.lead_role}</p>
+                  {!campaignFilter && (
+                    <p className="text-[11px] text-grey-400 truncate mt-0.5">{draft.campaign_name}</p>
+                  )}
                 </button>
               );
             })}
@@ -297,6 +330,7 @@ function ReviewQueue() {
             <section className="flex-1 bg-grey-50 overflow-y-auto">
               <div className="p-4 sm:p-6 lg:p-10 flex flex-col gap-6">
                 <div className="bg-white p-6 rounded-lg shadow-[0_1px_3px_rgba(27,45,91,0.08)]">
+                  <p className="text-[11px] font-semibold text-grey-400 uppercase tracking-wider mb-1">{selected.campaign_name}</p>
                   <h2 className="text-[20px] font-bold text-primary">{selected.lead_name}</h2>
                   <p className="text-[13px] text-grey-500">{selected.subject}</p>
                   <p className="text-[11px] text-grey-400 mt-2">

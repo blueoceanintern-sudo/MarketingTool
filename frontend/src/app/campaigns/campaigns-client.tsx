@@ -5,8 +5,8 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState, type SubmitEvent } from "react";
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { createCampaign, type CampaignStatus } from "@/lib/api";
-import { campaignsOptions, directoryConfigsOptions, activeCombinationsOptions, keys } from "@/lib/queries";
+import { createCampaign, triggerCampaignFetchLeads, type CampaignStatus } from "@/lib/api";
+import { campaignsOptions, taxonomyOptions, keys } from "@/lib/queries";
 import { resolveGeo } from "@/lib/geo";
 import { resolveVertical } from "@/lib/verticals";
 
@@ -17,6 +17,12 @@ const statusConfig: Record<CampaignStatus, { label: string; className: string }>
   complete: { label: "Complete", className: "bg-grey-100 text-grey-500" },
 };
 
+function suggest(options: string[], input: string, max = 5): string[] {
+  const q = input.trim().toLowerCase();
+  if (!q) return options.slice(0, max);
+  return options.filter((o) => o.toLowerCase().includes(q)).slice(0, max);
+}
+
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString("en-SG", { day: "numeric", month: "short", year: "numeric" });
 }
@@ -25,8 +31,7 @@ export default function CampaignsClient() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { data: campaigns = [] } = useQuery(campaignsOptions());
-  const { data: directoryConfigs = [] } = useQuery(directoryConfigsOptions());
-  const { data: activeCombinations = [] } = useQuery(activeCombinationsOptions());
+  const { data: taxonomy = { verticals: [], geos: [] } } = useQuery(taxonomyOptions());
   const [statusFilter, setStatusFilter] = useState<CampaignStatus | "all">("all");
   const [search, setSearch] = useState("");
   const [showModal, setShowModal] = useState(false);
@@ -84,22 +89,10 @@ export default function CampaignsClient() {
     });
   }, [campaigns, statusFilter, search]);
 
-  const availableVerticals = useMemo(
-    () => Array.from(new Set([
-      ...activeCombinations.map((c) => c.vertical),
-      ...directoryConfigs.map((c) => c.vertical),
-    ])).sort(),
-    [activeCombinations, directoryConfigs],
-  );
-  const availableGeos = useMemo(
-    () => Array.from(new Set([
-      ...activeCombinations.map((c) => c.geo),
-      ...directoryConfigs.map((c) => c.geo),
-    ])).sort(),
-    [activeCombinations, directoryConfigs],
-  );
+  const availableVerticals = taxonomy.verticals;
+  const availableGeos = taxonomy.geos;
   const geoChips = useMemo(
-    () => form.geography.split(",").map((g) => g.trim()).filter(Boolean),
+    () => form.geography.split("|").map((g) => g.trim()).filter(Boolean),
     [form.geography],
   );
 
@@ -107,9 +100,9 @@ export default function CampaignsClient() {
     const resolved = resolveGeo(raw);
     if (!resolved) return;
     setForm((f) => {
-      const current = f.geography.split(",").map((g) => g.trim()).filter(Boolean);
+      const current = f.geography.split("|").map((g) => g.trim()).filter(Boolean);
       if (current.includes(resolved)) return f;
-      return { ...f, geography: [...current, resolved].join(",") };
+      return { ...f, geography: [...current, resolved].join("|") };
     });
     setGeoInput("");
   }
@@ -117,7 +110,7 @@ export default function CampaignsClient() {
   function removeGeoChip(geo: string) {
     setForm((f) => ({
       ...f,
-      geography: f.geography.split(",").map((g) => g.trim()).filter((g) => g && g !== geo).join(","),
+      geography: f.geography.split("|").map((g) => g.trim()).filter((g) => g && g !== geo).join("|"),
     }));
   }
 
@@ -146,7 +139,7 @@ export default function CampaignsClient() {
       const { campaign, discovery, error } = await createCampaign({
         name: form.name.trim(),
         vertical: form.vertical.trim(),
-        geography: form.geography.split(",").map((g) => g.trim().toUpperCase()).filter(Boolean),
+        geography: form.geography.split("|").map((g) => g.trim().toUpperCase()).filter(Boolean),
         company_size_target: form.company_size_target,
         status: "draft",
         description: form.description.trim() || null,
@@ -154,24 +147,32 @@ export default function CampaignsClient() {
         call_to_action: form.call_to_action.trim() || null,
       });
       if (error || !campaign) throw new Error(error ?? "Failed to create campaign");
-      return { campaign, discovery };
+      const fetchResult = await triggerCampaignFetchLeads(campaign.id);
+      return { campaign, discovery, added: fetchResult.ok ? (fetchResult.added ?? 0) : 0 };
     },
-    onSuccess: ({ campaign, discovery }) => {
+    onSuccess: ({ campaign, discovery, added }) => {
       queryClient.invalidateQueries({ queryKey: keys.campaigns });
       setShowModal(false);
       resetForm();
 
-      // Surface auto-discovery outcome. already_seeded is the silent case
-      // (source pool already exists) — no toast needed there.
-      if (discovery?.status === "triggered") {
-        toast.info(discovery.message, {
-          description: discovery.domains.length
-            ? `Searching: ${discovery.domains.join(", ")}`
-            : undefined,
+      const geoLabel = `${campaign.vertical} in ${campaign.geography.join(", ")}`;
+
+      if (added > 0) {
+        toast.success(`${added} lead${added === 1 ? "" : "s"} matched`, { description: geoLabel });
+      } else if (discovery?.status === "triggered") {
+        toast.info("Discovery started", {
+          description: `Sources for ${geoLabel} are being scraped — leads will appear shortly.`,
           duration: 8000,
         });
       } else if (discovery?.status === "skipped_no_config") {
-        toast.warning(discovery.message, {
+        toast.warning("No sources configured", {
+          description: `Add a directory config for ${geoLabel} to enable auto-discovery.`,
+          action: { label: "Open Registry", onClick: () => router.push("/registry") },
+          duration: 10000,
+        });
+      } else if (added === 0) {
+        toast.warning("No leads matched yet", {
+          description: `Run scrape or refresh discovery for ${geoLabel} in the Registry.`,
           action: { label: "Open Registry", onClick: () => router.push("/registry") },
           duration: 10000,
         });
@@ -446,10 +447,10 @@ export default function CampaignsClient() {
               </form>
             )}
             <datalist id="campaign-verticals">
-              {availableVerticals.map((v) => <option key={v} value={v} />)}
+              {suggest(availableVerticals, form.vertical).map((v) => <option key={v} value={v} />)}
             </datalist>
             <datalist id="campaign-geos">
-              {availableGeos.map((g) => <option key={g} value={g} />)}
+              {suggest(availableGeos, geoInput).map((g) => <option key={g} value={g} />)}
             </datalist>
           </div>
         </div>
