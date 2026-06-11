@@ -47,6 +47,13 @@ export interface LeadsSummary {
   pending: number;
 }
 
+export interface LeadsSummaryGlobal {
+  total: number;
+  auto_queue: number;
+  rep_review: number;
+  pending: number;
+}
+
 export type PaginatedLeads = Paginated<Lead> & { summary: LeadsSummary };
 
 export type CampaignStatus = "draft" | "active" | "paused" | "complete";
@@ -848,6 +855,13 @@ export async function resolveReply(id: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+export async function getLeadsSummary(): Promise<LeadsSummaryGlobal> {
+  return (
+    (await apiFetch<LeadsSummaryGlobal>("/leads/summary")) ??
+    { total: 0, auto_queue: 0, rep_review: 0, pending: 0 }
+  );
 }
 
 export async function triggerEnrichment(): Promise<{ queued: number } | null> {

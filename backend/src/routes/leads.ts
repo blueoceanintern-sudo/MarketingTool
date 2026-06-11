@@ -585,6 +585,18 @@ allLeadsRouter.delete("/:id/campaigns/:campaignId", async (c) => {
   });
 });
 
+// Global unfiltered summary — used by the leads page to keep the stat cards stable
+// regardless of what search/filter the user has active.
+allLeadsRouter.get("/summary", async (c) => {
+  const [row] = await db.select(SUMMARY_SELECT).from(leads);
+  return c.json({
+    total: Number(row?.total ?? 0),
+    auto_queue: Number(row?.auto_queue ?? 0),
+    rep_review: Number(row?.rep_review ?? 0),
+    pending: Number(row?.pending ?? 0),
+  });
+});
+
 // Trigger enrichment for all scraped (non-CSV) leads that haven't been enriched yet.
 // Returns immediately; enrichment runs async in the background.
 allLeadsRouter.post("/enrich", async (c) => {

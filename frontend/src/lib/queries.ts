@@ -41,6 +41,13 @@ export type LeadsParams = {
 export const leadsOptions = (params: LeadsParams) =>
   queryOptions({ queryKey: ["leads", params], queryFn: () => api.getLeadsPaginated(params) });
 
+export const leadsSummaryOptions = () =>
+  queryOptions({
+    queryKey: ["leads", "summary"],
+    queryFn: () => api.getLeadsSummary(),
+    staleTime: 30_000,
+  });
+
 export const leadEnrichmentOptions = (leadId: string) =>
   queryOptions({
     queryKey: ["leads", leadId, "enrichment"],
