@@ -1,6 +1,6 @@
 import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
 import { db } from "../../db";
-import { suppressionList, emailDrafts, emailEvents, campaigns, leads, promptTemplates } from "../../db/schema";
+import { suppressionList, emailDrafts, emailEvents, campaigns, leads, promptTemplates, campaignLeads } from "../../db/schema";
 import { eq, and, isNotNull, count, gte, min, sql } from "drizzle-orm";
 
 import { buildEmailHtml } from "../../templates/outreachEmail";
@@ -169,6 +169,7 @@ export async function sendDraft(payload: SendPayload): Promise<SendResult> {
       db.update(emailDrafts).set({ status: "sent" }).where(eq(emailDrafts.id, draftId)),
       db.update(leads).set({ lastContactedAt: now, lastDeliveredTemplateId: draft.templateId }).where(eq(leads.id, leadId)),
       db.update(promptTemplates).set({ sendCount: sql`${promptTemplates.sendCount} + 1` }).where(eq(promptTemplates.id, draft.templateId)),
+      db.update(campaignLeads).set({ status: "contacted" }).where(and(eq(campaignLeads.leadId, leadId), eq(campaignLeads.campaignId, campaignId))),
     ]);
     console.log(`[sender:dry-run] draft ${draftId} → ${toEmail} | subject: "${draft.subject}"`);
     return { draftId, status: "sent", messageId: fakeMessageId };
@@ -196,6 +197,7 @@ export async function sendDraft(payload: SendPayload): Promise<SendResult> {
     db.update(emailDrafts).set({ status: "sent" }).where(eq(emailDrafts.id, draftId)),
     db.update(leads).set({ lastContactedAt: now, lastDeliveredTemplateId: draft.templateId }).where(eq(leads.id, leadId)),
     db.update(promptTemplates).set({ sendCount: sql`${promptTemplates.sendCount} + 1` }).where(eq(promptTemplates.id, draft.templateId)),
+    db.update(campaignLeads).set({ status: "contacted" }).where(and(eq(campaignLeads.leadId, leadId), eq(campaignLeads.campaignId, campaignId))),
   ]);
 
   return { draftId, status: "sent", messageId };
@@ -271,6 +273,7 @@ export async function sendFollowUpEmail(payload: FollowUpPayload): Promise<SendR
     const updates: Promise<unknown>[] = [
       db.insert(emailEvents).values({ draftId: originalDraftId, leadId, sesMessageId: `<${fakeMessageId}@dry-run.local>`, sentAt: now }),
       db.update(leads).set(leadSet).where(eq(leads.id, leadId)),
+      db.update(campaignLeads).set({ status: "contacted" }).where(and(eq(campaignLeads.leadId, leadId), eq(campaignLeads.campaignId, campaignId))),
     ];
     if (templateId) {
       updates.push(db.update(promptTemplates).set({ sendCount: sql`${promptTemplates.sendCount} + 1` }).where(eq(promptTemplates.id, templateId)));
@@ -303,6 +306,7 @@ export async function sendFollowUpEmail(payload: FollowUpPayload): Promise<SendR
   const updates: Promise<unknown>[] = [
     db.insert(emailEvents).values({ draftId: originalDraftId, leadId, sesMessageId, sentAt: now }),
     db.update(leads).set(leadSet).where(eq(leads.id, leadId)),
+    db.update(campaignLeads).set({ status: "contacted" }).where(and(eq(campaignLeads.leadId, leadId), eq(campaignLeads.campaignId, campaignId))),
   ];
   if (templateId) {
     updates.push(db.update(promptTemplates).set({ sendCount: sql`${promptTemplates.sendCount} + 1` }).where(eq(promptTemplates.id, templateId)));

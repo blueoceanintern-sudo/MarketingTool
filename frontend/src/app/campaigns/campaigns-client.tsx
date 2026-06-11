@@ -6,7 +6,9 @@ import { useMemo, useState, type SubmitEvent } from "react";
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { createCampaign, type CampaignStatus } from "@/lib/api";
-import { campaignsOptions, keys } from "@/lib/queries";
+import { campaignsOptions, directoryConfigsOptions, activeCombinationsOptions, keys } from "@/lib/queries";
+import { resolveGeo } from "@/lib/geo";
+import { resolveVertical } from "@/lib/verticals";
 
 const statusConfig: Record<CampaignStatus, { label: string; className: string }> = {
   active: { label: "Active", className: "bg-success-bg text-success" },
@@ -23,11 +25,15 @@ export default function CampaignsClient() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { data: campaigns = [] } = useQuery(campaignsOptions());
+  const { data: directoryConfigs = [] } = useQuery(directoryConfigsOptions());
+  const { data: activeCombinations = [] } = useQuery(activeCombinationsOptions());
   const [statusFilter, setStatusFilter] = useState<CampaignStatus | "all">("all");
   const [search, setSearch] = useState("");
   const [showModal, setShowModal] = useState(false);
   const [modalStep, setModalStep] = useState<1 | 2>(1);
   const [formError, setFormError] = useState<string | null>(null);
+  const [verticalNote, setVerticalNote] = useState<string | null>(null);
+  const [geoInput, setGeoInput] = useState("");
   const [form, setForm] = useState({
     name: "",
     vertical: "",
@@ -50,6 +56,8 @@ export default function CampaignsClient() {
     });
     setModalStep(1);
     setFormError(null);
+    setVerticalNote(null);
+    setGeoInput("");
   }
 
   function closeModal() {
@@ -75,6 +83,53 @@ export default function CampaignsClient() {
       return true;
     });
   }, [campaigns, statusFilter, search]);
+
+  const availableVerticals = useMemo(
+    () => Array.from(new Set([
+      ...activeCombinations.map((c) => c.vertical),
+      ...directoryConfigs.map((c) => c.vertical),
+    ])).sort(),
+    [activeCombinations, directoryConfigs],
+  );
+  const availableGeos = useMemo(
+    () => Array.from(new Set([
+      ...activeCombinations.map((c) => c.geo),
+      ...directoryConfigs.map((c) => c.geo),
+    ])).sort(),
+    [activeCombinations, directoryConfigs],
+  );
+  const geoChips = useMemo(
+    () => form.geography.split(",").map((g) => g.trim()).filter(Boolean),
+    [form.geography],
+  );
+
+  function addGeoChip(raw: string) {
+    const resolved = resolveGeo(raw);
+    if (!resolved) return;
+    setForm((f) => {
+      const current = f.geography.split(",").map((g) => g.trim()).filter(Boolean);
+      if (current.includes(resolved)) return f;
+      return { ...f, geography: [...current, resolved].join(",") };
+    });
+    setGeoInput("");
+  }
+
+  function removeGeoChip(geo: string) {
+    setForm((f) => ({
+      ...f,
+      geography: f.geography.split(",").map((g) => g.trim()).filter((g) => g && g !== geo).join(","),
+    }));
+  }
+
+  function handleGeoKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter" || e.key === ",") {
+      e.preventDefault();
+      if (geoInput.trim()) addGeoChip(geoInput);
+    }
+    if (e.key === "Backspace" && !geoInput && geoChips.length > 0) {
+      removeGeoChip(geoChips[geoChips.length - 1]!);
+    }
+  }
 
   const totalLeads = campaigns.reduce((s, c) => s + c.leads_count, 0);
   const avgOpenRate =
@@ -262,7 +317,11 @@ export default function CampaignsClient() {
             </p>
 
             {modalStep === 1 ? (
-              <form onSubmit={handleNext} className="flex flex-col gap-4">
+              <form
+                onSubmit={handleNext}
+                onKeyDown={(e) => { if (e.key === "Enter" && (e.target as HTMLElement).tagName !== "BUTTON") e.preventDefault(); }}
+                className="flex flex-col gap-4"
+              >
                 <label className="flex flex-col gap-1 text-[13px]">
                   Name
                   <input
@@ -276,20 +335,46 @@ export default function CampaignsClient() {
                   Vertical
                   <input
                     required
+                    list="campaign-verticals"
                     value={form.vertical}
-                    onChange={(e) => setForm((f) => ({ ...f, vertical: e.target.value }))}
+                    onChange={(e) => { setForm((f) => ({ ...f, vertical: e.target.value })); setVerticalNote(null); }}
+                    onBlur={(e) => {
+                      const { canonical, wasAlias } = resolveVertical(e.target.value);
+                      setForm((f) => ({ ...f, vertical: canonical }));
+                      setVerticalNote(wasAlias ? `'${e.target.value.trim()}' is an alias — saved as '${canonical}'` : null);
+                    }}
+                    placeholder="e.g. education"
                     className="border border-grey-200 rounded-lg px-3 py-2"
                   />
+                  {verticalNote && <span className="text-[11px] text-grey-400">{verticalNote}</span>}
                 </label>
-                <label className="flex flex-col gap-1 text-[13px]">
-                  Geography (e.g. SG, AU)
-                  <input
-                    required
-                    value={form.geography}
-                    onChange={(e) => setForm((f) => ({ ...f, geography: e.target.value }))}
-                    className="border border-grey-200 rounded-lg px-3 py-2"
-                  />
-                </label>
+                <div className="flex flex-col gap-1 text-[13px]">
+                  <span className="font-normal">Geography</span>
+                  <div className="border border-grey-200 rounded-lg px-3 py-2 flex flex-wrap gap-1.5 min-h-10 items-center focus-within:border-primary transition-colors">
+                    {geoChips.map((geo) => (
+                      <span key={geo} className="flex items-center gap-0.5 bg-primary/10 text-primary text-[12px] px-2 py-0.5 rounded-full">
+                        {geo}
+                        <button
+                          type="button"
+                          onClick={() => removeGeoChip(geo)}
+                          className="leading-none ml-1 hover:text-danger"
+                        >
+                            x
+                        </button>
+                      </span>
+                    ))}
+                    <input
+                      list="campaign-geos"
+                      value={geoInput}
+                      onChange={(e) => setGeoInput(e.target.value)}
+                      onKeyDown={handleGeoKeyDown}
+                      onBlur={() => { if (geoInput.trim()) addGeoChip(geoInput); }}
+                      placeholder={geoChips.length === 0 ? "e.g. SG" : ""}
+                      className="flex-1 min-w-14 outline-none bg-transparent text-[13px]"
+                    />
+                  </div>
+                  <span className="text-[11px] text-grey-400">Enter to add · Backspace to remove last</span>
+                </div>
                 <label className="flex flex-col gap-1 text-[13px]">
                   Company size
                   <select
@@ -360,6 +445,12 @@ export default function CampaignsClient() {
                 </div>
               </form>
             )}
+            <datalist id="campaign-verticals">
+              {availableVerticals.map((v) => <option key={v} value={v} />)}
+            </datalist>
+            <datalist id="campaign-geos">
+              {availableGeos.map((g) => <option key={g} value={g} />)}
+            </datalist>
           </div>
         </div>
       )}

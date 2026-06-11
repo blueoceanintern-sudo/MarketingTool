@@ -43,6 +43,13 @@
       "when": 1781060064604,
       "tag": "0005_public_captain_flint",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1781160437151,
+      "tag": "0006_confused_spitfire",
+      "breakpoints": true
     }
   ]
 }

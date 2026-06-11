@@ -3,7 +3,7 @@ import PostalMime from "postal-mime";
 import { createVerify } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { db } from "../db";
-import { replies, emailEvents, leads, companies, emailDrafts, campaigns, suppressionList, followUps, demos, riskFlags, promptTemplates } from "../db/schema";
+import { replies, emailEvents, leads, companies, emailDrafts, campaigns, suppressionList, followUps, demos, riskFlags, promptTemplates, campaignLeads } from "../db/schema";
 import { count, eq, and, isNull, inArray, asc, sql } from "drizzle-orm";
 
 // ── SNS types ─────────────────────────────────────────────────────────────────
@@ -492,6 +492,10 @@ repliesRouter.post("/webhooks/ses/reply", async (c) => {
       await db
         .delete(followUps)
         .where(and(eq(followUps.leadId, lead.id), eq(followUps.campaignId, campaignId), isNull(followUps.sentAt)));
+      await db
+        .update(campaignLeads)
+        .set({ status: "converted" })
+        .where(and(eq(campaignLeads.leadId, lead.id), eq(campaignLeads.campaignId, campaignId)));
       if (lead.lastDeliveredTemplateId) {
         await db
           .update(promptTemplates)
@@ -503,6 +507,10 @@ repliesRouter.post("/webhooks/ses/reply", async (c) => {
         await db.insert(riskFlags).values({ leadId: lead.id, flagType: "hostile_interaction" });
       }
       await db.insert(suppressionList).values({ email: fromEmail, campaignId, reason: "manual" }).onConflictDoNothing();
+      await db
+        .update(campaignLeads)
+        .set({ status: "suppressed" })
+        .where(and(eq(campaignLeads.leadId, lead.id), eq(campaignLeads.campaignId, campaignId)));
       await db
         .delete(followUps)
         .where(and(eq(followUps.leadId, lead.id), eq(followUps.campaignId, campaignId), isNull(followUps.sentAt)));
@@ -530,8 +538,14 @@ repliesRouter.post("/webhooks/ses/reply", async (c) => {
       } else {
         await db.insert(followUps).values({ leadId: lead.id, campaignId, attemptNumber: 1, scheduledAt: returnDate });
       }
+      // OOO is an auto-response — lead hasn't engaged, follow-up sequence continues; leave status as contacted.
+    } else {
+      // neutral: reply saved, left unresolved for rep review; follow-up sequence continues
+      await db
+        .update(campaignLeads)
+        .set({ status: "replied" })
+        .where(and(eq(campaignLeads.leadId, lead.id), eq(campaignLeads.campaignId, campaignId)));
     }
-    // neutral: reply is saved and left unresolved (flagged for rep review); follow-up sequence continues
   }
 
   console.log(`[reply-webhook] processed reply from ${fromEmail}: category=${category}`);

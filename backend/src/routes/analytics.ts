@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { db } from "../db";
-import { emailDrafts, emailEvents, leads, demos, suppressionList, promptTemplates } from "../db/schema";
-import { isNotNull, count, ne, eq, and, gte, sql } from "drizzle-orm";
+import { emailDrafts, emailEvents, demos, suppressionList, promptTemplates } from "../db/schema";
+import { isNotNull, count, eq, and, gte, sql } from "drizzle-orm";
 
 export const analyticsRouter = new Hono();
 
@@ -15,7 +15,7 @@ analyticsRouter.get("/overview", async (c) => {
     pendingRow,
     suppressedRow,
   ] = await Promise.all([
-    db.select({ total: count() }).from(leads).where(ne(leads.status, "new")),
+    db.select({ total: sql<number>`count(DISTINCT ${emailEvents.leadId})` }).from(emailEvents).where(isNotNull(emailEvents.sentAt)),
     db.select({ total: count() }).from(emailEvents).where(isNotNull(emailEvents.sentAt)),
     db.select({ total: count() }).from(emailEvents).where(isNotNull(emailEvents.openedAt)),
     db.select({ total: count() }).from(emailEvents).where(isNotNull(emailEvents.repliedAt)),

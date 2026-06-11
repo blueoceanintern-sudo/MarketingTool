@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  triggerCampaignScrape,
+  triggerCampaignFetchLeads,
   triggerCampaignDraftGeneration,
   triggerCampaignEnrich,
   updateCampaignStatus,
@@ -19,24 +19,15 @@ interface Props {
 
 export default function CampaignActions({ campaignId, status }: Props) {
   const queryClient = useQueryClient();
-  const [running, setRunning] = useState<"scrape" | "enrich" | "drafts" | null>(null);
+  const [running, setRunning] = useState<"enrich" | "drafts" | null>(null);
   const [busyStatus, setBusyStatus] = useState<CampaignStatus | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
-  // Scrape and draft generation are async backend jobs. We fire the trigger,
+  // Enrich and draft generation are async backend jobs. We fire the trigger,
   // then wait for the SSE completion event (which also invalidates the queries,
   // so the tiles and leads table refresh on their own).
   useJobEvents((event) => {
-    if (event.kind === "scrape" && event.campaignId === campaignId && running === "scrape") {
-      setRunning(null);
-      setMessage(
-        event.status === "complete"
-          ? "Scrape complete."
-          : event.status === "blocked"
-            ? "Scrape blocked (CAPTCHA or robots.txt)."
-            : "Scrape failed.",
-      );
-    } else if (event.kind === "enrichment_complete" && event.campaignId === campaignId && running === "enrich") {
+    if (event.kind === "enrichment_complete" && event.campaignId === campaignId && running === "enrich") {
       setRunning(null);
       setMessage(`Enrichment complete — ${event.count} lead${event.count === 1 ? "" : "s"} enriched.`);
     } else if (event.kind === "drafts" && event.campaignId === campaignId && running === "drafts") {
@@ -49,15 +40,15 @@ export default function CampaignActions({ campaignId, status }: Props) {
     }
   });
 
-  const scrapeMutation = useMutation({
-    mutationFn: () => triggerCampaignScrape(campaignId),
-    onSuccess: ({ ok, error }) => {
+  const fetchLeadsMutation = useMutation({
+    mutationFn: () => triggerCampaignFetchLeads(campaignId),
+    onSuccess: ({ ok, added, error }) => {
       if (!ok) {
-        setMessage(error ?? "Scrape failed");
+        setMessage(error ?? "Fetch leads failed");
         return;
       }
-      setMessage("Scraping…");
-      setRunning("scrape");
+      setMessage(added && added > 0 ? `${added} lead${added === 1 ? "" : "s"} added.` : "No new leads found.");
+      queryClient.invalidateQueries({ queryKey: keys.campaign(campaignId) });
     },
   });
 
@@ -97,13 +88,13 @@ export default function CampaignActions({ campaignId, status }: Props) {
     },
   });
 
-  const scraping = scrapeMutation.isPending || running === "scrape";
+  const fetching = fetchLeadsMutation.isPending;
   const enriching = enrichMutation.isPending || running === "enrich";
   const drafting = draftMutation.isPending || running === "drafts";
 
-  function handleScrape() {
+  function handleFetchLeads() {
     setMessage(null);
-    scrapeMutation.mutate();
+    fetchLeadsMutation.mutate();
   }
 
   function handleEnrich() {
@@ -127,18 +118,18 @@ export default function CampaignActions({ campaignId, status }: Props) {
       <div className="flex items-center gap-2 flex-wrap justify-end">
         <button
           type="button"
-          onClick={handleScrape}
-          disabled={scraping || drafting || status === "complete"}
+          onClick={handleFetchLeads}
+          disabled={fetching || drafting || status === "complete"}
           className="flex items-center gap-2 px-3 py-2 bg-primary text-white rounded-lg text-[13px] font-semibold disabled:opacity-60"
         >
-          <span className="material-symbols-outlined text-[18px]">travel_explore</span>
-          {scraping ? "Scraping…" : "Run Scrape"}
+          <span className="material-symbols-outlined text-[18px]">person_search</span>
+          {fetching ? "Fetching…" : "Fetch Leads"}
         </button>
 
         <button
           type="button"
           onClick={handleEnrich}
-          disabled={enriching || scraping || drafting || status === "complete"}
+          disabled={enriching || fetching || drafting || status === "complete"}
           className="flex items-center gap-2 px-3 py-2 border border-primary text-primary rounded-lg text-[13px] font-semibold disabled:opacity-60"
         >
           <span className="material-symbols-outlined text-[18px]">manage_search</span>
@@ -148,7 +139,7 @@ export default function CampaignActions({ campaignId, status }: Props) {
         <button
           type="button"
           onClick={handleGenerateDrafts}
-          disabled={drafting || scraping || enriching || status === "complete" || status === "draft"}
+          disabled={drafting || fetching || enriching || status === "complete" || status === "draft"}
           title={status === "draft" ? "Activate the campaign before generating drafts" : undefined}
           className="flex items-center gap-2 px-3 py-2 border border-primary text-primary rounded-lg text-[13px] font-semibold disabled:opacity-60"
         >
