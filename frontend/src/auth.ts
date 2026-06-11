@@ -47,9 +47,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     }),
   ],
   callbacks: {
-    async signIn({ user }) {
-      if (!user.email) return false;
-      if (allowedEmails.length > 0 && !allowedEmails.includes(user.email)) return false;
+    async signIn({ user, account, profile }) {
+      console.log("=== SIGNIN CALLBACK ===");
+      console.log("user:", JSON.stringify(user));
+      console.log("account:", JSON.stringify(account));
+      console.log("profile:", JSON.stringify(profile));
       return true;
     },
     async jwt({ token, user }) {
