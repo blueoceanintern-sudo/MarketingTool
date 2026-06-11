@@ -359,6 +359,7 @@ campaignsRouter.post("/:id/fetch-leads", async (c) => {
       and(
         eq(companies.industry, vertical),
         geos.length > 0 ? inArray(companies.location, geos) : undefined,
+        eq(leads.routing, "auto_queue"),
         sql`NOT EXISTS (
           SELECT 1 FROM campaign_leads cl_sup
           WHERE cl_sup.lead_id = ${leads.id}

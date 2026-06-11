@@ -617,7 +617,6 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
                 <th className="px-4 py-4 text-[14px] font-semibold">Vertical</th>
                 <th className="px-4 py-4 text-[14px] font-semibold text-center">Geo</th>
                 <th className="px-4 py-4 text-[14px] font-semibold">URL</th>
-                <th className="px-4 py-4 text-[14px] font-semibold" title="Engine to try first; falls back to Cheerio if it fails">Engine (preferred)</th>
                 <th className="px-4 py-4 text-[14px] font-semibold text-center">Active</th>
                 <th className="px-4 py-4 text-[14px] font-semibold">Created</th>
                 <th className="px-4 py-4 text-[14px] font-semibold"></th>
@@ -632,7 +631,6 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
                   <td className="px-4 py-3 text-[12px] font-mono text-ocean-light truncate max-w-75">
                     <a href={s.url} target="_blank" rel="noreferrer" className="hover:underline">{s.url}</a>
                   </td>
-                  <td className="px-4 py-3 text-[12px] text-grey-500">{scraperTypeLabel[s.scraper_type]}</td>
                   <td className="px-4 py-3 text-center">
                     {s.active ? (
                       <span className="px-2 py-0.5 text-xs font-bold rounded-full bg-success-bg text-success">Active</span>
