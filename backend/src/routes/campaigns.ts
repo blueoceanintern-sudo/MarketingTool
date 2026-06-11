@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { db } from "../db";
-import { campaigns, campaignLeads, emailDrafts, emailEvents, scrapeJobs, sourceRegistry, normalizeVertical, normalizeGeo } from "../db/schema";
-import { eq, and, isNotNull, count } from "drizzle-orm";
+import { campaigns, campaignLeads, campaignLeadExclusions, leads, companies, emailDrafts, emailEvents, scrapeJobs, sourceRegistry, normalizeVertical, normalizeGeo } from "../db/schema";
+import { eq, and, isNotNull, count, inArray, sql } from "drizzle-orm";
 import { runScrapeJob } from "../services/scraping/runScrapeJob";
 import { generateDraftsForCampaign } from "../services/drafting/orchestrator";
 import { enrichLead } from "../services/enrichment/orchestrator";
@@ -331,6 +331,58 @@ campaignsRouter.post("/:id/scrape", async (c) => {
   });
 
   return c.json({ scrape_job_id: jobId, status: "queued" }, 201);
+});
+
+campaignsRouter.post("/:id/fetch-leads", async (c) => {
+  const campaignId = c.req.param("id");
+  const [campaign] = await db
+    .select()
+    .from(campaigns)
+    .where(eq(campaigns.id, campaignId))
+    .limit(1);
+  if (!campaign) return c.json({ error: "Campaign not found" }, 404);
+  if (campaign.status === "complete") {
+    return c.json({ error: "Cannot fetch leads for a completed campaign" }, 400);
+  }
+
+  const geos = campaign.geography.split(",").map(normalizeGeo).filter(Boolean);
+  const vertical = normalizeVertical(campaign.vertical);
+
+  // Match leads whose company was seeded with this campaign's vertical + geo
+  // at scrape time. Exclude leads already in this campaign or manually removed.
+  const matchingLeads = await db
+    .select({ id: leads.id })
+    .from(leads)
+    .innerJoin(companies, eq(leads.companyId, companies.id))
+    .where(
+      and(
+        eq(companies.industry, vertical),
+        geos.length > 0 ? inArray(companies.location, geos) : undefined,
+        sql`NOT EXISTS (
+          SELECT 1 FROM campaign_leads cl_sup
+          WHERE cl_sup.lead_id = ${leads.id}
+          AND cl_sup.status = 'suppressed'
+        )`,
+        sql`NOT EXISTS (
+          SELECT 1 FROM campaign_leads
+          WHERE campaign_leads.lead_id = ${leads.id}
+          AND campaign_leads.campaign_id = ${campaignId}::uuid
+        )`,
+        sql`NOT EXISTS (
+          SELECT 1 FROM campaign_lead_exclusions
+          WHERE campaign_lead_exclusions.lead_id = ${leads.id}
+          AND campaign_lead_exclusions.campaign_id = ${campaignId}::uuid
+        )`,
+      ),
+    );
+
+  if (matchingLeads.length === 0) return c.json({ added: 0 });
+
+  await db.insert(campaignLeads).values(
+    matchingLeads.map((l) => ({ leadId: l.id, campaignId, source: "fetch" })),
+  );
+
+  return c.json({ added: matchingLeads.length });
 });
 
 campaignsRouter.post("/:id/enrich", async (c) => {

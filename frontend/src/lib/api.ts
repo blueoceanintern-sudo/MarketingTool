@@ -90,7 +90,7 @@ export interface Lead {
   status: LeadStatus;
   company_name: string;
   company_source: string | null;
-  campaigns: { id: string; name: string }[];
+  campaigns: { id: string; name: string; status: LeadStatus }[];
   created_at: string;
 }
 
@@ -277,6 +277,20 @@ export async function triggerCampaignScrape(campaignId: string): Promise<{ ok: b
       return { ok: false, error: body.error ?? `Scrape failed (${res.status})` };
     }
     return { ok: true };
+  } catch {
+    return { ok: false, error: "Could not reach the API." };
+  }
+}
+
+export async function triggerCampaignFetchLeads(campaignId: string): Promise<{ ok: boolean; added?: number; error?: string }> {
+  try {
+    const res = await apiRequest(`${BASE}/api/v1/campaigns/${campaignId}/fetch-leads`, { method: "POST" });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return { ok: false, error: body.error ?? `Fetch leads failed (${res.status})` };
+    }
+    const body = (await res.json()) as { added: number };
+    return { ok: true, added: body.added };
   } catch {
     return { ok: false, error: "Could not reach the API." };
   }

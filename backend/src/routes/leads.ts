@@ -10,6 +10,25 @@ import { enrichLead } from "../services/enrichment/orchestrator";
 import { emitJobEvent } from "../services/events";
 import { isValidLeadEmail } from "../services/scrapers/emailFilter";
 
+// Priority order for most-advanced status aggregation across campaign_leads rows.
+// Used in the global leads view to surface the highest-value signal per lead.
+const MOST_ADVANCED_STATUS = sql<string>`COALESCE(
+  (SELECT CASE MAX(CASE cl.status
+    WHEN 'converted'  THEN 5
+    WHEN 'replied'    THEN 4
+    WHEN 'contacted'  THEN 3
+    WHEN 'suppressed' THEN 2
+    WHEN 'new'        THEN 1
+    ELSE 0 END)
+    WHEN 5 THEN 'converted'
+    WHEN 4 THEN 'replied'
+    WHEN 3 THEN 'contacted'
+    WHEN 2 THEN 'suppressed'
+    ELSE 'new' END
+  FROM campaign_leads cl WHERE cl.lead_id = ${leads.id}),
+  'new'
+)`;
+
 interface LeadRow {
   id: string;
   name: string | null;
@@ -47,21 +66,22 @@ function formatLead(row: LeadRow, campaignsForLead: { id: string; name: string }
   };
 }
 
-async function attachCampaignsToLeads(leadIds: string[]): Promise<Map<string, { id: string; name: string }[]>> {
-  const map = new Map<string, { id: string; name: string }[]>();
+async function attachCampaignsToLeads(leadIds: string[]): Promise<Map<string, { id: string; name: string; status: string }[]>> {
+  const map = new Map<string, { id: string; name: string; status: string }[]>();
   if (leadIds.length === 0) return map;
   const rows = await db
     .select({
       leadId: campaignLeads.leadId,
       id: campaigns.id,
       name: campaigns.name,
+      status: campaignLeads.status,
     })
     .from(campaignLeads)
     .innerJoin(campaigns, eq(campaignLeads.campaignId, campaigns.id))
     .where(inArray(campaignLeads.leadId, leadIds));
   for (const row of rows) {
     const bucket = map.get(row.leadId) ?? [];
-    bucket.push({ id: row.id, name: row.name });
+    bucket.push({ id: row.id, name: row.name, status: row.status });
     map.set(row.leadId, bucket);
   }
   return map;
@@ -73,7 +93,6 @@ const LEAD_SELECT = {
   email: leads.email,
   role: leads.role,
   isVerified: leads.isVerified,
-  status: leads.status,
   emailStatus: leads.emailStatus,
   enrichmentSource: leads.enrichmentSource,
   routing: leads.routing,
@@ -115,8 +134,8 @@ allLeadsRouter.get("/", async (c) => {
       )
     : undefined;
 
-  const filterConds = and(
-    statusParam ? eq(leads.status, statusParam as "new" | "contacted" | "replied" | "converted" | "suppressed") : undefined,
+  // Base filters that don't depend on which table holds status
+  const baseFilterConds = and(
     emailStatusParam ? eq(leads.emailStatus, emailStatusParam as "verified" | "pattern_guessed" | "not_found") : undefined,
     routingParam
       ? routingParam === "pending"
@@ -130,7 +149,12 @@ allLeadsRouter.get("/", async (c) => {
   let summaryRow: { total: number; auto_queue: number; rep_review: number; pending: number } | undefined;
 
   if (campaignIdParam) {
-    const where = and(eq(campaignLeads.campaignId, campaignIdParam), filterConds);
+    // Status lives on campaign_leads — filter and select it directly.
+    const where = and(
+      eq(campaignLeads.campaignId, campaignIdParam),
+      statusParam ? eq(campaignLeads.status, statusParam as "new" | "contacted" | "replied" | "converted" | "suppressed") : undefined,
+      baseFilterConds,
+    );
 
     [summaryRow] = await db
       .select(SUMMARY_SELECT)
@@ -140,7 +164,7 @@ allLeadsRouter.get("/", async (c) => {
       .where(where);
 
     rows = await db
-      .select(LEAD_SELECT)
+      .select({ ...LEAD_SELECT, status: campaignLeads.status })
       .from(campaignLeads)
       .innerJoin(leads, eq(campaignLeads.leadId, leads.id))
       .innerJoin(companies, eq(leads.companyId, companies.id))
@@ -149,17 +173,25 @@ allLeadsRouter.get("/", async (c) => {
       .limit(limit)
       .offset(offset);
   } else {
+    // Global view: status filter via EXISTS, display via most-advanced subquery.
+    const where = and(
+      statusParam
+        ? sql`EXISTS (SELECT 1 FROM campaign_leads cl WHERE cl.lead_id = ${leads.id} AND cl.status = ${statusParam})`
+        : undefined,
+      baseFilterConds,
+    );
+
     [summaryRow] = await db
       .select(SUMMARY_SELECT)
       .from(leads)
       .innerJoin(companies, eq(leads.companyId, companies.id))
-      .where(filterConds);
+      .where(where);
 
     rows = await db
-      .select(LEAD_SELECT)
+      .select({ ...LEAD_SELECT, status: MOST_ADVANCED_STATUS })
       .from(leads)
       .innerJoin(companies, eq(leads.companyId, companies.id))
-      .where(filterConds)
+      .where(where)
       .orderBy(leads.createdAt)
       .limit(limit)
       .offset(offset);
@@ -204,7 +236,7 @@ leadsRouter.get("/:id/leads", async (c) => {
   const total = Number(countRow?.total ?? 0);
 
   const rows = await db
-    .select(LEAD_SELECT)
+    .select({ ...LEAD_SELECT, status: campaignLeads.status })
     .from(campaignLeads)
     .innerJoin(leads, eq(campaignLeads.leadId, leads.id))
     .innerJoin(companies, eq(leads.companyId, companies.id))
@@ -350,7 +382,6 @@ leadsRouter.post("/:id/leads/import", async (c) => {
       role: row["role"] ?? "",
       isVerified: false,
       emailStatus: "pattern_guessed",
-      status: "new",
     }).returning();
 
     if (lead) {
@@ -649,7 +680,6 @@ allLeadsRouter.post("/scrape", async (c) => {
             isVerified: false,
             emailStatus: "pattern_guessed",
             scraperUsed: result.scraper,
-            status: "new",
           });
           saved++;
         }

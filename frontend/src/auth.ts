@@ -47,11 +47,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     }),
   ],
   callbacks: {
-    async signIn({ user, account, profile }) {
-      console.log("=== SIGNIN CALLBACK ===");
-      console.log("user:", JSON.stringify(user));
-      console.log("account:", JSON.stringify(account));
-      console.log("profile:", JSON.stringify(profile));
+    async signIn({ user }) {
+      if (!user.email) return false;
+      if (allowedEmails.length > 0 && !allowedEmails.includes(user.email))
+        return false;
       return true;
     },
     async jwt({ token, user }) {
@@ -72,7 +71,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       const now = Math.floor(Date.now() / 1000);
       const backendTokenExp = token.backendTokenExp as number | undefined;
       const roleChanged = token.role !== role;
-      const nearExpiry = !backendTokenExp || backendTokenExp - now < REFRESH_BEFORE_EXPIRY;
+      const nearExpiry =
+        !backendTokenExp || backendTokenExp - now < REFRESH_BEFORE_EXPIRY;
 
       if (user || roleChanged || nearExpiry) {
         token.role = role;

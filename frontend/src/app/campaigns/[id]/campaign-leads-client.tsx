@@ -7,6 +7,7 @@ import { campaignLeadsOptions } from "@/lib/queries";
 import { useJobEvents } from "@/lib/job-events";
 import LeadActions from "./lead-actions";
 import Pagination from "@/components/pagination";
+import { LeadEnrichmentDrawer, statusConfig } from "@/components/lead-enrichment-drawer";
 
 const LEADS_PER_PAGE = 25;
 
@@ -18,13 +19,6 @@ const AVATAR_COLORS = [
   "bg-primary-container text-white",
 ];
 
-const statusMap: Record<string, { label: string; className: string }> = {
-  new:        { label: "New",        className: "bg-neutral-bg text-neutral" },
-  contacted:  { label: "Contacted",  className: "bg-ocean-wash text-primary" },
-  replied:    { label: "Replied",    className: "bg-warning-bg text-warning" },
-  converted:  { label: "Converted",  className: "bg-success-bg text-success" },
-  suppressed: { label: "Suppressed", className: "bg-danger-bg text-danger" },
-};
 
 function initials(lead: Lead) {
   const parts = lead.name.trim().split(/\s+/);
@@ -39,6 +33,7 @@ interface Props {
 export default function CampaignLeadsClient({ campaignId, initialPage }: Props) {
   const [page, setPage] = useState(initialPage);
   const [toast, setToast] = useState<string | null>(null);
+  const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
 
   const { data, isFetching } = useQuery({
     ...campaignLeadsOptions(campaignId, page, LEADS_PER_PAGE),
@@ -91,7 +86,6 @@ export default function CampaignLeadsClient({ campaignId, initialPage }: Props) 
                 <tr className="bg-grey-50 border-b border-grey-100">
                   <th className="px-6 py-3 text-[14px] font-semibold text-grey-700">Name</th>
                   <th className="px-6 py-3 text-[14px] font-semibold text-grey-700">Company</th>
-                  <th className="px-6 py-3 text-[14px] font-semibold text-grey-700">Campaign</th>
                   <th className="px-6 py-3 text-[14px] font-semibold text-grey-700">Email</th>
                   <th className="px-6 py-3 text-[14px] font-semibold text-grey-700">Role</th>
                   <th className="px-6 py-3 text-[14px] font-semibold text-grey-700">Status</th>
@@ -100,10 +94,14 @@ export default function CampaignLeadsClient({ campaignId, initialPage }: Props) 
               </thead>
               <tbody className="divide-y divide-grey-100">
                 {leads.map((lead, i) => {
-                  const badge = statusMap[lead.status] ?? statusMap.new!;
+                  const badge = statusConfig[lead.status] ?? statusConfig.new;
                   const avatarClass = AVATAR_COLORS[i % AVATAR_COLORS.length] ?? AVATAR_COLORS[0];
                   return (
-                    <tr key={lead.id} className="hover:bg-ocean-wash transition-colors duration-150 cursor-pointer">
+                    <tr
+                      key={lead.id}
+                      className="hover:bg-ocean-wash transition-colors duration-150 cursor-pointer"
+                      onClick={() => setSelectedLead(lead)}
+                    >
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
                           <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${avatarClass}`}>
@@ -115,17 +113,6 @@ export default function CampaignLeadsClient({ campaignId, initialPage }: Props) 
                         </div>
                       </td>
                       <td className="px-6 py-4 text-[13px] text-grey-700">{lead.company_name}</td>
-                      <td className="px-6 py-4 text-[13px] text-grey-500">
-                        {lead.campaigns.length === 0 ? "—" : (
-                          <div className="flex flex-wrap gap-1">
-                            {lead.campaigns.map((c) => (
-                              <span key={c.id} className="inline-flex items-center px-2 py-0.5 rounded-full bg-ocean-wash text-primary text-[11px] font-medium">
-                                {c.name}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      </td>
                       <td className="px-6 py-4 text-[13px] font-mono text-ocean-light">{lead.email}</td>
                       <td className="px-6 py-4 text-[13px] text-grey-500">{lead.role}</td>
                       <td className="px-6 py-4">
@@ -133,7 +120,7 @@ export default function CampaignLeadsClient({ campaignId, initialPage }: Props) 
                           {badge.label}
                         </span>
                       </td>
-                      <td className="px-2 py-4 text-right pr-6">
+                      <td className="px-2 py-4 text-right pr-6" onClick={(e) => e.stopPropagation()}>
                         <LeadActions
                           leadId={lead.id}
                           leadName={lead.name || lead.email}
@@ -159,6 +146,10 @@ export default function CampaignLeadsClient({ campaignId, initialPage }: Props) 
           </div>
         )}
       </div>
+
+      {selectedLead && (
+        <LeadEnrichmentDrawer lead={selectedLead} onClose={() => setSelectedLead(null)} />
+      )}
 
       {/* Toast notification — appears at bottom of page when enrichment completes */}
       {toast && (

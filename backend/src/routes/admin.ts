@@ -500,7 +500,6 @@ adminRouter.post("/registry/sources/:id/scrape", async (c) => {
           isVerified: false,
           emailStatus: "pattern_guessed",
           scraperUsed: result.scraper,
-          status: "new",
         });
         saved++;
       }

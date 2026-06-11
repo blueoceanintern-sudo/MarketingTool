@@ -98,7 +98,6 @@ async function persistScrapedLead(
     isVerified: false,
     emailStatus: "pattern_guessed",
     scraperUsed,
-    status: "new",
   }).returning();
 
   if (lead) {

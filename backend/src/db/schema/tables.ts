@@ -54,7 +54,6 @@ export const leads = pgTable("leads", {
   email: text("email").unique().notNull(),
   role: text("role"),
   isVerified: boolean("is_verified").default(false).notNull(),
-  status: leadStatusEnum("status").default("new").notNull(),
   emailStatus: emailStatusEnum("email_status"),
   enrichmentSource: enrichmentSourceEnum("enrichment_source"),
   routing: enrichmentRoutingEnum("routing"),
@@ -75,6 +74,7 @@ export const campaignLeads = pgTable("campaign_leads", {
   campaignId: uuid("campaign_id").references(() => campaigns.id, { onDelete: "cascade" }).notNull(),
   addedAt: timestamp("added_at").defaultNow().notNull(),
   source: text("source"),
+  status: leadStatusEnum("status").default("new").notNull(),
 }, (t) => [
   primaryKey({ columns: [t.leadId, t.campaignId] }),
   index("campaign_leads_campaign_id_idx").on(t.campaignId),

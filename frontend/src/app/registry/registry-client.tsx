@@ -208,12 +208,20 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
   // modal autocompletes — so a vertical/geo that only exists in sources or only
   // in a directory config still shows up everywhere and is filterable.
   const verticals = useMemo(
-    () => Array.from(new Set([...facets.verticals, ...directoryConfigs.map((c) => c.vertical)])).sort(),
-    [facets.verticals, directoryConfigs],
+    () => Array.from(new Set([
+      ...facets.verticals,
+      ...directoryConfigs.map((c) => c.vertical),
+      ...activeCombinations.map((c) => c.vertical),
+    ])).sort(),
+    [facets.verticals, directoryConfigs, activeCombinations],
   );
   const geos = useMemo(
-    () => Array.from(new Set([...facets.geos, ...directoryConfigs.map((c) => c.geo)])).sort(),
-    [facets.geos, directoryConfigs],
+    () => Array.from(new Set([
+      ...facets.geos,
+      ...directoryConfigs.map((c) => c.geo),
+      ...activeCombinations.map((c) => c.geo),
+    ])).sort(),
+    [facets.geos, directoryConfigs, activeCombinations],
   );
 
   const sourcesTotalPages = Math.max(1, sourcesResult.total_pages);
