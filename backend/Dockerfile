@@ -4,4 +4,4 @@ COPY package.json ./
 RUN bun install
 COPY . .
 EXPOSE 3001
-CMD bun run db:migrate
+CMD bun run db:migrate --verbose
