@@ -7,6 +7,7 @@ const db = drizzle(sql);
 
 console.log("Starting migration...");
 try {
+  await sql`CREATE EXTENSION IF NOT EXISTS vector`;
   await migrate(db, { migrationsFolder: "./src/db/migrations" });
   console.log("Migration successful!");
 } catch (err) {
