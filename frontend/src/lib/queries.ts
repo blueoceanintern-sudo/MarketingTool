@@ -96,3 +96,6 @@ export const directoryConfigsOptions = () =>
 
 export const activeCombinationsOptions = () =>
   queryOptions({ queryKey: ["registry", "active-combinations"], queryFn: () => api.getActiveCombinations() });
+
+export const taxonomyOptions = () =>
+  queryOptions({ queryKey: ["registry", "taxonomy"], queryFn: () => api.getTaxonomy() });

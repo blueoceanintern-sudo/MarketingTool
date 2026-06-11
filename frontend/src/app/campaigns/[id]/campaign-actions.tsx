@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { toast } from "sonner";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   triggerCampaignFetchLeads,
@@ -29,13 +30,13 @@ export default function CampaignActions({ campaignId, status }: Props) {
   useJobEvents((event) => {
     if (event.kind === "enrichment_complete" && event.campaignId === campaignId && running === "enrich") {
       setRunning(null);
-      setMessage(`Enrichment complete — ${event.count} lead${event.count === 1 ? "" : "s"} enriched.`);
+      setMessage(`${event.count} lead${event.count === 1 ? "" : "s"} enriched.`);
     } else if (event.kind === "drafts" && event.campaignId === campaignId && running === "drafts") {
       setRunning(null);
       setMessage(
         event.generated > 0
-          ? `${event.generated} new draft${event.generated !== 1 ? "s" : ""} added to Review Queue.`
-          : "Draft generation complete — check the Review Queue.",
+          ? `${event.generated} draft${event.generated !== 1 ? "s" : ""} added to Review Queue.`
+          : "No new drafts generated.",
       );
     }
   });
@@ -44,11 +45,18 @@ export default function CampaignActions({ campaignId, status }: Props) {
     mutationFn: () => triggerCampaignFetchLeads(campaignId),
     onSuccess: ({ ok, added, error }) => {
       if (!ok) {
-        setMessage(error ?? "Fetch leads failed");
+        setMessage(error ?? "Fetch leads failed.");
         return;
       }
-      setMessage(added && added > 0 ? `${added} lead${added === 1 ? "" : "s"} added.` : "No new leads found.");
       queryClient.invalidateQueries({ queryKey: keys.campaign(campaignId) });
+      if (added && added > 0) {
+        setMessage(`${added} lead${added === 1 ? "" : "s"} matched.`);
+      } else {
+        toast.warning("No leads matched this campaign", {
+          description: "Try running scrape, refreshing discovery, or adding sources in the Registry.",
+        });
+        setMessage(null);
+      }
     },
   });
 
@@ -56,7 +64,7 @@ export default function CampaignActions({ campaignId, status }: Props) {
     mutationFn: () => triggerCampaignEnrich(campaignId),
     onSuccess: ({ ok, count, error }) => {
       if (!ok) {
-        setMessage(error ?? "Enrichment failed");
+        setMessage(error ?? "Enrichment failed.");
         return;
       }
       setMessage(`Enriching ${count} lead${count === 1 ? "" : "s"}…`);
@@ -68,10 +76,10 @@ export default function CampaignActions({ campaignId, status }: Props) {
     mutationFn: () => triggerCampaignDraftGeneration(campaignId),
     onSuccess: ({ ok, error }) => {
       if (!ok) {
-        setMessage(error ?? "Draft generation failed");
+        setMessage(error ?? "Draft generation failed.");
         return;
       }
-      setMessage("Generating drafts — Batch API in progress…");
+      setMessage("Generating drafts…");
       setRunning("drafts");
     },
   });

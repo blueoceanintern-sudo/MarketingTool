@@ -90,6 +90,8 @@ export interface Lead {
   status: LeadStatus;
   company_name: string;
   company_source: string | null;
+  company_industry: string | null;
+  company_location: string | null;
   campaigns: { id: string; name: string; status: LeadStatus }[];
   created_at: string;
 }
@@ -633,6 +635,10 @@ export async function getActiveCombinations(): Promise<ActiveCombination[]> {
   return (await apiFetch<ActiveCombination[]>("/registry/active-combinations")) ?? [];
 }
 
+export async function getTaxonomy(): Promise<{ verticals: string[]; geos: string[] }> {
+  return (await apiFetch<{ verticals: string[]; geos: string[] }>("/registry/taxonomy")) ?? { verticals: [], geos: [] };
+}
+
 export async function triggerDiscovery(
   vertical: string,
   geo: string,
@@ -886,7 +892,7 @@ export async function scrapeLeads(params: {
 
 export async function scrapeRegistrySource(sourceId: string): Promise<{ status: string; source_name: string } | null> {
   try {
-    const res = await apiRequest(`${BASE}/api/v1/admin/registry/sources/${sourceId}/scrape`, { method: "POST" });
+    const res = await apiRequest(`${BASE}/api/v1/registry/sources/${sourceId}/scrape`, { method: "POST" });
     if (!res.ok) return null;
     return res.json() as Promise<{ status: string; source_name: string }>;
   } catch {
