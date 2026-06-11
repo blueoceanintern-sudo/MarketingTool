@@ -19,10 +19,15 @@ import { requireAuth } from "./middleware/auth";
 
 const app = new Hono();
 
+const allowedOrigins = (process.env.CORS_ORIGINS ?? "http://localhost:3000")
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
+
 app.use(
   "*",
   cors({
-    origin:'http://y14jx3eeu46ws29xwijrk2hb.18.142.35.186.sslip.io',
+    origin: allowedOrigins,
     allowMethods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
     allowHeaders: ["Content-Type", "Authorization"],
     credentials: true,
