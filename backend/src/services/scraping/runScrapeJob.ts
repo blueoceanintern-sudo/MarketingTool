@@ -10,7 +10,7 @@ import { enrichLead } from "../enrichment/orchestrator";
 
 function parseGeographies(geography: string): string[] {
   return geography
-    .split(",")
+    .split("|")
     .map(normalizeGeo)
     .filter(Boolean);
 }

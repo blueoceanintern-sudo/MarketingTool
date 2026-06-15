@@ -377,7 +377,17 @@ adminRouter.post("/registry/discover", async (c) => {
     .limit(1);
 
   void discoverSources(vertical, geo, anyCampaign?.id ?? null)
-    .then((inserted) => emitJobEvent({ kind: "discovery", vertical, geo, inserted }))
+    .then(async ({ inserted, sourceIds }) => {
+      await emitJobEvent({ kind: "discovery", vertical, geo, inserted });
+      if (sourceIds.length > 0) {
+        const newSources = await db.select().from(sourceRegistry).where(inArray(sourceRegistry.id, sourceIds));
+        const results = await Promise.allSettled(newSources.map((s) => scrapeSourceRecord(s)));
+        const leadsAdded = results.reduce((sum, r) => (r.status === "fulfilled" ? sum + r.value : sum), 0);
+        await emitJobEvent({ kind: "discovery_scrape_complete", vertical, geo, leadsAdded });
+      } else {
+        await emitJobEvent({ kind: "discovery_scrape_complete", vertical, geo, leadsAdded: 0 });
+      }
+    })
     .catch((err) => {
       console.error(`[discovery] manual refresh ${key} failed:`, err);
       void emitJobEvent({ kind: "discovery", vertical, geo, inserted: 0 });
@@ -423,6 +433,40 @@ adminRouter.get("/registry/source-coverage", async (c) => {
   return c.json(rows.map((r) => ({ vertical: r.vertical, geo: r.geo, source_count: Number(r.source_count) })));
 });
 
+// Canonical taxonomy: distinct normalized verticals + geos from all authoritative
+// tables (source_registry, directory_configs, companies). Used to populate
+// autocomplete datalists so every modal suggests only consistent canonical values.
+adminRouter.get("/registry/taxonomy", async (c) => {
+  const [srVerticals, dcVerticals, coVerticals, srGeos, dcGeos, coGeos] = await Promise.all([
+    db.selectDistinct({ v: sourceRegistry.vertical }).from(sourceRegistry),
+    db.selectDistinct({ v: directoryConfigs.vertical }).from(directoryConfigs),
+    db.selectDistinct({ v: companies.industry }).from(companies)
+      .where(sql`${companies.industry} IS NOT NULL AND ${companies.industry} NOT IN ('general', '')`),
+    db.selectDistinct({ g: sourceRegistry.geo }).from(sourceRegistry),
+    db.selectDistinct({ g: directoryConfigs.geo }).from(directoryConfigs),
+    db.selectDistinct({ g: companies.location }).from(companies)
+      .where(sql`${companies.location} IS NOT NULL AND ${companies.location} NOT IN ('unknown', '')`),
+  ]);
+
+  const verticals = Array.from(
+    new Set([
+      ...srVerticals.map((r) => normalizeVertical(r.v)),
+      ...dcVerticals.map((r) => normalizeVertical(r.v)),
+      ...coVerticals.map((r) => normalizeVertical(r.v ?? "")),
+    ].filter(Boolean)),
+  ).sort();
+
+  const geos = Array.from(
+    new Set([
+      ...srGeos.map((r) => normalizeGeo(r.g)),
+      ...dcGeos.map((r) => normalizeGeo(r.g)),
+      ...coGeos.map((r) => normalizeGeo(r.g ?? "")),
+    ].filter(Boolean)),
+  ).sort();
+
+  return c.json({ verticals, geos });
+});
+
 // Convenience: returns (vertical, geo) tuples currently used by any active
 // campaign. The UI uses this to render a "Refresh" button per active
 // combination, regardless of whether DIRECTORY_CONFIGS has them.
@@ -432,10 +476,10 @@ adminRouter.get("/registry/active-combinations", async (c) => {
     .from(campaigns)
     .where(inArray(campaigns.status, ["active", "paused"]));
 
-  // geography is comma-separated → expand to (vertical, geo) pairs
+  // geography is pipe-separated → expand to (vertical, geo) pairs
   const pairs = new Set<string>();
   for (const row of rows) {
-    for (const g of row.geography.split(",")) {
+    for (const g of row.geography.split("|")) {
       const geo = g.trim();
       if (geo) pairs.add(`${row.vertical}:${geo}`);
     }
@@ -457,6 +501,49 @@ adminRouter.get("/registry/active-combinations", async (c) => {
   return c.json(withConfig);
 });
 
+// Shared helper — scrapes a single registry source row, persists new leads, and returns the count.
+async function scrapeSourceRecord(source: typeof sourceRegistry.$inferSelect): Promise<number> {
+  const result = source.scraperType === "crawl4ai"
+    ? await scrapeWithFallback(source.url)
+    : { leads: await scrapeWebsite(source.url), scraper: "cheerio" as const };
+
+  let saved = 0;
+  for (const scraped of result.leads) {
+    if (!scraped.email) continue;
+    const email = scraped.email.trim().toLowerCase();
+    if (!isValidLeadEmail(email)) continue;
+
+    const [existing] = await db.select({ id: leads.id }).from(leads).where(eq(leads.email, email)).limit(1);
+    if (existing) continue;
+
+    const companyName = scraped.company?.trim() || new URL(scraped.website).hostname;
+    let [company] = await db.select().from(companies).where(eq(companies.name, companyName)).limit(1);
+    if (!company) {
+      const [inserted] = await db.insert(companies).values({
+        name: companyName,
+        industry: source.vertical,
+        companySize: "unknown",
+        location: source.geo,
+        source: scraped.website,
+      }).returning();
+      company = inserted!;
+    }
+
+    await db.insert(leads).values({
+      companyId: company.id,
+      email,
+      name: scraped.name ?? null,
+      role: scraped.role ?? null,
+      isVerified: false,
+      emailStatus: "pattern_guessed",
+      scraperUsed: result.scraper,
+    });
+    saved++;
+  }
+  console.log(`[registry/scrape] ${source.name} → saved=${saved}`);
+  return saved;
+}
+
 // Scrape a specific registry source — persists new leads without campaign linkage.
 adminRouter.post("/registry/sources/:id/scrape", async (c) => {
   const sourceId = c.req.param("id");
@@ -464,51 +551,11 @@ adminRouter.post("/registry/sources/:id/scrape", async (c) => {
   if (!source) return c.json({ error: "Source not found" }, 404);
   if (!source.active) return c.json({ error: "Source is inactive" }, 400);
 
-  void (async () => {
-    try {
-      const result = source.scraperType === "crawl4ai"
-        ? await scrapeWithFallback(source.url)
-        : { leads: await scrapeWebsite(source.url), scraper: "cheerio" as const };
-
-      let saved = 0;
-      for (const scraped of result.leads) {
-        if (!scraped.email) continue;
-        const email = scraped.email.trim().toLowerCase();
-        if (!isValidLeadEmail(email)) continue;
-
-        const [existing] = await db.select({ id: leads.id }).from(leads).where(eq(leads.email, email)).limit(1);
-        if (existing) continue;
-
-        const companyName = scraped.company?.trim() || new URL(scraped.website).hostname;
-        let [company] = await db.select().from(companies).where(eq(companies.name, companyName)).limit(1);
-        if (!company) {
-          const [inserted] = await db.insert(companies).values({
-            name: companyName,
-            industry: source.vertical,
-            companySize: "unknown",
-            location: source.geo,
-            source: scraped.website,
-          }).returning();
-          company = inserted!;
-        }
-
-        await db.insert(leads).values({
-          companyId: company.id,
-          email,
-          name: scraped.name ?? null,
-          role: scraped.role ?? null,
-          isVerified: false,
-          emailStatus: "pattern_guessed",
-          scraperUsed: result.scraper,
-        });
-        saved++;
-      }
-      console.log(`[registry/scrape] ${source.name} → saved=${saved}`);
-      await emitJobEvent({ kind: "enrichment_complete", campaignId: "", count: saved });
-    } catch (err) {
+  void scrapeSourceRecord(source)
+    .then((count) => emitJobEvent({ kind: "enrichment_complete", campaignId: "", count }))
+    .catch((err) => {
       console.error(`[registry/scrape] failed for ${source.name}:`, err);
-    }
-  })();
+    });
 
   return c.json({ status: "queued", source_id: sourceId, source_name: source.name }, 202);
 });

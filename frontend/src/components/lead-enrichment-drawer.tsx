@@ -18,9 +18,10 @@ export const emailStatusConfig: Record<EmailStatus, { label: string; className: 
   not_found:       { label: "Not found",      className: "bg-neutral-bg text-neutral" },
 };
 
-export const routingConfig: Record<EnrichmentRouting, { label: string; className: string }> = {
-  auto_queue: { label: "Auto Queue", className: "bg-success-bg text-success" },
-  rep_review: { label: "Rep Review", className: "bg-warning-bg text-warning" },
+export const routingConfig: Record<EnrichmentRouting | "pending", { label: string; className: string }> = {
+  auto_queue: { label: "Auto Queue",         className: "bg-success-bg text-success" },
+  rep_review: { label: "Rep Review",         className: "bg-warning-bg text-warning" },
+  pending:    { label: "Pending Enrichment", className: "bg-neutral-bg text-neutral" },
 };
 
 export const sourceLabel: Record<EnrichmentSource, string> = {
@@ -83,6 +84,12 @@ export function LeadEnrichmentDrawer({ lead, onClose }: { lead: Lead; onClose: (
           <Section title="Overview">
             <Field label="Company" value={lead.company_name || "—"} />
             <Field label="Role" value={lead.role || "—"} />
+            {lead.company_industry && lead.company_industry !== "general" && (
+              <Field label="Vertical" value={lead.company_industry} />
+            )}
+            {lead.company_location && lead.company_location !== "unknown" && (
+              <Field label="Geo" value={lead.company_location} />
+            )}
             <div className="flex justify-between text-[13px] gap-4">
               <span className="text-grey-500 whitespace-nowrap">Status</span>
               <span className={`px-2 py-0.5 text-[11px] font-bold rounded-full ${statusConfig[lead.status].className}`}>
