@@ -46,6 +46,7 @@ interface LeadRow {
   companySource: string | null;
   companyIndustry: string | null;
   companyLocation: string | null;
+  draftStatus?: string | null;
 }
 
 function formatLead(row: LeadRow, campaignsForLead: { id: string; name: string }[]) {
@@ -61,6 +62,7 @@ function formatLead(row: LeadRow, campaignsForLead: { id: string; name: string }
     enriched_at: row.enrichedAt?.toISOString() ?? null,
     scraper_used: row.scraperUsed,
     status: row.status,
+    draft_status: row.draftStatus ?? null,
     company_name: row.companyName,
     company_source: row.companySource,
     company_industry: row.companyIndustry,
@@ -230,8 +232,12 @@ leadsRouter.get("/:id/leads", async (c) => {
   const page = Math.max(1, parseInt(c.req.query("page") ?? "1", 10) || 1);
   const limit = Math.min(200, Math.max(1, parseInt(c.req.query("limit") ?? "50", 10) || 50));
   const offset = (page - 1) * limit;
+  const statusParam = c.req.query("status") as "new" | "contacted" | "replied" | "converted" | "suppressed" | undefined;
 
-  const where = eq(campaignLeads.campaignId, campaignId);
+  const where = and(
+    eq(campaignLeads.campaignId, campaignId),
+    statusParam ? eq(campaignLeads.status, statusParam) : undefined,
+  );
 
   const [countRow] = await db
     .select({ total: count() })
@@ -242,10 +248,14 @@ leadsRouter.get("/:id/leads", async (c) => {
   const total = Number(countRow?.total ?? 0);
 
   const rows = await db
-    .select({ ...LEAD_SELECT, status: campaignLeads.status })
+    .select({ ...LEAD_SELECT, status: campaignLeads.status, draftStatus: emailDrafts.status })
     .from(campaignLeads)
     .innerJoin(leads, eq(campaignLeads.leadId, leads.id))
     .innerJoin(companies, eq(leads.companyId, companies.id))
+    .leftJoin(emailDrafts, and(
+      eq(emailDrafts.leadId, leads.id),
+      eq(emailDrafts.campaignId, campaignLeads.campaignId),
+    ))
     .where(where)
     .orderBy(campaignLeads.addedAt)
     .limit(limit)

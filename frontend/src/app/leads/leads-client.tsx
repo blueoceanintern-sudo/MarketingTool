@@ -197,19 +197,6 @@ export default function LeadsClient({
             <span className="material-symbols-outlined text-[18px]">travel_explore</span>
             Run Scrape
           </button>
-          <button
-            type="button"
-            onClick={() => enrichMutation.mutate()}
-            disabled={enrichMutation.isPending || pendingEnrichment === 0}
-            className="flex items-center gap-1.5 px-4 py-2 border border-primary text-primary rounded-lg text-[13px] font-semibold disabled:opacity-50"
-          >
-            <span className="material-symbols-outlined text-[18px]">manage_search</span>
-            {enrichMutation.isPending
-              ? "Enriching…"
-              : pendingEnrichment > 0
-                ? `Enrich Pending (${pendingEnrichment.toLocaleString()})`
-                : "Enrich Pending"}
-          </button>
         </div>
       </div>
 
@@ -226,25 +213,35 @@ export default function LeadsClient({
           <p className="text-[13px] text-grey-500">Rep Review</p>
           <h3 className="text-[28px] font-bold text-warning font-mono mt-2">{repReview.toLocaleString()}</h3>
         </div>
-        <div className="bg-white p-5 rounded-lg border border-grey-100">
-          <p className="text-[13px] text-grey-500">Pending Enrichment</p>
-          <h3 className="text-[28px] font-bold text-neutral font-mono mt-2">{pendingEnrichment.toLocaleString()}</h3>
-        </div>
+        <button
+          type="button"
+          onClick={() => enrichMutation.mutate()}
+          disabled={enrichMutation.isPending || pendingEnrichment === 0}
+          className="bg-white p-5 rounded-lg border border-grey-100 text-left w-full hover:border-primary transition-colors"
+        >
+            <div className="flex justify-between">
+                <div>
+                    <p className="text-[13px] text-grey-500">Pending Enrichment</p>
+                    <h3 className="text-[28px] font-bold text-neutral font-mono mt-2">{pendingEnrichment.toLocaleString()}</h3>
+                </div>
+                <div className="flex justify-between items-start mb-3">
+                    {enrichMutation.isPending ? (
+                    <span className="text-[11px] font-medium text-grey-400">Running…</span>
+                    ) : pendingEnrichment > 0 ? (
+                    <span className="text-[11px] font-medium text-primary flex items-center gap-0.5">
+                        <span className="material-symbols-outlined text-[20px]">manage_search</span>
+                        Enrich
+                        <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+                    </span>
+                    ) : null}
+                </div>
+            </div>
+        </button>
       </div>
 
       <div className="bg-white rounded-lg border border-grey-100 overflow-hidden">
         <div className="px-5 py-4 border-b border-grey-100 bg-grey-50 flex flex-wrap gap-3 items-center justify-between">
           <div className="flex flex-wrap gap-2">
-            <select
-              value={statusFilter}
-              onChange={(e) => navigate({ status: e.target.value, page: 1 })}
-              className="px-3 py-1.5 border border-grey-100 rounded text-[13px] bg-white"
-            >
-              <option value="">All Statuses</option>
-              {(Object.keys(statusConfig) as LeadStatus[]).map((s) => (
-                <option key={s} value={s}>{statusConfig[s].label}</option>
-              ))}
-            </select>
             <select
               value={campaignIdFilter}
               onChange={(e) => navigate({ campaign_id: e.target.value, page: 1 })}
@@ -271,10 +268,19 @@ export default function LeadsClient({
               className="px-3 py-1.5 border border-grey-100 rounded text-[13px] bg-white"
             >
               <option value="">All Routing</option>
-              {(Object.keys(routingConfig) as EnrichmentRouting[]).map((r) => (
+              {(Object.keys(routingConfig) as (EnrichmentRouting | "pending")[]).map((r) => (
                 <option key={r} value={r}>{routingConfig[r].label}</option>
               ))}
-              <option value="pending">Pending Enrichment</option>
+            </select>
+             <select
+              value={statusFilter}
+              onChange={(e) => navigate({ status: e.target.value, page: 1 })}
+              className="px-3 py-1.5 border border-grey-100 rounded text-[13px] bg-white"
+            >
+              <option value="">All Statuses</option>
+              {(Object.keys(statusConfig) as LeadStatus[]).map((s) => (
+                <option key={s} value={s}>{statusConfig[s].label}</option>
+              ))}
             </select>
             {hasAnyFilter && (
               <button
@@ -322,7 +328,7 @@ export default function LeadsClient({
               </thead>
               <tbody className="divide-y divide-grey-100">
                 {data.map((lead) => {
-                  const routeBadge = lead.routing ? routingConfig[lead.routing] : null;
+                  const routeBadge = routingConfig[lead.routing ?? "pending"];
                   return (
                     <tr
                       key={lead.id}
@@ -335,18 +341,9 @@ export default function LeadsClient({
                       <td className="px-4 py-3 text-[13px]">{lead.company_name}</td>
                       <td className="px-4 py-3 text-[13px] font-mono">{lead.email}</td>
                       <td className="px-4 py-3">
-                        {routeBadge ? (
-                          <span className={`px-2 py-0.5 text-xs font-bold rounded-full ${routeBadge.className}`}>
-                            {routeBadge.label}
-                          </span>
-                        ) : (
-                          <span
-                            className="px-2 py-0.5 text-xs font-bold rounded-full bg-neutral-bg text-neutral"
-                            title="Awaiting enrichment — routing is assigned once the lead is enriched"
-                          >
-                            Pending
-                          </span>
-                        )}
+                        <span className={`px-2 py-0.5 text-xs font-bold rounded-full ${routeBadge.className}`}>
+                          {routeBadge.label}
+                        </span>
                       </td>
                     </tr>
                   );

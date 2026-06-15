@@ -95,6 +95,7 @@ export interface Lead {
   enriched_at: string | null;
   scraper_used: ScraperType | null;
   status: LeadStatus;
+  draft_status: DraftStatus | null;
   company_name: string;
   company_source: string | null;
   company_industry: string | null;
@@ -420,11 +421,12 @@ export async function getLeadsPaginated(params?: {
 
 export async function getCampaignLeadsPaginated(
   campaignId: string,
-  params?: { page?: number; limit?: number },
+  params?: { page?: number; limit?: number; status?: string },
 ): Promise<Paginated<Lead>> {
   const q = new URLSearchParams();
   if (params?.page && params.page > 1) q.set("page", String(params.page));
   if (params?.limit) q.set("limit", String(params.limit));
+  if (params?.status) q.set("status", params.status);
   const qs = q.toString();
   const result = await apiFetch<Paginated<Lead>>(`/campaigns/${campaignId}/leads${qs ? `?${qs}` : ""}`);
   return result ?? { data: [], total: 0, page: 1, limit: 50, total_pages: 0 };

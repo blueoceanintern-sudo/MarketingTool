@@ -1,9 +1,15 @@
 "use client";
 
 import { useState, type SubmitEvent } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { updateCampaign, type Campaign } from "@/lib/api";
-import { keys } from "@/lib/queries";
+import { keys, taxonomyOptions } from "@/lib/queries";
+
+function suggest(options: string[], input: string, max = 5): string[] {
+  const q = input.trim().toLowerCase();
+  if (!q) return options.slice(0, max);
+  return options.filter((o) => o.toLowerCase().includes(q)).slice(0, max);
+}
 
 interface Props {
   campaign: Campaign;
@@ -18,9 +24,11 @@ const sizeLabel: Record<string, string> = {
 
 export default function CampaignDetails({ campaign }: Props) {
   const queryClient = useQueryClient();
+  const { data: taxonomy = { verticals: [], geos: [] } } = useQuery(taxonomyOptions());
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [geoInput, setGeoInput] = useState("");
   const [form, setForm] = useState({
     name: campaign.name,
     vertical: campaign.vertical,
@@ -190,20 +198,68 @@ export default function CampaignDetails({ campaign }: Props) {
                 Vertical
                 <input
                   required
+                  list="edit-campaign-verticals"
                   value={form.vertical}
                   onChange={(e) => setForm((f) => ({ ...f, vertical: e.target.value }))}
                   className="border border-grey-200 rounded-lg px-3 py-2"
                 />
+                <datalist id="edit-campaign-verticals">
+                  {suggest(taxonomy.verticals, form.vertical).map((v) => <option key={v} value={v} />)}
+                </datalist>
               </label>
-              <label className="flex flex-col gap-1 text-[13px]">
-                Geography (e.g. SG, AU)
-                <input
-                  required
-                  value={form.geography}
-                  onChange={(e) => setForm((f) => ({ ...f, geography: e.target.value }))}
-                  className="border border-grey-200 rounded-lg px-3 py-2"
-                />
-              </label>
+              <div className="flex flex-col gap-1 text-[13px]">
+                Geography
+                <div className="border border-grey-200 rounded-lg px-3 py-2 flex flex-wrap gap-1 min-h-[38px] items-center focus-within:border-primary transition-colors">
+                  {form.geography.split(",").map((g) => g.trim()).filter(Boolean).map((geo) => (
+                    <span key={geo} className="flex items-center gap-0.5 px-2 py-0.5 bg-ocean-wash text-primary rounded text-[12px] font-medium">
+                      {geo}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const chips = form.geography.split(",").map((g) => g.trim()).filter((g) => g && g !== geo);
+                          setForm((f) => ({ ...f, geography: chips.join(", ") }));
+                        }}
+                        className="text-[14px] leading-none ml-0.5 hover:text-danger"
+                      >×</button>
+                    </span>
+                  ))}
+                  <input
+                    list="edit-campaign-geos"
+                    value={geoInput}
+                    onChange={(e) => setGeoInput(e.target.value.toUpperCase())}
+                    onKeyDown={(e) => {
+                      const geo = geoInput.trim();
+                      if ((e.key === "Enter" || e.key === "," || e.key === " ") && geo) {
+                        e.preventDefault();
+                        const existing = form.geography.split(",").map((g) => g.trim()).filter(Boolean);
+                        if (!existing.includes(geo)) {
+                          setForm((f) => ({ ...f, geography: [...existing, geo].join(", ") }));
+                        }
+                        setGeoInput("");
+                      }
+                      if (e.key === "Backspace" && !geoInput) {
+                        const chips = form.geography.split(",").map((g) => g.trim()).filter(Boolean);
+                        setForm((f) => ({ ...f, geography: chips.slice(0, -1).join(", ") }));
+                      }
+                    }}
+                    onBlur={() => {
+                      const geo = geoInput.trim();
+                      if (geo) {
+                        const existing = form.geography.split(",").map((g) => g.trim()).filter(Boolean);
+                        if (!existing.includes(geo)) {
+                          setForm((f) => ({ ...f, geography: [...existing, geo].join(", ") }));
+                        }
+                        setGeoInput("");
+                      }
+                    }}
+                    placeholder={form.geography ? "" : "Add geo (e.g. SG)"}
+                    className="flex-1 min-w-20 outline-none text-[13px] bg-transparent"
+                  />
+                </div>
+                <datalist id="edit-campaign-geos">
+                  {suggest(taxonomy.geos, geoInput).map((g) => <option key={g} value={g} />)}
+                </datalist>
+              </div>
               <label className="flex flex-col gap-1 text-[13px]">
                 Company size
                 <select

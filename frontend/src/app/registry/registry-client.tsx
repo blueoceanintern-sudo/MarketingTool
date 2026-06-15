@@ -562,7 +562,7 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search sources…"
-                className="px-3 py-1.5 border border-grey-200 rounded-l text-[13px] w-40 focus:outline-none focus:border-primary"
+                className="px-3 py-1.5 border border-grey-200 bg-white rounded-l text-[13px] w-40 focus:outline-none focus:border-primary"
               />
               <span className="flex items-center px-2 border border-l-0 border-grey-200 rounded-r bg-white text-grey-400">
                 <span className="material-symbols-outlined text-[16px]">search</span>

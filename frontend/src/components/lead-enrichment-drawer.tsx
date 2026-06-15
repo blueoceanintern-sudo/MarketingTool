@@ -18,9 +18,10 @@ export const emailStatusConfig: Record<EmailStatus, { label: string; className: 
   not_found:       { label: "Not found",      className: "bg-neutral-bg text-neutral" },
 };
 
-export const routingConfig: Record<EnrichmentRouting, { label: string; className: string }> = {
-  auto_queue: { label: "Auto Queue", className: "bg-success-bg text-success" },
-  rep_review: { label: "Rep Review", className: "bg-warning-bg text-warning" },
+export const routingConfig: Record<EnrichmentRouting | "pending", { label: string; className: string }> = {
+  auto_queue: { label: "Auto Queue",         className: "bg-success-bg text-success" },
+  rep_review: { label: "Rep Review",         className: "bg-warning-bg text-warning" },
+  pending:    { label: "Pending Enrichment", className: "bg-neutral-bg text-neutral" },
 };
 
 export const sourceLabel: Record<EnrichmentSource, string> = {

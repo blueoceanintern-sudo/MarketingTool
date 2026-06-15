@@ -21,10 +21,10 @@ export const campaignsOptions = () =>
 export const campaignOptions = (id: string) =>
   queryOptions({ queryKey: keys.campaign(id), queryFn: () => api.getCampaign(id) });
 
-export const campaignLeadsOptions = (id: string, page: number, limit = 50) =>
+export const campaignLeadsOptions = (id: string, page: number, limit = 50, status?: string) =>
   queryOptions({
-    queryKey: ["campaigns", id, "leads", { page, limit }],
-    queryFn: () => api.getCampaignLeadsPaginated(id, { page, limit }),
+    queryKey: ["campaigns", id, "leads", { page, limit, status }],
+    queryFn: () => api.getCampaignLeadsPaginated(id, { page, limit, status }),
   });
 
 // ── Leads ─────────────────────────────────────────────────────────────────--
