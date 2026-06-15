@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Draft } from "@/lib/api";
 import { approveDraft, editDraft, rejectDraft } from "@/lib/api";
@@ -136,12 +137,12 @@ function DraftsTable({ drafts, emptyMessage }: { drafts: Draft[]; emptyMessage: 
 
 // ── Review queue (unchanged logic, new props shape) ───────────────────────────
 
-function ReviewQueue() {
+function ReviewQueue({ initialCampaign = "" }: { initialCampaign?: string }) {
   const queryClient = useQueryClient();
   const { data: queueData } = useQuery(draftQueueOptions());
   const allDrafts = (queueData ?? []).filter((d) => d.status === "pending_review");
 
-  const [campaignFilter, setCampaignFilter] = useState<string>("");
+  const [campaignFilter, setCampaignFilter] = useState<string>(initialCampaign);
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [bodyEdits, setBodyEdits] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -170,6 +171,7 @@ function ReviewQueue() {
         (old ?? []).filter((d) => d.id !== id),
       );
       queryClient.invalidateQueries({ queryKey: keys.drafts });
+      queryClient.invalidateQueries({ queryKey: keys.campaigns });
     },
     [queryClient],
   );
@@ -465,6 +467,8 @@ function ReviewQueue() {
 // ── Root tabbed component ─────────────────────────────────────────────────────
 
 export default function DraftsClient() {
+  const searchParams = useSearchParams();
+  const initialCampaign = searchParams.get("campaign") ?? "";
   const [tab, setTab] = useState<Tab>("queue");
   const { data: queue = [] } = useQuery(draftQueueOptions());
   const { data: scheduled = [] } = useQuery(draftsByStatusOptions("scheduled"));
@@ -505,7 +509,7 @@ export default function DraftsClient() {
       </div>
 
       <div className="flex-1 overflow-hidden">
-        {tab === "queue" && <ReviewQueue />}
+        {tab === "queue" && <ReviewQueue initialCampaign={initialCampaign} />}
         {tab === "scheduled" && (
           <DraftsTable drafts={scheduled} emptyMessage="No drafts scheduled for sending." />
         )}
