@@ -47,6 +47,13 @@ export interface LeadsSummary {
   pending: number;
 }
 
+export interface LeadsSummaryGlobal {
+  total: number;
+  auto_queue: number;
+  rep_review: number;
+  pending: number;
+}
+
 export type PaginatedLeads = Paginated<Lead> & { summary: LeadsSummary };
 
 export type CampaignStatus = "draft" | "active" | "paused" | "complete";
@@ -88,8 +95,11 @@ export interface Lead {
   enriched_at: string | null;
   scraper_used: ScraperType | null;
   status: LeadStatus;
+  draft_status: DraftStatus | null;
   company_name: string;
   company_source: string | null;
+  company_industry: string | null;
+  company_location: string | null;
   campaigns: { id: string; name: string; status: LeadStatus }[];
   created_at: string;
 }
@@ -411,11 +421,12 @@ export async function getLeadsPaginated(params?: {
 
 export async function getCampaignLeadsPaginated(
   campaignId: string,
-  params?: { page?: number; limit?: number },
+  params?: { page?: number; limit?: number; status?: string },
 ): Promise<Paginated<Lead>> {
   const q = new URLSearchParams();
   if (params?.page && params.page > 1) q.set("page", String(params.page));
   if (params?.limit) q.set("limit", String(params.limit));
+  if (params?.status) q.set("status", params.status);
   const qs = q.toString();
   const result = await apiFetch<Paginated<Lead>>(`/campaigns/${campaignId}/leads${qs ? `?${qs}` : ""}`);
   return result ?? { data: [], total: 0, page: 1, limit: 50, total_pages: 0 };
@@ -633,6 +644,10 @@ export async function getActiveCombinations(): Promise<ActiveCombination[]> {
   return (await apiFetch<ActiveCombination[]>("/registry/active-combinations")) ?? [];
 }
 
+export async function getTaxonomy(): Promise<{ verticals: string[]; geos: string[] }> {
+  return (await apiFetch<{ verticals: string[]; geos: string[] }>("/registry/taxonomy")) ?? { verticals: [], geos: [] };
+}
+
 export async function triggerDiscovery(
   vertical: string,
   geo: string,
@@ -844,6 +859,13 @@ export async function resolveReply(id: string): Promise<boolean> {
   }
 }
 
+export async function getLeadsSummary(): Promise<LeadsSummaryGlobal> {
+  return (
+    (await apiFetch<LeadsSummaryGlobal>("/leads/summary")) ??
+    { total: 0, auto_queue: 0, rep_review: 0, pending: 0 }
+  );
+}
+
 export async function triggerEnrichment(): Promise<{ queued: number } | null> {
   try {
     const res = await apiRequest(`${BASE}/api/v1/leads/enrich`, { method: "POST" });
@@ -886,7 +908,7 @@ export async function scrapeLeads(params: {
 
 export async function scrapeRegistrySource(sourceId: string): Promise<{ status: string; source_name: string } | null> {
   try {
-    const res = await apiRequest(`${BASE}/api/v1/admin/registry/sources/${sourceId}/scrape`, { method: "POST" });
+    const res = await apiRequest(`${BASE}/api/v1/registry/sources/${sourceId}/scrape`, { method: "POST" });
     if (!res.ok) return null;
     return res.json() as Promise<{ status: string; source_name: string }>;
   } catch {

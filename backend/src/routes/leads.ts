@@ -44,6 +44,9 @@ interface LeadRow {
   createdAt: Date;
   companyName: string;
   companySource: string | null;
+  companyIndustry: string | null;
+  companyLocation: string | null;
+  draftStatus?: string | null;
 }
 
 function formatLead(row: LeadRow, campaignsForLead: { id: string; name: string }[]) {
@@ -59,8 +62,11 @@ function formatLead(row: LeadRow, campaignsForLead: { id: string; name: string }
     enriched_at: row.enrichedAt?.toISOString() ?? null,
     scraper_used: row.scraperUsed,
     status: row.status,
+    draft_status: row.draftStatus ?? null,
     company_name: row.companyName,
     company_source: row.companySource,
+    company_industry: row.companyIndustry,
+    company_location: row.companyLocation,
     campaigns: campaignsForLead,
     created_at: row.createdAt.toISOString(),
   };
@@ -101,6 +107,8 @@ const LEAD_SELECT = {
   createdAt: leads.createdAt,
   companyName: companies.name,
   companySource: companies.source,
+  companyIndustry: companies.industry,
+  companyLocation: companies.location,
 } as const;
 
 const SUMMARY_SELECT = {
@@ -224,8 +232,12 @@ leadsRouter.get("/:id/leads", async (c) => {
   const page = Math.max(1, parseInt(c.req.query("page") ?? "1", 10) || 1);
   const limit = Math.min(200, Math.max(1, parseInt(c.req.query("limit") ?? "50", 10) || 50));
   const offset = (page - 1) * limit;
+  const statusParam = c.req.query("status") as "new" | "contacted" | "replied" | "converted" | "suppressed" | undefined;
 
-  const where = eq(campaignLeads.campaignId, campaignId);
+  const where = and(
+    eq(campaignLeads.campaignId, campaignId),
+    statusParam ? eq(campaignLeads.status, statusParam) : undefined,
+  );
 
   const [countRow] = await db
     .select({ total: count() })
@@ -236,10 +248,14 @@ leadsRouter.get("/:id/leads", async (c) => {
   const total = Number(countRow?.total ?? 0);
 
   const rows = await db
-    .select({ ...LEAD_SELECT, status: campaignLeads.status })
+    .select({ ...LEAD_SELECT, status: campaignLeads.status, draftStatus: emailDrafts.status })
     .from(campaignLeads)
     .innerJoin(leads, eq(campaignLeads.leadId, leads.id))
     .innerJoin(companies, eq(leads.companyId, companies.id))
+    .leftJoin(emailDrafts, and(
+      eq(emailDrafts.leadId, leads.id),
+      eq(emailDrafts.campaignId, campaignLeads.campaignId),
+    ))
     .where(where)
     .orderBy(campaignLeads.addedAt)
     .limit(limit)
@@ -365,9 +381,9 @@ leadsRouter.post("/:id/leads/import", async (c) => {
 
       const [inserted] = await db.insert(companies).values({
         name: companyName,
-        industry: row["industry"] ?? null,
+        industry: row["industry"] ? normalizeVertical(row["industry"]) : null,
         companySize: size,
-        location: row["market"] ?? "",
+        location: row["market"] ? normalizeGeo(row["market"]) : "",
         source: row["company_website"] || null,
       }).returning();
       company = inserted!;
@@ -579,6 +595,18 @@ allLeadsRouter.delete("/:id/campaigns/:campaignId", async (c) => {
   });
 });
 
+// Global unfiltered summary — used by the leads page to keep the stat cards stable
+// regardless of what search/filter the user has active.
+allLeadsRouter.get("/summary", async (c) => {
+  const [row] = await db.select(SUMMARY_SELECT).from(leads);
+  return c.json({
+    total: Number(row?.total ?? 0),
+    auto_queue: Number(row?.auto_queue ?? 0),
+    rep_review: Number(row?.rep_review ?? 0),
+    pending: Number(row?.pending ?? 0),
+  });
+});
+
 // Trigger enrichment for all scraped (non-CSV) leads that haven't been enriched yet.
 // Returns immediately; enrichment runs async in the background.
 allLeadsRouter.post("/enrich", async (c) => {
@@ -621,7 +649,7 @@ allLeadsRouter.post("/scrape", async (c) => {
     return c.json({ error: "Provide at least one vertical/geo combo or url" }, 400);
   }
 
-  type ScrapeSource = { url: string; scraperType: "cheerio" | "crawl4ai"; name: string };
+  type ScrapeSource = { url: string; scraperType: "cheerio" | "crawl4ai"; name: string; vertical?: string; geo?: string };
   const sources: ScrapeSource[] = [];
 
   if (combos.length > 0) {
@@ -631,11 +659,11 @@ allLeadsRouter.post("/scrape", async (c) => {
       and(eq(sourceRegistry.vertical, normalizeVertical(x.vertical!)), eq(sourceRegistry.geo, normalizeGeo(x.geo!))),
     );
     const registrySources = await db
-      .select({ url: sourceRegistry.url, scraperType: sourceRegistry.scraperType, name: sourceRegistry.name })
+      .select({ url: sourceRegistry.url, scraperType: sourceRegistry.scraperType, name: sourceRegistry.name, vertical: sourceRegistry.vertical, geo: sourceRegistry.geo })
       .from(sourceRegistry)
       .where(and(eq(sourceRegistry.active, true), or(...comboConds)));
     for (const s of registrySources) {
-      sources.push({ url: s.url, scraperType: s.scraperType as "cheerio" | "crawl4ai", name: s.name });
+      sources.push({ url: s.url, scraperType: s.scraperType as "cheerio" | "crawl4ai", name: s.name, vertical: s.vertical, geo: s.geo });
     }
   }
 
@@ -664,9 +692,9 @@ allLeadsRouter.post("/scrape", async (c) => {
           if (!company) {
             const [inserted] = await db.insert(companies).values({
               name: companyName,
-              industry: "general",
+              industry: source.vertical ?? "general",
               companySize: "unknown",
-              location: "unknown",
+              location: source.geo ?? "unknown",
               source: scraped.website,
             }).returning();
             company = inserted!;
@@ -688,7 +716,7 @@ allLeadsRouter.post("/scrape", async (c) => {
       }
     }
     console.log(`[leads/scrape] saved ${saved} new lead(s) across ${sources.length} source(s)`);
-    await emitJobEvent({ kind: "enrichment_complete", campaignId: "", count: saved });
+    await emitJobEvent({ kind: "scrape_complete", count: saved });
   })();
 
   return c.json({ queued: sources.length });

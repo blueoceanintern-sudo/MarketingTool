@@ -1,5 +1,10 @@
+import { Suspense } from "react";
 import DraftsClient from "./drafts-client";
 
 export default function DraftsPage() {
-  return <DraftsClient />;
+  return (
+    <Suspense>
+      <DraftsClient />
+    </Suspense>
+  );
 }

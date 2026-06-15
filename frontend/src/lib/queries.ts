@@ -21,10 +21,10 @@ export const campaignsOptions = () =>
 export const campaignOptions = (id: string) =>
   queryOptions({ queryKey: keys.campaign(id), queryFn: () => api.getCampaign(id) });
 
-export const campaignLeadsOptions = (id: string, page: number, limit = 50) =>
+export const campaignLeadsOptions = (id: string, page: number, limit = 50, status?: string) =>
   queryOptions({
-    queryKey: ["campaigns", id, "leads", { page, limit }],
-    queryFn: () => api.getCampaignLeadsPaginated(id, { page, limit }),
+    queryKey: ["campaigns", id, "leads", { page, limit, status }],
+    queryFn: () => api.getCampaignLeadsPaginated(id, { page, limit, status }),
   });
 
 // ── Leads ─────────────────────────────────────────────────────────────────--
@@ -40,6 +40,13 @@ export type LeadsParams = {
 
 export const leadsOptions = (params: LeadsParams) =>
   queryOptions({ queryKey: ["leads", params], queryFn: () => api.getLeadsPaginated(params) });
+
+export const leadsSummaryOptions = () =>
+  queryOptions({
+    queryKey: ["leads", "summary"],
+    queryFn: () => api.getLeadsSummary(),
+    staleTime: 30_000,
+  });
 
 export const leadEnrichmentOptions = (leadId: string) =>
   queryOptions({
@@ -96,3 +103,6 @@ export const directoryConfigsOptions = () =>
 
 export const activeCombinationsOptions = () =>
   queryOptions({ queryKey: ["registry", "active-combinations"], queryFn: () => api.getActiveCombinations() });
+
+export const taxonomyOptions = () =>
+  queryOptions({ queryKey: ["registry", "taxonomy"], queryFn: () => api.getTaxonomy() });

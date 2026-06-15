@@ -49,7 +49,7 @@ function formatCampaign(row: typeof campaigns.$inferSelect, stats: Awaited<Retur
     id: row.id,
     name: row.name,
     vertical: row.vertical,
-    geography: row.geography.split(",").map((g) => g.trim()).filter(Boolean),
+    geography: row.geography.split("|").map((g) => g.trim()).filter(Boolean),
     company_size_target: row.companySizeTarget,
     status: row.status,
     description: row.description,
@@ -97,8 +97,8 @@ campaignsRouter.post("/", async (c) => {
     return c.json({ error: "name, vertical, geography, company_size_target are required" }, 400);
   }
 
-  const rawGeo = Array.isArray(body.geography) ? body.geography.join(",") : body.geography;
-  const geo = rawGeo.split(",").map((g) => normalizeGeo(g)).filter(Boolean).join(",");
+  const rawGeo = Array.isArray(body.geography) ? body.geography.join("|") : body.geography;
+  const geo = rawGeo.split("|").map((g) => normalizeGeo(g)).filter(Boolean).join("|");
   const sizeTarget = body.company_size_target as "small" | "medium" | "large" | "enterprise";
 
   const description = body.description?.trim() || null;
@@ -140,7 +140,7 @@ async function maybeAutoDiscover(
 ): Promise<DiscoveryStatus> {
   // Campaign geography is a comma-separated list — trigger discovery for
   // every geo independently so an SG+AU campaign auto-fills both pools.
-  const geos = geographyRaw.split(",").map((g) => g.trim()).filter(Boolean);
+  const geos = geographyRaw.split("|").map((g) => g.trim()).filter(Boolean);
   if (geos.length === 0) {
     return { status: "skipped_no_config", message: "Campaign has no geography to discover sources for." };
   }
@@ -175,6 +175,7 @@ async function maybeAutoDiscover(
       console.error(`[discovery] ${verticalNormalized}:${geo} failed:`, err);
     });
     outcomes.push({ geo, status: "triggered", domains: config.domains });
+
   }
 
   // Aggregate to a single DiscoveryStatus. Priority: triggered > skipped > seeded.
@@ -238,8 +239,8 @@ campaignsRouter.patch("/:id", async (c) => {
     updates.vertical = normalizeVertical(trimmed);
   }
   if (body.geography !== undefined) {
-    const rawGeo = Array.isArray(body.geography) ? body.geography.join(",") : body.geography;
-    const geo = rawGeo.split(",").map((g) => normalizeGeo(g)).filter(Boolean).join(",");
+    const rawGeo = Array.isArray(body.geography) ? body.geography.join("|") : body.geography;
+    const geo = rawGeo.split("|").map((g) => normalizeGeo(g)).filter(Boolean).join("|");
     if (!geo) return c.json({ error: "geography cannot be empty" }, 400);
     updates.geography = geo;
   }
@@ -345,7 +346,7 @@ campaignsRouter.post("/:id/fetch-leads", async (c) => {
     return c.json({ error: "Cannot fetch leads for a completed campaign" }, 400);
   }
 
-  const geos = campaign.geography.split(",").map(normalizeGeo).filter(Boolean);
+  const geos = campaign.geography.split("|").map(normalizeGeo).filter(Boolean);
   const vertical = normalizeVertical(campaign.vertical);
 
   // Match leads whose company was seeded with this campaign's vertical + geo
@@ -358,6 +359,7 @@ campaignsRouter.post("/:id/fetch-leads", async (c) => {
       and(
         eq(companies.industry, vertical),
         geos.length > 0 ? inArray(companies.location, geos) : undefined,
+        eq(leads.routing, "auto_queue"),
         sql`NOT EXISTS (
           SELECT 1 FROM campaign_leads cl_sup
           WHERE cl_sup.lead_id = ${leads.id}
