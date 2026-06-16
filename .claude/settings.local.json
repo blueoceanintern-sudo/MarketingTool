@@ -1,7 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(node -e \"const p = require\\('./backend/package.json'\\); console.log\\('drizzle-orm:', p.dependencies['drizzle-orm']\\)\")",
+      "Bash(bun pm *)",
+      "Bash(bunx tsc *)",
+      "mcp__ide__getDiagnostics"
     ],
     "deny": [
       "Read(*/.env)",
