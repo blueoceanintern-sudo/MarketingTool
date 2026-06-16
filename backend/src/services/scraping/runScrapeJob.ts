@@ -90,10 +90,13 @@ async function persistScrapedLead(
   // Scraped emails are presence-only — they haven't been verified by a
   // registry. Mark them pattern_guessed and let the orchestrator upgrade
   // the status if a downstream provider verifies them.
+  const scrapedName = scraped.name?.trim() ?? null;
+  const scrapedParts = scrapedName ? scrapedName.split(/\s+/) : [];
   const [lead] = await db.insert(leads).values({
     companyId: company.id,
     email,
-    name: scraped.name ?? null,
+    firstName: scrapedParts[0] ?? null,
+    lastName: scrapedParts.length > 1 ? scrapedParts.slice(1).join(" ") : null,
     role: scraped.role ?? null,
     isVerified: false,
     emailStatus: "pattern_guessed",

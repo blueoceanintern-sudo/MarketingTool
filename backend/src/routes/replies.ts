@@ -226,7 +226,7 @@ const repliesJoinQuery = () =>
       receivedAt:    replies.receivedAt,
       resolvedAt:    replies.resolvedAt,
       leadId:        leads.id,
-      leadName:      leads.name,
+      leadName:      sql<string | null>`NULLIF(CONCAT_WS(' ', ${leads.firstName}, ${leads.lastName}), '')`,
       leadEmail:     leads.email,
       companyName:   companies.name,
       campaignId:    campaigns.id,

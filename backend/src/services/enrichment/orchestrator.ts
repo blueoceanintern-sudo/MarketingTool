@@ -117,7 +117,8 @@ async function buildInput(leadId: string): Promise<EnrichmentInput> {
   const [row] = await db
     .select({
       leadId: leads.id,
-      name: leads.name,
+      firstName: leads.firstName,
+      lastName: leads.lastName,
       email: leads.email,
       role: leads.role,
       companyName: companies.name,
@@ -144,7 +145,7 @@ async function buildInput(leadId: string): Promise<EnrichmentInput> {
     campaignId: null,
     market,
     seed: {
-      name: row.name ?? deriveRoleEmailName(row.email),
+      name: [row.firstName, row.lastName].filter(Boolean).join(" ") || deriveRoleEmailName(row.email),
       email: row.email,
       role: row.role,
       companyName: row.companyName,
@@ -299,10 +300,11 @@ async function persist(record: EnrichmentRecord, campaignId: string | null): Pro
       routingReason: record.routing_reason,
     });
 
+    const nameParts = full_name ? full_name.trim().split(/\s+/) : null;
     await tx
       .update(leads)
       .set({
-        ...(full_name ? { name: full_name } : {}),
+        ...(nameParts ? { firstName: nameParts[0] ?? null, lastName: nameParts.length > 1 ? nameParts.slice(1).join(" ") : null } : {}),
         ...(role ? { role } : {}),
         ...(email ? { email } : {}),
         emailStatus: record.contact.email_status,

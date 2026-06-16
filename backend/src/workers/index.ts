@@ -1,7 +1,7 @@
 import cron from "node-cron";
 import { db } from "../db";
 import { followUps, leads, emailEvents, emailDrafts, riskFlags, scrapeJobs, campaigns, replies, companies, promptTemplates } from "../db/schema";
-import { eq, and, isNull, lte, isNotNull, lt, or, inArray, notInArray, asc, gte } from "drizzle-orm";
+import { eq, and, isNull, lte, isNotNull, lt, or, inArray, notInArray, asc, gte, sql } from "drizzle-orm";
 import { sendDraft, sendFollowUpEmail, getTotalSent, getWarmupWeek, getDailyCap } from "../services/sender";
 import { runScrapeJob } from "../services/scraping/runScrapeJob";
 import { enrichLead } from "../services/enrichment/orchestrator";
@@ -123,7 +123,7 @@ export async function runFollowUpSender() {
         attemptNumber: followUps.attemptNumber,
         leadEmail: leads.email,
         isVerified: leads.isVerified,
-        leadName: leads.name,
+        leadName: sql<string | null>`NULLIF(CONCAT_WS(' ', ${leads.firstName}, ${leads.lastName}), '')`,
         leadRole: leads.role,
         companyName: companies.name,
         companyIndustry: companies.industry,

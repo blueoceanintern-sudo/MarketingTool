@@ -31,7 +31,8 @@ const MOST_ADVANCED_STATUS = sql<string>`COALESCE(
 
 interface LeadRow {
   id: string;
-  name: string | null;
+  firstName: string | null;
+  lastName: string | null;
   email: string;
   role: string | null;
   isVerified: boolean;
@@ -52,7 +53,7 @@ interface LeadRow {
 function formatLead(row: LeadRow, campaignsForLead: { id: string; name: string }[]) {
   return {
     id: row.id,
-    name: row.name ?? "",
+    name: [row.firstName, row.lastName].filter(Boolean).join(" "),
     email: row.email,
     role: row.role ?? "",
     is_verified: row.isVerified,
@@ -95,7 +96,8 @@ async function attachCampaignsToLeads(leadIds: string[]): Promise<Map<string, { 
 
 const LEAD_SELECT = {
   id: leads.id,
-  name: leads.name,
+  firstName: leads.firstName,
+  lastName: leads.lastName,
   email: leads.email,
   role: leads.role,
   isVerified: leads.isVerified,
@@ -136,7 +138,8 @@ allLeadsRouter.get("/", async (c) => {
 
   const searchCond = searchParam
     ? or(
-        ilike(leads.name, `%${searchParam}%`),
+        ilike(leads.firstName, `%${searchParam}%`),
+        ilike(leads.lastName, `%${searchParam}%`),
         ilike(leads.email, `%${searchParam}%`),
         ilike(companies.name, `%${searchParam}%`),
       )
@@ -282,7 +285,8 @@ leadsRouter.get("/:id/leads/excluded", async (c) => {
       excludedBy: campaignLeadExclusions.excludedBy,
       reason: campaignLeadExclusions.reason,
       email: leads.email,
-      name: leads.name,
+      firstName: leads.firstName,
+      lastName: leads.lastName,
       role: leads.role,
       companyName: companies.name,
     })
@@ -295,7 +299,7 @@ leadsRouter.get("/:id/leads/excluded", async (c) => {
   return c.json(rows.map((r) => ({
     lead_id: r.leadId,
     email: r.email,
-    name: r.name ?? "",
+    name: [r.firstName, r.lastName].filter(Boolean).join(" "),
     role: r.role ?? "",
     company_name: r.companyName,
     excluded_at: r.excludedAt.toISOString(),
@@ -389,11 +393,15 @@ leadsRouter.post("/:id/leads/import", async (c) => {
       company = inserted!;
     }
 
-    const name = (row["contact_name"] ?? "").trim() || null;
+    const fullName = (row["contact_name"] ?? "").trim();
+    const nameParts = fullName ? fullName.split(/\s+/) : [];
+    const firstName = nameParts[0] ?? null;
+    const lastName = nameParts.length > 1 ? nameParts.slice(1).join(" ") : null;
 
     const [lead] = await db.insert(leads).values({
       companyId: company.id,
-      name,
+      firstName,
+      lastName,
       email,
       role: row["role"] ?? "",
       isVerified: false,
@@ -700,10 +708,13 @@ allLeadsRouter.post("/scrape", async (c) => {
             company = inserted!;
           }
 
+          const scrapedName = scraped.name?.trim() ?? null;
+          const scrapedParts = scrapedName ? scrapedName.split(/\s+/) : [];
           await db.insert(leads).values({
             companyId: company.id,
             email,
-            name: scraped.name ?? null,
+            firstName: scrapedParts[0] ?? null,
+            lastName: scrapedParts.length > 1 ? scrapedParts.slice(1).join(" ") : null,
             role: scraped.role ?? null,
             isVerified: false,
             emailStatus: "pattern_guessed",

@@ -123,13 +123,16 @@ async function main() {
   // until migrations are applied.
   async function insertLead(
     companyId: string,
-    name: string,
+    fullName: string,
     email: string,
     role: string,
   ): Promise<string> {
+    const parts = fullName.trim().split(/\s+/);
+    const firstName = parts[0] ?? null;
+    const lastName = parts.length > 1 ? parts.slice(1).join(" ") : null;
     const [row] = await client<{ id: string }[]>`
-      INSERT INTO leads (company_id, name, email, role, is_verified, status, email_status, routing)
-      VALUES (${companyId}, ${name}, ${email}, ${role}, true, 'new', 'verified', 'auto_queue')
+      INSERT INTO leads (company_id, first_name, last_name, email, role, is_verified, status, email_status, routing)
+      VALUES (${companyId}, ${firstName}, ${lastName}, ${email}, ${role}, true, 'new', 'verified', 'auto_queue')
       RETURNING id
     `;
     return row!.id;
