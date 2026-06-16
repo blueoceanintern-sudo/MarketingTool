@@ -529,10 +529,13 @@ async function scrapeSourceRecord(source: typeof sourceRegistry.$inferSelect): P
       company = inserted!;
     }
 
+    const adminScrapedName = scraped.name?.trim() ?? null;
+    const adminNameParts = adminScrapedName ? adminScrapedName.split(/\s+/) : [];
     await db.insert(leads).values({
       companyId: company.id,
       email,
-      name: scraped.name ?? null,
+      firstName: adminNameParts[0] ?? null,
+      lastName: adminNameParts.length > 1 ? adminNameParts.slice(1).join(" ") : null,
       role: scraped.role ?? null,
       isVerified: false,
       emailStatus: "pattern_guessed",

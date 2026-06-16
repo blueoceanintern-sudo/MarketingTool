@@ -50,10 +50,12 @@ export const campaigns = pgTable("campaigns", {
 export const leads = pgTable("leads", {
   id: uuid("id").primaryKey().defaultRandom(),
   companyId: uuid("company_id").references(() => companies.id).notNull(),
-  name: text("name"),
+  firstName: text("first_name"),
+  lastName: text("last_name"),
   email: text("email").unique().notNull(),
   role: text("role"),
   isVerified: boolean("is_verified").default(false).notNull(),
+  status: leadStatusEnum("status").default("new").notNull(),
   emailStatus: emailStatusEnum("email_status"),
   enrichmentSource: enrichmentSourceEnum("enrichment_source"),
   routing: enrichmentRoutingEnum("routing"),

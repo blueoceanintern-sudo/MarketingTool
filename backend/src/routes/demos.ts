@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { db } from "../db";
 import { demos, leads, companies, campaigns } from "../db/schema";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 function formatDemo(row: {
   id: string;
@@ -34,7 +34,7 @@ const demosJoinQuery = () =>
       assignedTo: demos.assignedTo,
       status: demos.status,
       createdAt: demos.createdAt,
-      leadName: leads.name,
+      leadName: sql<string | null>`NULLIF(CONCAT_WS(' ', ${leads.firstName}, ${leads.lastName}), '')`,
       companyName: companies.name,
     })
     .from(demos)

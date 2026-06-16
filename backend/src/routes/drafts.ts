@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { db } from "../db";
 import { emailDrafts, leads, campaigns } from "../db/schema";
-import { count, eq, and } from "drizzle-orm";
+import { count, eq, and, sql } from "drizzle-orm";
 import { logAudit } from "../services/audit/log";
 import type { AuthUser } from "../middleware/auth";
 
@@ -50,7 +50,7 @@ async function getDraftWithJoins(draftId: string) {
       scoreBreakdown: emailDrafts.scoreBreakdown,
       status: emailDrafts.status,
       createdAt: emailDrafts.createdAt,
-      leadName: leads.name,
+      leadName: sql<string | null>`NULLIF(CONCAT_WS(' ', ${leads.firstName}, ${leads.lastName}), '')`,
       leadRole: leads.role,
       campaignName: campaigns.name,
     })
@@ -99,7 +99,7 @@ draftsRouter.get("/", async (c) => {
       scoreBreakdown: emailDrafts.scoreBreakdown,
       status: emailDrafts.status,
       createdAt: emailDrafts.createdAt,
-      leadName: leads.name,
+      leadName: sql<string | null>`NULLIF(CONCAT_WS(' ', ${leads.firstName}, ${leads.lastName}), '')`,
       leadRole: leads.role,
       campaignName: campaigns.name,
     })
@@ -133,7 +133,7 @@ draftsRouter.get("/queue", async (c) => {
       scoreBreakdown: emailDrafts.scoreBreakdown,
       status: emailDrafts.status,
       createdAt: emailDrafts.createdAt,
-      leadName: leads.name,
+      leadName: sql<string | null>`NULLIF(CONCAT_WS(' ', ${leads.firstName}, ${leads.lastName}), '')`,
       leadRole: leads.role,
       campaignName: campaigns.name,
     })

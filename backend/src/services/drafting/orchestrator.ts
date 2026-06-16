@@ -1,4 +1,4 @@
-import { and, eq, inArray, notInArray } from "drizzle-orm";
+import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
 import { db } from "../../db";
 import { campaigns, campaignLeads, companies, emailDrafts, leads, suppressionList } from "../../db/schema";
 import { generateDraftsBatch, type CampaignContext } from "./index";
@@ -51,7 +51,7 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
   const eligible = await db
     .select({
       id: leads.id,
-      name: leads.name,
+      name: sql<string | null>`NULLIF(CONCAT_WS(' ', ${leads.firstName}, ${leads.lastName}), '')`,
       role: leads.role,
       companyName: companies.name,
       industry: companies.industry,
