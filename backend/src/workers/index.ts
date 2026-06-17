@@ -500,7 +500,6 @@ cron.schedule("0 6 * * 1", async () => {
         and(
           eq(promptTemplates.active, true),
           eq(promptTemplates.templateType, templateType),
-          eq(promptTemplates.createdBy, "user"),
           lt(promptTemplates.generationDepth, 5),
           gte(promptTemplates.sendCount, 50),
         ),
