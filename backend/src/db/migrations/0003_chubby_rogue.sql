@@ -1,1 +1,0 @@
-ALTER TABLE "email_drafts" ADD COLUMN "score_breakdown" jsonb;
