@@ -123,7 +123,7 @@ export async function runFollowUpSender() {
         attemptNumber: followUps.attemptNumber,
         leadEmail: leads.email,
         isVerified: leads.isVerified,
-        leadName: sql<string | null>`NULLIF(CONCAT_WS(' ', ${leads.firstName}, ${leads.lastName}), '')`,
+        leadName: leads.name,
         leadRole: leads.role,
         companyName: companies.name,
         companyIndustry: companies.industry,

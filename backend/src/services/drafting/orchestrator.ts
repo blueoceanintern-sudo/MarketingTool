@@ -51,7 +51,7 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
   const eligible = await db
     .select({
       id: leads.id,
-      name: sql<string | null>`NULLIF(CONCAT_WS(' ', ${leads.firstName}, ${leads.lastName}), '')`,
+      name: leads.name,
       role: leads.role,
       companyName: companies.name,
       industry: companies.industry,
