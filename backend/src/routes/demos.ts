@@ -34,7 +34,7 @@ const demosJoinQuery = () =>
       assignedTo: demos.assignedTo,
       status: demos.status,
       createdAt: demos.createdAt,
-      leadName: sql<string | null>`NULLIF(CONCAT_WS(' ', ${leads.firstName}, ${leads.lastName}), '')`,
+      leadName: leads.name,
       companyName: companies.name,
     })
     .from(demos)

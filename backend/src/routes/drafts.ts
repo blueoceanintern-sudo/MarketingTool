@@ -50,7 +50,7 @@ async function getDraftWithJoins(draftId: string) {
       scoreBreakdown: emailDrafts.scoreBreakdown,
       status: emailDrafts.status,
       createdAt: emailDrafts.createdAt,
-      leadName: sql<string | null>`NULLIF(CONCAT_WS(' ', ${leads.firstName}, ${leads.lastName}), '')`,
+      leadName: leads.name,
       leadRole: leads.role,
       campaignName: campaigns.name,
     })
@@ -99,7 +99,7 @@ draftsRouter.get("/", async (c) => {
       scoreBreakdown: emailDrafts.scoreBreakdown,
       status: emailDrafts.status,
       createdAt: emailDrafts.createdAt,
-      leadName: sql<string | null>`NULLIF(CONCAT_WS(' ', ${leads.firstName}, ${leads.lastName}), '')`,
+      leadName: leads.name,
       leadRole: leads.role,
       campaignName: campaigns.name,
     })
@@ -133,7 +133,7 @@ draftsRouter.get("/queue", async (c) => {
       scoreBreakdown: emailDrafts.scoreBreakdown,
       status: emailDrafts.status,
       createdAt: emailDrafts.createdAt,
-      leadName: sql<string | null>`NULLIF(CONCAT_WS(' ', ${leads.firstName}, ${leads.lastName}), '')`,
+      leadName: leads.name,
       leadRole: leads.role,
       campaignName: campaigns.name,
     })
