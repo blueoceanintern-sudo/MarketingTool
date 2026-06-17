@@ -1,5 +1,5 @@
 {
-  "id": "1185f398-0503-40e1-be70-c9f3d2353b73",
+  "id": "d233b250-7326-4322-b489-5269cabb8034",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -190,6 +190,14 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "lead_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'new'"
         }
       },
       "indexes": {
@@ -357,7 +365,7 @@
           "name": "industry",
           "type": "text",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "company_size": {
           "name": "company_size",
@@ -499,6 +507,73 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.directory_configs": {
+      "name": "directory_configs",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "vertical": {
+          "name": "vertical",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "geo": {
+          "name": "geo",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "query": {
+          "name": "query",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "domains": {
+          "name": "domains",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "directory_configs_vertical_geo_unique": {
+          "name": "directory_configs_vertical_geo_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "vertical",
+            "geo"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.email_drafts": {
       "name": "email_drafts",
       "schema": "",
@@ -545,6 +620,12 @@
           "type": "real",
           "primaryKey": false,
           "notNull": true
+        },
+        "score_breakdown": {
+          "name": "score_breakdown",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
         },
         "status": {
           "name": "status",
@@ -945,6 +1026,12 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
+        },
+        "template_id": {
+          "name": "template_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {},
@@ -987,6 +1074,19 @@
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
+        },
+        "follow_ups_template_id_prompt_templates_id_fk": {
+          "name": "follow_ups_template_id_prompt_templates_id_fk",
+          "tableFrom": "follow_ups",
+          "tableTo": "prompt_templates",
+          "columnsFrom": [
+            "template_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -1012,14 +1112,8 @@
           "primaryKey": false,
           "notNull": true
         },
-        "first_name": {
-          "name": "first_name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "last_name": {
-          "name": "last_name",
+        "name": {
+          "name": "name",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -1042,14 +1136,6 @@
           "primaryKey": false,
           "notNull": true,
           "default": false
-        },
-        "status": {
-          "name": "status",
-          "type": "lead_status",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'new'"
         },
         "email_status": {
           "name": "email_status",
@@ -1091,6 +1177,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "last_delivered_template_id": {
+          "name": "last_delivered_template_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp",
@@ -1114,6 +1206,19 @@
           "tableTo": "companies",
           "columnsFrom": [
             "company_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "leads_last_delivered_template_id_prompt_templates_id_fk": {
+          "name": "leads_last_delivered_template_id_prompt_templates_id_fk",
+          "tableFrom": "leads",
+          "tableTo": "prompt_templates",
+          "columnsFrom": [
+            "last_delivered_template_id"
           ],
           "columnsTo": [
             "id"
@@ -1198,6 +1303,83 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'user'"
+        },
+        "generation_depth": {
+          "name": "generation_depth",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "send_count": {
+          "name": "send_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "positive_intent_count": {
+          "name": "positive_intent_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "negative_reply_count": {
+          "name": "negative_reply_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "spam_complaint_count": {
+          "name": "spam_complaint_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "mutation_mode": {
+          "name": "mutation_mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "parent_persuasion_strategy": {
+          "name": "parent_persuasion_strategy",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "child_persuasion_strategy": {
+          "name": "child_persuasion_strategy",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "dimensions_changed": {
+          "name": "dimensions_changed",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "mutation_distance": {
+          "name": "mutation_distance",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "mutation_reason": {
+          "name": "mutation_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "hypothesis_tested": {
+          "name": "hypothesis_tested",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
@@ -1666,7 +1848,8 @@
         "small",
         "medium",
         "large",
-        "enterprise"
+        "enterprise",
+        "unknown"
       ]
     },
     "public.draft_status": {
