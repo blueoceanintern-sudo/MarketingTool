@@ -57,6 +57,13 @@
       "when": 1781900000000,
       "tag": "0007_leads_name_split_and_status",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1781665234877,
+      "tag": "0008_curly_doctor_strange",
+      "breakpoints": true
     }
   ]
 }
