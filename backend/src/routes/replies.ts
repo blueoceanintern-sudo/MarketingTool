@@ -183,6 +183,19 @@ function categoryToSentiment(category: string): "positive" | "negative" | "neutr
   return "neutral";
 }
 
+async function deactivateFamily(rootId: string): Promise<void> {
+  await db.execute(sql`
+    WITH RECURSIVE family AS (
+      SELECT id FROM prompt_templates WHERE id = ${rootId}
+      UNION ALL
+      SELECT pt.id FROM prompt_templates pt
+      INNER JOIN family f ON pt.parent_template_id = f.id
+    )
+    UPDATE prompt_templates SET active = false
+    WHERE id IN (SELECT id FROM family)
+  `);
+}
+
 // ── Format helpers ─────────────────────────────────────────────────────────────
 
 function formatReply(row: {
@@ -369,16 +382,7 @@ repliesRouter.post("/webhooks/ses/reply", async (c) => {
 
       if (tmpl && tmpl.sendCount > 0 && tmpl.spamComplaintCount >= 3 && tmpl.spamComplaintCount / tmpl.sendCount >= 0.001) {
         const killedId = complainant.lastDeliveredTemplateId;
-        await db.update(promptTemplates).set({ active: false }).where(eq(promptTemplates.id, killedId));
-        const directChildren = await db
-          .select({ id: promptTemplates.id })
-          .from(promptTemplates)
-          .where(eq(promptTemplates.parentTemplateId, killedId));
-        await db.update(promptTemplates).set({ active: false }).where(eq(promptTemplates.parentTemplateId, killedId));
-        if (directChildren.length > 0) {
-          const childIds = directChildren.map((c) => c.id);
-          await db.update(promptTemplates).set({ active: false }).where(inArray(promptTemplates.parentTemplateId, childIds));
-        }
+        await deactivateFamily(killedId);
         console.error(`[reply-webhook:kill-switch] template ${killedId} disabled — spam complaint rate exceeded 0.1%. Full lineage frozen.`);
       }
     }
