@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from "bun:test";
+import { sql } from "drizzle-orm";
 import { db } from "../src/db";
 import { promptTemplates } from "../src/db/schema";
 import {
@@ -16,7 +17,10 @@ import {
 // ── Reset / Seed ──────────────────────────────────────────────────────────────
 
 async function resetTables() {
-  await db.delete(promptTemplates);
+  await db.execute(sql`TRUNCATE TABLE
+    follow_ups, email_events, email_drafts,
+    campaign_leads, leads, campaigns, companies, prompt_templates
+  CASCADE`);
 }
 
 async function seedTemplates() {

@@ -191,13 +191,10 @@ describe("Scenario 1 — reply before day 3 (initial only sent)", () => {
     expect(tmpl.positiveIntentCount).toBe(1);
   });
 
-  it("negative plain reply: suppression added, follow_ups deleted, pending_review drafts deleted, NO risk_flag", async () => {
-    // A separate unsent draft awaiting review — the sent ctx.draft has email_events so it cannot be deleted.
-    await db.insert(emailDrafts).values({
-      leadId: ctx.lead.id, campaignId: ctx.campaign.id, templateId: ctx.template.id,
-      subject: "Pending", body: "Pending body.", confidenceScore: 60, status: "pending_review",
-    });
-
+  it("negative plain reply: suppression added, follow_ups deleted, negativeReplyCount++, NO risk_flag", async () => {
+    // Note: the schema enforces one draft per (lead, campaign), so a pending_review draft
+    // cannot coexist with the sent draft here. The handler's pending_review cleanup
+    // applies when a reply arrives before the initial draft was sent.
     const res = await postReply(buildReceivedEnvelope(ctx.lead.email, "Please remove me from your list.", ctx.sesMessageId));
     expect(res.status).toBe(201);
 
@@ -206,9 +203,6 @@ describe("Scenario 1 — reply before day 3 (initial only sent)", () => {
 
     const unsent = await db.select().from(followUps).where(and(eq(followUps.leadId, ctx.lead.id), isNull(followUps.sentAt)));
     expect(unsent).toHaveLength(0);
-
-    const pending = await db.select().from(emailDrafts).where(and(eq(emailDrafts.leadId, ctx.lead.id), eq(emailDrafts.status, "pending_review")));
-    expect(pending).toHaveLength(0);
 
     const flags = await db.select().from(riskFlags).where(eq(riskFlags.leadId, ctx.lead.id));
     expect(flags).toHaveLength(0);
