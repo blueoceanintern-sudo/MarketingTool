@@ -18,7 +18,8 @@
       "Bash(dir /s /b \"C:\\\\Users\\\\jachi\\\\Desktop\\\\MarketingTool\\\\backend\\\\src\\\\*sender*\")",
       "Bash(dir *)",
       "Bash(DATABASE_URL=\"postgresql://postgres:postgres@localhost:5432/blueocean_test\" SES_DRY_RUN=true SKIP_SNS_VERIFICATION=true bun test tests/follow-up-sender.test.ts)",
-      "Bash(DATABASE_URL=\"postgresql://postgres:postgres@localhost:5432/blueocean_test\" SES_DRY_RUN=true SKIP_SNS_VERIFICATION=true bun test tests/reply-scenarios.test.ts)"
+      "Bash(DATABASE_URL=\"postgresql://postgres:postgres@localhost:5432/blueocean_test\" SES_DRY_RUN=true SKIP_SNS_VERIFICATION=true bun test tests/reply-scenarios.test.ts)",
+      "Bash(docker exec *)"
     ],
     "deny": [
       "Read(*/.env)",
