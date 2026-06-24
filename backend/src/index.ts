@@ -17,7 +17,7 @@ import { leads, suppressionList, campaignLeadExclusions } from "./db/schema";
 import { eq } from "drizzle-orm";
 import { requireAuth } from "./middleware/auth";
 
-const app = new Hono();
+export const app = new Hono();
 
 const allowedOrigins = (process.env.CORS_ORIGINS ?? "http://localhost:3000")
   .split(",")
