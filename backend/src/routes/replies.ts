@@ -287,14 +287,17 @@ repliesRouter.post("/webhooks/ses/reply", async (c) => {
       if (tmpl && tmpl.sendCount > 0 && tmpl.spamComplaintCount >= 3 && tmpl.spamComplaintCount / tmpl.sendCount >= 0.001) {
         const killedId = complainant.lastDeliveredTemplateId;
         await db.update(promptTemplates).set({ active: false }).where(eq(promptTemplates.id, killedId));
-        const directChildren = await db
-          .select({ id: promptTemplates.id })
-          .from(promptTemplates)
-          .where(eq(promptTemplates.parentTemplateId, killedId));
-        await db.update(promptTemplates).set({ active: false }).where(eq(promptTemplates.parentTemplateId, killedId));
-        if (directChildren.length > 0) {
-          const childIds = directChildren.map((c) => c.id);
-          await db.update(promptTemplates).set({ active: false }).where(inArray(promptTemplates.parentTemplateId, childIds));
+        // BFS: deactivate all descendants regardless of depth
+        let frontier = [killedId];
+        while (frontier.length > 0) {
+          const children = await db
+            .select({ id: promptTemplates.id })
+            .from(promptTemplates)
+            .where(inArray(promptTemplates.parentTemplateId, frontier));
+          if (children.length === 0) break;
+          const childIds = children.map((ch) => ch.id);
+          await db.update(promptTemplates).set({ active: false }).where(inArray(promptTemplates.id, childIds));
+          frontier = childIds;
         }
         console.error(`[reply-webhook:kill-switch] template ${killedId} disabled — spam complaint rate exceeded 0.1%. Full lineage frozen.`);
       }
@@ -447,7 +450,7 @@ repliesRouter.post("/webhooks/ses/reply", async (c) => {
         .select({ id: followUps.id })
         .from(followUps)
         .where(and(eq(followUps.leadId, lead.id), eq(followUps.campaignId, campaignId), isNull(followUps.sentAt)))
-        .orderBy(asc(followUps.scheduledAt))
+        .orderBy(asc(followUps.attemptNumber))
         .limit(1);
 
       if (nextFollowUp) {

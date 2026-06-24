@@ -59,7 +59,7 @@ If the class is out_of_office, extract the return date if one is explicitly stat
 Return only valid JSON. No explanation, no preamble, no markdown fences.
 
 {
-  "sentiment": "positive" | "negative" | "out_of_office" | "neutral",
+  "category": "positive" | "negative" | "out_of_office" | "neutral",
   "return_date": "YYYY-MM-DD" | null,
   "risk_flag": true | false
 }`;
@@ -72,10 +72,12 @@ Return only valid JSON. No explanation, no preamble, no markdown fences.
       messages: [{ role: "user", content: `<reply>\n${body}\n</reply>` }],
     });
     const first = response.content[0];
-    const text = first?.type === "text" ? first.text : "";
-    const parsed = JSON.parse(text) as { sentiment?: string; return_date?: string | null; risk_flag?: boolean };
+    const raw = first?.type === "text" ? first.text : "";
+    // Haiku sometimes wraps output in ```json ... ``` despite instructions — strip fences.
+    const text = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
+    const parsed = JSON.parse(text) as { category?: string; return_date?: string | null; risk_flag?: boolean };
     return {
-      category: parsed.sentiment ?? "neutral",
+      category: parsed.category ?? "neutral",
       return_date: parsed.return_date ?? null,
       risk_flag: parsed.risk_flag ?? false,
     };

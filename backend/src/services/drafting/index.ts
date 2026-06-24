@@ -363,7 +363,7 @@ export async function generateFollowUpBatch(requests: FollowUpRequest[]): Promis
       if (!pool || pool.length === 0) throw new Error(`No active prompt template for type: ${type}`);
       const tmpl = thompsonSample(pool);
       if (!tmpl) throw new Error(`Thompson sampling failed for type: ${type}`);
-      const customId = `followup:${req.followUpId}`;
+      const customId = `followup-${req.followUpId}`;
       requestTemplateMap.set(customId, tmpl.id);
       requestTypeMap.set(customId, type);
       return {
@@ -405,7 +405,7 @@ export async function generateFollowUpBatch(requests: FollowUpRequest[]): Promis
   // Score all generated emails in a separate call
   const scoreMap = await scoreEmailsBatch(
     generated.map(({ customId, subject, body }) => {
-      const req = requests.find((r) => `followup:${r.followUpId}` === customId)!;
+      const req = requests.find((r) => `followup-${r.followUpId}` === customId)!;
       return { key: customId, email: { subject, body }, lead: req.lead, campaign: req.campaign };
     }),
     client,
