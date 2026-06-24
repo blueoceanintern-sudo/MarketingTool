@@ -5,7 +5,20 @@
       "Bash(node -e \"const p = require\\('./backend/package.json'\\); console.log\\('drizzle-orm:', p.dependencies['drizzle-orm']\\)\")",
       "Bash(bun pm *)",
       "Bash(bunx tsc *)",
-      "mcp__ide__getDiagnostics"
+      "mcp__ide__getDiagnostics",
+      "Bash(Get-ChildItem \"C:\\\\Users\\\\jachi\\\\Desktop\\\\MarketingTool\\\\backend\" -Hidden -Filter \"*.env*\")",
+      "Bash(Get-ChildItem \"C:\\\\Users\\\\jachi\\\\Desktop\\\\MarketingTool\\\\backend\" -Filter \".env*\")",
+      "Bash(psql *)",
+      "Bash(netstat -ano)",
+      "Bash(findstr :5432)",
+      "Bash(bun -e \"import { postgres as sql } from 'postgres'; const client = \\(await import\\('postgres'\\)\\).default\\('postgresql://postgres:postgres@localhost:5432/postgres'\\); const r = await client\\\\`SELECT current_database\\(\\)\\\\`; console.log\\(r\\); await client.end\\(\\);\")",
+      "Bash(bun -e ' *)",
+      "Bash(DATABASE_URL=\"postgresql://postgres:postgres@localhost:5432/blueocean_test\" bun run src/migrate.ts)",
+      "Bash(DATABASE_URL=\"postgresql://postgres:postgres@localhost:5432/blueocean_test\" SES_DRY_RUN=true SKIP_SNS_VERIFICATION=true bun test tests/pre-send.test.ts)",
+      "Bash(dir /s /b \"C:\\\\Users\\\\jachi\\\\Desktop\\\\MarketingTool\\\\backend\\\\src\\\\*sender*\")",
+      "Bash(dir *)",
+      "Bash(DATABASE_URL=\"postgresql://postgres:postgres@localhost:5432/blueocean_test\" SES_DRY_RUN=true SKIP_SNS_VERIFICATION=true bun test tests/follow-up-sender.test.ts)",
+      "Bash(DATABASE_URL=\"postgresql://postgres:postgres@localhost:5432/blueocean_test\" SES_DRY_RUN=true SKIP_SNS_VERIFICATION=true bun test tests/reply-scenarios.test.ts)"
     ],
     "deny": [
       "Read(*/.env)",
