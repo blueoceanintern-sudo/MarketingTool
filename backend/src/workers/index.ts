@@ -479,7 +479,7 @@ cron.schedule("*/30 * * * *", async () => {
 // positive intent rate, generates one mutation via Claude, inserts it as
 // inactive (requires manual activation), and notifies via webhook if configured.
 // ---------------------------------------------------------------------------
-cron.schedule("0 6 * * 1", async () => {
+export async function runMutationRunner() {
   console.log("[mutation-runner] running");
 
   const totalSent = await getTotalSent();
@@ -599,6 +599,8 @@ cron.schedule("0 6 * * 1", async () => {
       }
     }
   }
-});
+}
+
+cron.schedule("0 6 * * 1", runMutationRunner);
 
 console.log("[workers] all cron jobs registered");
