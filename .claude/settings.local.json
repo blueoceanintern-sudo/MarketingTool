@@ -23,7 +23,9 @@
       "Bash(bun drizzle-kit *)",
       "Bash(del *)",
       "Bash(bun test *)",
-      "Bash(TEST_DATABASE_URL=\"postgresql://postgres:postgres@localhost:5432/blueocean_test\" bun test *)"
+      "Bash(TEST_DATABASE_URL=\"postgresql://postgres:postgres@localhost:5432/blueocean_test\" bun test *)",
+      "Bash(GIT_SEQUENCE_EDITOR=\"sed -i 's/^pick 85f5bc6/edit 85f5bc6/'\" git rebase *)",
+      "Bash(git stash *)"
     ],
     "deny": [
       "Read(*/.env)",
