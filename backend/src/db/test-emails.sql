@@ -2,12 +2,6 @@
 -- Test: ACME Corp (fictional, SG / education) + 12 test leads
 -- ---------------------------------------------------------------------------
 
--- Clear existing seed data
-DELETE FROM campaign_leads WHERE source = 'seed';
-DELETE FROM leads WHERE routing = 'auto_queue';
-DELETE FROM companies WHERE source = 'seed';
-DELETE FROM campaigns WHERE name = 'SG Education — Staff & Student Knowledge Base';
-
 -- Campaign: SG Education
 INSERT INTO campaigns (name, vertical, geography, company_size_target, status, description, pain_points, call_to_action)
 SELECT
