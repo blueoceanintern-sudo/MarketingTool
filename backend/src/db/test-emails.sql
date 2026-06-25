@@ -24,7 +24,7 @@ WHERE NOT EXISTS (
 -- Company: ACME (fictional, SG, education)
 WITH co AS (
   INSERT INTO companies (name, industry, company_size, location, source)
-  SELECT 'ACME', 'education', 'medium', 'Singapore', 'seed'
+  SELECT 'ACME', 'education', 'medium', 'SG', 'seed'
   WHERE NOT EXISTS (SELECT 1 FROM companies WHERE name = 'ACME')
   RETURNING id
 )
@@ -38,7 +38,7 @@ SELECT id FROM co; -- no-op select to flush the CTE
 WITH
   le AS (
     INSERT INTO leads (company_id, name, email, is_verified, email_status, routing)
-    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Jachin Khoo', 'jachinkhoo@gmail.com', false, 'pattern_guessed', 'auto_queue'
+    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Jachin Khoo', 'jachinkhoo@gmail.com', true, 'verified', 'auto_queue'
     WHERE NOT EXISTS (SELECT 1 FROM leads WHERE email = 'jachinkhoo@gmail.com')
     RETURNING id
   ),
@@ -70,7 +70,7 @@ ON CONFLICT DO NOTHING;
 WITH
   le AS (
     INSERT INTO leads (company_id, name, email, is_verified, email_status, routing)
-    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), NULL, 'j61084603@gmail.com', false, 'pattern_guessed', 'auto_queue'
+    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), NULL, 'j61084603@gmail.com', true, 'verified', 'auto_queue'
     WHERE NOT EXISTS (SELECT 1 FROM leads WHERE email = 'j61084603@gmail.com')
     RETURNING id
   ),
@@ -102,7 +102,7 @@ ON CONFLICT DO NOTHING;
 WITH
   le AS (
     INSERT INTO leads (company_id, name, email, is_verified, email_status, routing)
-    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Tori Ng', 'tori.ng.xc@gmail.com', false, 'pattern_guessed', 'auto_queue'
+    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Tori Ng', 'tori.ng.xc@gmail.com', true, 'verified', 'auto_queue'
     WHERE NOT EXISTS (SELECT 1 FROM leads WHERE email = 'tori.ng.xc@gmail.com')
     RETURNING id
   ),
@@ -118,7 +118,7 @@ ON CONFLICT DO NOTHING;
 WITH
   le AS (
     INSERT INTO leads (company_id, name, email, is_verified, email_status, routing)
-    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), NULL, 'wellspring0fhope77@gmail.com', false, 'pattern_guessed', 'auto_queue'
+    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), NULL, 'wellspring0fhope77@gmail.com', true, 'verified', 'auto_queue'
     WHERE NOT EXISTS (SELECT 1 FROM leads WHERE email = 'wellspring0fhope77@gmail.com')
     RETURNING id
   ),
@@ -150,7 +150,7 @@ ON CONFLICT DO NOTHING;
 WITH
   le AS (
     INSERT INTO leads (company_id, name, email, is_verified, email_status, routing)
-    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Kiara Desai', 'kiaradesai.2024@gmail.com', false, 'pattern_guessed', 'auto_queue'
+    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Kiara Desai', 'kiaradesai.2024@gmail.com', true, 'verified', 'auto_queue'
     WHERE NOT EXISTS (SELECT 1 FROM leads WHERE email = 'kiaradesai.2024@gmail.com')
     RETURNING id
   ),
@@ -166,7 +166,7 @@ ON CONFLICT DO NOTHING;
 WITH
   le AS (
     INSERT INTO leads (company_id, name, email, is_verified, email_status, routing)
-    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Nikukiaan', 'nikukiaan.2025@gmail.com', false, 'pattern_guessed', 'auto_queue'
+    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Nikukiaan', 'nikukiaan.2025@gmail.com', true, 'verified', 'auto_queue'
     WHERE NOT EXISTS (SELECT 1 FROM leads WHERE email = 'nikukiaan.2025@gmail.com')
     RETURNING id
   ),
@@ -198,7 +198,7 @@ ON CONFLICT DO NOTHING;
 WITH
   le AS (
     INSERT INTO leads (company_id, name, email, is_verified, email_status, routing)
-    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), NULL, 'smthsmth224@gmail.com', false, 'pattern_guessed', 'auto_queue'
+    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), NULL, 'smthsmth224@gmail.com', true, 'verified', 'auto_queue'
     WHERE NOT EXISTS (SELECT 1 FROM leads WHERE email = 'smthsmth224@gmail.com')
     RETURNING id
   ),
@@ -214,7 +214,7 @@ ON CONFLICT DO NOTHING;
 WITH
   le AS (
     INSERT INTO leads (company_id, name, email, is_verified, email_status, routing)
-    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), NULL, 't05759945@gmail.com', false, 'pattern_guessed', 'auto_queue'
+    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), NULL, 't05759945@gmail.com', true, 'verified', 'auto_queue'
     WHERE NOT EXISTS (SELECT 1 FROM leads WHERE email = 't05759945@gmail.com')
     RETURNING id
   ),
