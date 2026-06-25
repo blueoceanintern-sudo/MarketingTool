@@ -37,8 +37,8 @@ SELECT id FROM co; -- no-op select to flush the CTE
 -- Lead 1: jachinkhoo@gmail.com
 WITH
   le AS (
-    INSERT INTO leads (company_id, name, email, is_verified, email_status, routing)
-    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Jachin Khoo', 'jachinkhoo@gmail.com', true, 'verified', 'auto_queue'
+    INSERT INTO leads (company_id, name, email, role, is_verified, email_status, routing)
+    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Jachin Khoo', 'jachinkhoo@gmail.com', 'Student', true, 'verified', 'auto_queue'
     WHERE NOT EXISTS (SELECT 1 FROM leads WHERE email = 'jachinkhoo@gmail.com')
     RETURNING id
   ),
@@ -53,8 +53,8 @@ ON CONFLICT DO NOTHING;
 -- Lead 2: jachin.khoo.2025@computing.smu.edu.sg
 WITH
   le AS (
-    INSERT INTO leads (company_id, name, email, is_verified, email_status, routing)
-    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Jachin Khoo', 'jachin.khoo.2025@computing.smu.edu.sg', true, 'verified', 'auto_queue'
+    INSERT INTO leads (company_id, name, email, role, is_verified, email_status, routing)
+    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Jachin Khoo', 'jachin.khoo.2025@computing.smu.edu.sg', 'Student', true, 'verified', 'auto_queue'
     WHERE NOT EXISTS (SELECT 1 FROM leads WHERE email = 'jachin.khoo.2025@computing.smu.edu.sg')
     RETURNING id
   ),
@@ -69,8 +69,8 @@ ON CONFLICT DO NOTHING;
 -- Lead 3: j61084603@gmail.com
 WITH
   le AS (
-    INSERT INTO leads (company_id, name, email, is_verified, email_status, routing)
-    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), NULL, 'j61084603@gmail.com', true, 'verified', 'auto_queue'
+    INSERT INTO leads (company_id, name, email, role, is_verified, email_status, routing)
+    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Test User', 'j61084603@gmail.com', 'Student', true, 'verified', 'auto_queue'
     WHERE NOT EXISTS (SELECT 1 FROM leads WHERE email = 'j61084603@gmail.com')
     RETURNING id
   ),
@@ -85,8 +85,8 @@ ON CONFLICT DO NOTHING;
 -- Lead 4: 2021.jachin.khoo@ejc.edu.sg
 WITH
   le AS (
-    INSERT INTO leads (company_id, name, email, is_verified, email_status, routing)
-    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Jachin Khoo', '2021.jachin.khoo@ejc.edu.sg', true, 'verified', 'auto_queue'
+    INSERT INTO leads (company_id, name, email, role, is_verified, email_status, routing)
+    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Jachin Khoo', '2021.jachin.khoo@ejc.edu.sg', 'Student', true, 'verified', 'auto_queue'
     WHERE NOT EXISTS (SELECT 1 FROM leads WHERE email = '2021.jachin.khoo@ejc.edu.sg')
     RETURNING id
   ),
@@ -101,8 +101,8 @@ ON CONFLICT DO NOTHING;
 -- Lead 5: tori.ng.xc@gmail.com
 WITH
   le AS (
-    INSERT INTO leads (company_id, name, email, is_verified, email_status, routing)
-    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Tori Ng', 'tori.ng.xc@gmail.com', true, 'verified', 'auto_queue'
+    INSERT INTO leads (company_id, name, email, role, is_verified, email_status, routing)
+    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Tori Ng', 'tori.ng.xc@gmail.com', 'Staff', true, 'verified', 'auto_queue'
     WHERE NOT EXISTS (SELECT 1 FROM leads WHERE email = 'tori.ng.xc@gmail.com')
     RETURNING id
   ),
@@ -117,8 +117,8 @@ ON CONFLICT DO NOTHING;
 -- Lead 6: wellspring0fhope77@gmail.com
 WITH
   le AS (
-    INSERT INTO leads (company_id, name, email, is_verified, email_status, routing)
-    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), NULL, 'wellspring0fhope77@gmail.com', true, 'verified', 'auto_queue'
+    INSERT INTO leads (company_id, name, email, role, is_verified, email_status, routing)
+    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Test User', 'wellspring0fhope77@gmail.com', 'Staff', true, 'verified', 'auto_queue'
     WHERE NOT EXISTS (SELECT 1 FROM leads WHERE email = 'wellspring0fhope77@gmail.com')
     RETURNING id
   ),
@@ -133,8 +133,8 @@ ON CONFLICT DO NOTHING;
 -- Lead 7: tori.ng.2023@scis.smu.edu.sg
 WITH
   le AS (
-    INSERT INTO leads (company_id, name, email, is_verified, email_status, routing)
-    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Tori Ng', 'tori.ng.2023@scis.smu.edu.sg', true, 'verified', 'auto_queue'
+    INSERT INTO leads (company_id, name, email, role, is_verified, email_status, routing)
+    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Tori Ng', 'tori.ng.2023@scis.smu.edu.sg', 'Staff', true, 'verified', 'auto_queue'
     WHERE NOT EXISTS (SELECT 1 FROM leads WHERE email = 'tori.ng.2023@scis.smu.edu.sg')
     RETURNING id
   ),
@@ -149,8 +149,8 @@ ON CONFLICT DO NOTHING;
 -- Lead 8: kiaradesai.2024@gmail.com
 WITH
   le AS (
-    INSERT INTO leads (company_id, name, email, is_verified, email_status, routing)
-    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Kiara Desai', 'kiaradesai.2024@gmail.com', true, 'verified', 'auto_queue'
+    INSERT INTO leads (company_id, name, email, role, is_verified, email_status, routing)
+    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Kiara Desai', 'kiaradesai.2024@gmail.com', 'Admin', true, 'verified', 'auto_queue'
     WHERE NOT EXISTS (SELECT 1 FROM leads WHERE email = 'kiaradesai.2024@gmail.com')
     RETURNING id
   ),
@@ -165,8 +165,8 @@ ON CONFLICT DO NOTHING;
 -- Lead 9: nikukiaan.2025@gmail.com
 WITH
   le AS (
-    INSERT INTO leads (company_id, name, email, is_verified, email_status, routing)
-    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Nikukiaan', 'nikukiaan.2025@gmail.com', true, 'verified', 'auto_queue'
+    INSERT INTO leads (company_id, name, email, role, is_verified, email_status, routing)
+    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Nikukiaan', 'nikukiaan.2025@gmail.com', 'Student', true, 'verified', 'auto_queue'
     WHERE NOT EXISTS (SELECT 1 FROM leads WHERE email = 'nikukiaan.2025@gmail.com')
     RETURNING id
   ),
@@ -181,8 +181,8 @@ ON CONFLICT DO NOTHING;
 -- Lead 10: kiara.desai.2024@smu.edu.sg
 WITH
   le AS (
-    INSERT INTO leads (company_id, name, email, is_verified, email_status, routing)
-    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Kiara Desai', 'kiara.desai.2024@smu.edu.sg', true, 'verified', 'auto_queue'
+    INSERT INTO leads (company_id, name, email, role, is_verified, email_status, routing)
+    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Kiara Desai', 'kiara.desai.2024@smu.edu.sg', 'Admin', true, 'verified', 'auto_queue'
     WHERE NOT EXISTS (SELECT 1 FROM leads WHERE email = 'kiara.desai.2024@smu.edu.sg')
     RETURNING id
   ),
@@ -197,8 +197,8 @@ ON CONFLICT DO NOTHING;
 -- Lead 11: smthsmth224@gmail.com
 WITH
   le AS (
-    INSERT INTO leads (company_id, name, email, is_verified, email_status, routing)
-    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), NULL, 'smthsmth224@gmail.com', true, 'verified', 'auto_queue'
+    INSERT INTO leads (company_id, name, email, role, is_verified, email_status, routing)
+    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Test User', 'smthsmth224@gmail.com', 'Student', true, 'verified', 'auto_queue'
     WHERE NOT EXISTS (SELECT 1 FROM leads WHERE email = 'smthsmth224@gmail.com')
     RETURNING id
   ),
@@ -213,8 +213,8 @@ ON CONFLICT DO NOTHING;
 -- Lead 12: t05759945@gmail.com
 WITH
   le AS (
-    INSERT INTO leads (company_id, name, email, is_verified, email_status, routing)
-    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), NULL, 't05759945@gmail.com', true, 'verified', 'auto_queue'
+    INSERT INTO leads (company_id, name, email, role, is_verified, email_status, routing)
+    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Test User', 't05759945@gmail.com', 'Student', true, 'verified', 'auto_queue'
     WHERE NOT EXISTS (SELECT 1 FROM leads WHERE email = 't05759945@gmail.com')
     RETURNING id
   ),
