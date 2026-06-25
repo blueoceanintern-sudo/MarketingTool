@@ -28,7 +28,7 @@ WITH co AS (
   WHERE NOT EXISTS (SELECT 1 FROM companies WHERE name = 'ACME')
   RETURNING id
 )
-SELECT id FROM co; -- no-op select to flush the CTE
+SELECT id FROM co;
 
 -- ---------------------------------------------------------------------------
 -- Leads 1–12 — all assigned to ACME + SG Education campaign
@@ -70,7 +70,7 @@ ON CONFLICT DO NOTHING;
 WITH
   le AS (
     INSERT INTO leads (company_id, name, email, role, is_verified, email_status, routing)
-    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Test User', 'j61084603@gmail.com', 'Student', true, 'verified', 'auto_queue'
+    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Marcus Tan', 'j61084603@gmail.com', 'Student', true, 'verified', 'auto_queue'
     WHERE NOT EXISTS (SELECT 1 FROM leads WHERE email = 'j61084603@gmail.com')
     RETURNING id
   ),
@@ -118,7 +118,7 @@ ON CONFLICT DO NOTHING;
 WITH
   le AS (
     INSERT INTO leads (company_id, name, email, role, is_verified, email_status, routing)
-    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Test User', 'wellspring0fhope77@gmail.com', 'Staff', true, 'verified', 'auto_queue'
+    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Priya Mehta', 'wellspring0fhope77@gmail.com', 'Staff', true, 'verified', 'auto_queue'
     WHERE NOT EXISTS (SELECT 1 FROM leads WHERE email = 'wellspring0fhope77@gmail.com')
     RETURNING id
   ),
@@ -198,7 +198,7 @@ ON CONFLICT DO NOTHING;
 WITH
   le AS (
     INSERT INTO leads (company_id, name, email, role, is_verified, email_status, routing)
-    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Test User', 'smthsmth224@gmail.com', 'Student', true, 'verified', 'auto_queue'
+    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Ryan Lim', 'smthsmth224@gmail.com', 'Student', true, 'verified', 'auto_queue'
     WHERE NOT EXISTS (SELECT 1 FROM leads WHERE email = 'smthsmth224@gmail.com')
     RETURNING id
   ),
@@ -214,7 +214,7 @@ ON CONFLICT DO NOTHING;
 WITH
   le AS (
     INSERT INTO leads (company_id, name, email, role, is_verified, email_status, routing)
-    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Test User', 't05759945@gmail.com', 'Student', true, 'verified', 'auto_queue'
+    SELECT (SELECT id FROM companies WHERE name = 'ACME' LIMIT 1), 'Aisha Wong', 't05759945@gmail.com', 'Student', true, 'verified', 'auto_queue'
     WHERE NOT EXISTS (SELECT 1 FROM leads WHERE email = 't05759945@gmail.com')
     RETURNING id
   ),
