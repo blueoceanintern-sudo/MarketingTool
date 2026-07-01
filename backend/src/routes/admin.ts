@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { db } from "../db";
-import { sourceRegistry, suppressionList, promptTemplates, emailDrafts, campaigns, directoryConfigs, leads, companies, normalizeVertical, normalizeGeo } from "../db/schema";
+import { sourceRegistry, suppressionList, promptTemplates, emailDrafts, emailEvents, campaigns, directoryConfigs, leads, companies, normalizeVertical, normalizeGeo } from "../db/schema";
 import { eq, and, inArray, count, sql } from "drizzle-orm";
 import { scrapeWebsite } from "../services/scrapers/cheerioScraper";
 import { scrapeWithFallback } from "../services/scrapers/crawl4aiScraper";
@@ -752,4 +752,38 @@ adminRouter.post("/workers/send-now", requireAdmin, async (c) => {
     metadata: result,
   });
   return c.json({ ok: true, sent: result.sent, blocked: result.blocked });
+});
+
+// ---------------------------------------------------------------------------
+// Reset dry-run sent drafts back to scheduled — POST /workers/reset-dry-run
+// One-time use: clears fake email_events rows and resets draft status so the
+// real SES send can proceed.
+// ---------------------------------------------------------------------------
+adminRouter.post("/workers/reset-dry-run", requireAdmin, async (c) => {
+  const dryRunEvents = await db
+    .select({ draftId: emailEvents.draftId })
+    .from(emailEvents)
+    .where(sql`${emailEvents.sesMessageId} LIKE '%dry-run%'`);
+
+  const draftIds = dryRunEvents.map((r) => r.draftId);
+
+  await db.delete(emailEvents).where(sql`${emailEvents.sesMessageId} LIKE '%dry-run%'`);
+
+  let reset = 0;
+  if (draftIds.length > 0) {
+    const result = await db
+      .update(emailDrafts)
+      .set({ status: "scheduled" })
+      .where(and(inArray(emailDrafts.id, draftIds), eq(emailDrafts.status, "sent")));
+    reset = result.rowCount ?? draftIds.length;
+  }
+
+  await logAudit({
+    actor: c.get("user"),
+    action: "workers.reset_dry_run",
+    targetType: "worker",
+    metadata: { eventsDeleted: dryRunEvents.length, draftsReset: reset },
+  });
+
+  return c.json({ ok: true, events_deleted: dryRunEvents.length, drafts_reset: reset });
 });
