@@ -294,6 +294,7 @@ export async function runFollowUpSender() {
   }
 
   console.log(`[follow-up-sender] done: sent=${sent}, blocked=${blocked}`);
+  return { sent, blocked };
 }
 
 cron.schedule("0 9 * * *", runFollowUpSender);
