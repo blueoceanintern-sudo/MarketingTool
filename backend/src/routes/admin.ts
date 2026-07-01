@@ -9,6 +9,7 @@ import { logAudit } from "../services/audit/log";
 import { discoverSources, getDirectoryConfig, getAllDirectoryConfigs, resolveGeo } from "../services/sourceRegistry";
 import { emitJobEvent } from "../services/events";
 import { requireAdmin, type AuthUser } from "../middleware/auth";
+import { runFollowUpSender } from "../workers";
 
 // ---------------------------------------------------------------------------
 // CSV helpers (used by /registry/sources/import)
@@ -734,4 +735,21 @@ adminRouter.delete("/templates/:id", async (c) => {
     metadata: { name: existing.name },
   });
   return c.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// Manual worker trigger — POST /workers/send-now
+// Runs the follow-up sender immediately (same logic as the 09:00 cron).
+// Use this when the scheduled run was missed (e.g. container restart after 9am).
+// ---------------------------------------------------------------------------
+adminRouter.post("/workers/send-now", requireAdmin, async (c) => {
+  console.log("[admin] manual send-now triggered");
+  const result = await runFollowUpSender();
+  await logAudit({
+    actor: c.get("user"),
+    action: "workers.send_now",
+    targetType: "worker",
+    metadata: result,
+  });
+  return c.json({ ok: true, sent: result.sent, blocked: result.blocked });
 });
