@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { db } from "../db";
-import { sourceRegistry, suppressionList, promptTemplates, emailDrafts, campaigns, directoryConfigs, leads, companies, normalizeVertical, normalizeGeo } from "../db/schema";
+import { sourceRegistry, suppressionList, promptTemplates, emailDrafts, emailEvents, campaigns, directoryConfigs, leads, companies, normalizeVertical, normalizeGeo } from "../db/schema";
 import { eq, and, inArray, count, sql } from "drizzle-orm";
 import { scrapeWebsite } from "../services/scrapers/cheerioScraper";
 import { scrapeWithFallback } from "../services/scrapers/crawl4aiScraper";
