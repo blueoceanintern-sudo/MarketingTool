@@ -866,6 +866,16 @@ export async function getLeadsSummary(): Promise<LeadsSummaryGlobal> {
   );
 }
 
+export async function triggerSendNow(): Promise<{ ok: boolean; sent: number; blocked: number } | null> {
+  try {
+    const res = await apiRequest(`${BASE}/api/v1/workers/send-now`, { method: "POST" });
+    if (!res.ok) return null;
+    return res.json() as Promise<{ ok: boolean; sent: number; blocked: number }>;
+  } catch {
+    return null;
+  }
+}
+
 export async function triggerEnrichment(): Promise<{ queued: number } | null> {
   try {
     const res = await apiRequest(`${BASE}/api/v1/leads/enrich`, { method: "POST" });
