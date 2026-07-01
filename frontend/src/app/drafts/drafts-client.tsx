@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Draft } from "@/lib/api";
-import { approveDraft, editDraft, rejectDraft } from "@/lib/api";
+import { approveDraft, editDraft, rejectDraft, triggerSendNow } from "@/lib/api";
 import { draftQueueOptions, draftsByStatusOptions, keys } from "@/lib/queries";
 import Pagination from "@/components/pagination";
 
@@ -470,9 +470,25 @@ export default function DraftsClient() {
   const searchParams = useSearchParams();
   const initialCampaign = searchParams.get("campaign") ?? "";
   const [tab, setTab] = useState<Tab>("queue");
+  const queryClient = useQueryClient();
   const { data: queue = [] } = useQuery(draftQueueOptions());
   const { data: scheduled = [] } = useQuery(draftsByStatusOptions("scheduled"));
   const { data: sent = [] } = useQuery(draftsByStatusOptions("sent"));
+  const [sendNowState, setSendNowState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [sendNowResult, setSendNowResult] = useState<{ sent: number; blocked: number } | null>(null);
+
+  async function handleSendNow() {
+    setSendNowState("loading");
+    setSendNowResult(null);
+    const result = await triggerSendNow();
+    if (!result) {
+      setSendNowState("error");
+      return;
+    }
+    setSendNowState("done");
+    setSendNowResult({ sent: result.sent, blocked: result.blocked });
+    await queryClient.invalidateQueries({ queryKey: keys.drafts });
+  }
 
   const tabs: { key: Tab; label: string; count: number }[] = [
     { key: "queue", label: "Review Queue", count: queue.length },
@@ -482,7 +498,7 @@ export default function DraftsClient() {
 
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)]">
-      <div className="bg-white border-b border-grey-100 px-8 flex gap-6 shrink-0">
+      <div className="bg-white border-b border-grey-100 px-8 flex items-center gap-6 shrink-0">
         {tabs.map((t) => (
           <button
             key={t.key}
@@ -506,6 +522,26 @@ export default function DraftsClient() {
             </span>
           </button>
         ))}
+        {tab === "scheduled" && (
+          <div className="ml-auto flex items-center gap-3">
+            {sendNowState === "done" && sendNowResult && (
+              <span className="text-[12px] text-success font-medium">
+                Sent {sendNowResult.sent}, blocked {sendNowResult.blocked}
+              </span>
+            )}
+            {sendNowState === "error" && (
+              <span className="text-[12px] text-danger font-medium">Failed — check logs</span>
+            )}
+            <button
+              type="button"
+              onClick={handleSendNow}
+              disabled={sendNowState === "loading"}
+              className="px-4 py-1.5 bg-primary text-white text-[13px] font-semibold rounded-lg disabled:opacity-60"
+            >
+              {sendNowState === "loading" ? "Sending…" : "Send Now"}
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="flex-1 overflow-hidden">
