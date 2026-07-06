@@ -774,6 +774,18 @@ export async function deleteDirectoryConfig(id: string): Promise<{ ok: boolean; 
   }
 }
 
+export interface SuppressionEntry {
+  id: string;
+  email: string;
+  campaign_id: string;
+  reason: "unsubscribed" | "manual";
+  added_at: string;
+}
+
+export async function getCampaignSuppressions(campaignId: string): Promise<SuppressionEntry[]> {
+  return (await apiFetch<SuppressionEntry[]>(`/suppression?campaign_id=${campaignId}`)) ?? [];
+}
+
 export async function getAnalyticsOverview(): Promise<AnalyticsOverview | null> {
   return apiFetch<AnalyticsOverview>("/analytics/overview");
 }
