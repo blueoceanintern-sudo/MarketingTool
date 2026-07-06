@@ -265,7 +265,7 @@ draftsRouter.post("/:id/send", async (c) => {
     action: "draft.send",
     targetId: draftId,
     targetType: "email_draft",
-    metadata: result,
+    metadata: { ...result },
     ipAddress: c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? c.req.header("x-real-ip") ?? null,
   });
 

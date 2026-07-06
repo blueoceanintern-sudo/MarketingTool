@@ -70,7 +70,7 @@ $env:TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/blueocean_
 | `pre-send.test.ts` | Pre-send gates + approval phase logic | `sendDraft()`, `shouldQueueForReview()` | No |
 | `follow-up-sender.test.ts` | Initial send + follow-up sequence enforcement | `runFollowUpSender()` | Partial* |
 | `reply-scenarios.test.ts` | Full webhook reply pipeline across 4 timing scenarios + multi-campaign scoping | `POST /webhooks/ses/reply` via `app` | No |
-| `self-improving.test.ts` | Spam complaint kill-switch + mutation runner eligibility | `POST /webhooks/ses/reply`, `runMutationRunner()` | No** |
+| `self-improving.test.ts` | Spam complaint kill-switch (uses webhook) + mutation runner eligibility (calls worker directly) | `POST /webhooks/ses/reply` (kill-switch section), `runMutationRunner()` (mutation section) | No** |
 | `reply-classifier.test.ts` | Reply classification — normal cases + edge cases | `classifyReply()` | Yes |
 | `drafting.test.ts` | Thompson sampling (pure), initial draft generation + scoring, follow-up generation | `thompsonSample()`, `generateDraftsBatch()`, `generateFollowUpBatch()` | Partial*** |
 | `mutation.test.ts` | Mutation generation — replace, refine, winner, middle-tier skip, not found | `generateMutation()` | Yes |
