@@ -33,6 +33,7 @@ ENRICHMENT_DAILY_RUN_CAP=200     # enrichment-retry worker cap
 
 NODE_ENV=development             # development | production
 PORT=3001
+API_BASE_URL=https://api.yourdomain.com  # public-facing backend URL embedded in email unsubscribe links — MUST be set in production
 NEXT_PUBLIC_API_URL=http://localhost:3001
 ```
 
