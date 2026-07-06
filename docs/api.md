@@ -60,6 +60,7 @@ GET    /campaigns/:id/leads/excluded       # list campaign_lead_exclusions (perm
 
 ```
 POST   /campaigns/:id/leads/import    # CSV: contact_name, role, email, company_name, industry, market
+                                      # Fields are CSV-injection sanitized before DB insert (see security.md)
 GET    /campaigns/:id/leads
 GET    /leads
 GET    /leads/summary                 # aggregate lead counts by status
@@ -77,7 +78,7 @@ POST   /drafts/:id/send               # manual send for a scheduled draft; runs 
                                       # returns { status, messageId }; 409 if not scheduled; calls logAudit()
 ```
 
-CSV import: missing required fields on any row → returns 400 for the entire request; dedup by email. CSV-imported leads (`scraper_used = null`) are **never enriched** — the enrichment-retry worker explicitly skips them. Hard gates still apply at send time. CSV-injection sanitization is a target (see `security.md`).
+CSV import: missing required fields on any row → returns 400 for the entire request; dedup by email. CSV-imported leads (`scraper_used = null`) are **never enriched** — the enrichment-retry worker explicitly skips them. Hard gates still apply at send time. `contact_name`, `role`, and `company_name` are sanitized for CSV injection before insert (prefix `=`, `+`, `-`, `@` with a single quote).
 
 ## Reply handling (live)
 
@@ -106,6 +107,8 @@ GET    /analytics/templates           # open_rate / reply_rate by template_id, c
 GET    /analytics/daily-sends         # daily send counts for warm-up tracking
 GET    /analytics/export
 ```
+
+> **Analytics and data retention:** `email_events`, `email_drafts`, `follow_ups`, and `replies` rows are preserved even when a lead is erased — the lead row is anonymized in place (see `security.md` § Right-to-deletion). Analytics counts are therefore unaffected by erasure. The time-based purge (365d email_events, 180d replies) does reduce historical counts, by design.
 
 ## Registry & Templates (live)
 
@@ -145,12 +148,15 @@ POST   /workers/reset-dry-run         # clear fake email_events and reschedule d
                                       # SES_DRY_RUN=true has been used (requireAdmin)
 ```
 
-## Admin (not yet built)
+## Admin (live)
+
+All admin routes require `role: admin`.
 
 ```
-POST   /admin/leads/:id/erase         # NOT YET BUILT — right-to-deletion; hard-deletes PII, logs to audit_log
-GET    /admin/audit-log               # NOT YET BUILT — paginated JSON
-GET    /admin/audit-log/export        # NOT YET BUILT — CSV download for compliance
+POST   /admin/leads/:id/erase         # right-to-deletion — anonymizes lead in place, preserves analytics.
+                                      # Strips name/email/role from leads row, anonymizes reply bodies,
+                                      # hard-deletes enrichment_records/risk_flags/campaign_leads.
+                                      # Logs to audit_log. See security.md § Right-to-deletion.
+GET    /admin/audit-log               # paginated audit log; supports ?from=&to=&page=&limit= filters
+GET    /admin/audit-log/export        # full CSV download of audit log for compliance
 ```
-
-The three `/admin` routes above are specified but not implemented (the `audit_log` table exists). See `security.md` § Right-to-deletion and § Audit Log Exportability, and `roadmap.md` § Not-Yet-Built Components.

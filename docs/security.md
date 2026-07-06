@@ -6,21 +6,23 @@ All security requirements for the project. Single source of truth — `CLAUDE.md
 
 Every `/api/v1/*` route requires a **JWT Bearer token** in the `Authorization` header (`Authorization: Bearer <token>`). The token is verified as HS256 using `AUTH_SECRET` (env var, required). Invalid or missing tokens return HTTP 401 immediately.
 
-The middleware (`requireAuth` in `backend/src/middleware/auth.ts`) attaches `{ email, role }` to the request context for downstream handlers. A second middleware (`requireAdmin`) gates write operations on registry, templates, and workers to the `admin` role only.
+The middleware (`requireAuth` in `backend/src/middleware/auth.ts`) attaches `{ email, role }` to the request context for downstream handlers. A second middleware (`requireAdmin`) gates write operations on registry, templates, workers, and all `/admin/*` routes to the `admin` role only.
 
 > **Implemented** — `requireAuth` is applied globally to all `/api/v1/*` routes in `backend/src/index.ts`.
 
 ## SSRF Protection
 
-The scraper accepts arbitrary URLs from `source_registry` and CSV imports. Before any fetch (Crawl4AI or Cheerio), resolve the hostname and block requests to private/internal ranges:
+The scraper accepts arbitrary URLs from `source_registry`. Before any fetch (Crawl4AI or Cheerio), the hostname is resolved via DNS and blocked if it resolves to a private/internal address:
 
-- `localhost` / `127.x.x.x`
-- `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`
-- Link-local `169.254.0.0/16` (AWS metadata endpoint)
+- `localhost` / `::1`
+- `127.0.0.0/8` (loopback)
+- `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` (RFC-1918 private)
+- `169.254.0.0/16` (link-local / AWS metadata endpoint)
+- `0.0.0.0/8`
 
-If the resolved IP falls in any of these ranges, reject the job and set `scrape_jobs.status = blocked`. **Never whitelist exceptions.**
+If the hostname or its resolved IP falls in any of these ranges, the source is skipped and an error is logged. The check is done twice: once on the raw hostname (catches `localhost` directly) and once on the resolved IP (catches DNS rebinding).
 
-> Status: not yet wired.
+> **Implemented** — `isSafeUrl()` in `backend/src/services/scraping/runScrapeJob.ts`. Exported and reused in the admin source-scrape handler.
 
 ## SNS / SES Webhook Signature Verification
 
@@ -39,9 +41,9 @@ If the resolved IP falls in any of these ranges, reject the job and set `scrape_
 
 ## CSV Injection Sanitization
 
-CSV imports (`POST /campaigns/:id/leads/import`) must strip formula-injection characters before inserting any field. For every string cell, if the value starts with `=`, `+`, `-`, or `@`, prefix it with a single quote or reject the row with a flag. Apply this **in the import parser before validation**, not after.
+CSV imports (`POST /campaigns/:id/leads/import`) sanitize formula-injection characters before inserting any field. For every string cell where the value starts with `=`, `+`, `-`, or `@`, the value is prefixed with a single quote before the DB insert. Applied in `sanitizeCsvField()` in `backend/src/routes/leads.ts` to `contact_name`, `role`, and `company_name`.
 
-> Status: not yet wired.
+> **Implemented** — `sanitizeCsvField()` in `backend/src/routes/leads.ts`.
 
 ## CORS Policy
 
@@ -51,17 +53,17 @@ CSV imports (`POST /campaigns/:id/leads/import`) must strip formula-injection ch
 
 ## Route-level Rate Limiting
 
-Apply in Hono middleware. No Redis required — an in-memory sliding window is fine for a single-instance Lightsail deploy.
+In-memory sliding window rate limiter (`backend/src/middleware/rateLimit.ts`). No Redis required — single-instance Lightsail deploy. Returns **HTTP 429** on breach.
 
-| Scope | Limit |
-|---|---|
-| Default (per IP) | 100 req / min |
-| Webhook endpoint (per IP) | 50 req / min |
-| CSV import (per API key) | 10 req / min |
+| Scope | Key | Limit |
+|---|---|---|
+| Webhook endpoints (`/api/v1/webhooks/*`) | Per IP (`x-forwarded-for`) | 50 req / min |
+| All authenticated API routes | Per user email | 100 req / min |
+| CSV import (`/campaigns/:id/leads/import`) | Per user email (separate namespace) | 10 req / min |
 
-Return **HTTP 429** with a `Retry-After` header on breach. Log the IP and route.
+The webhook rate limit is registered **before** `requireAuth` (SNS has no JWT). The CSV import limit uses a separate namespace so it doesn't share the counter with the general 100/min limit.
 
-> Status: not yet wired.
+> **Implemented** — `backend/src/middleware/rateLimit.ts` + wired in `backend/src/index.ts`.
 
 ## Secrets Management
 
@@ -78,38 +80,57 @@ Return **HTTP 429** with a `Retry-After` header on breach. Log the IP and route.
 
 ## Data Retention and Purge Policy
 
-Enforced by the `purge-old-records` worker (weekly; see `workers.md`). The worker currently logs purge counts to the console only — it does not call `logAudit()`. This is a gap vs the intended spec.
+Enforced by the `purge-old-records` worker (weekly, Sunday 2am; see `workers.md`). After each run the worker calls `logAudit()` with the counts of deleted records.
 
 | Table | Retention | Action |
 |---|---|---|
-| `email_events` | 365 days after `sent_at` | Hard delete — kept a full year so the 7-day send-cap window and historical analytics always have data |
+| `email_events` | 365 days after `sent_at` | Hard delete — kept a full year so analytics always have data |
 | `replies` | 180 days after `received_at` | Hard delete |
 | `scrape_jobs` (failed/complete) | 30 days | Hard delete |
+| `risk_flags` | 90 days after lead suppressed | Hard delete — purge-old-records joins leads with suppression_list and deletes flags for leads suppressed ≥ 90 days |
 | `suppression_list` | Indefinite | Keep — legal requirement |
 | `audit_log` | Indefinite | Keep — compliance export |
-| `risk_flags` | Not currently purged | ⚠️ The spec calls for 90-day purge after lead suppressed, but `purge-old-records` does not currently implement this. Add to the worker when building the admin erase flow. |
+
+> **All retention gaps are resolved.** `risk_flags` purge and `audit_log` write on purge are both implemented in `backend/src/workers/index.ts`.
 
 ## Right-to-deletion
 
-Required by PDPA (SG), the Australia Privacy Act, and CAN-SPAM opt-out obligations:
+Required by PDPA (SG), the Australia Privacy Act, and CAN-SPAM opt-out obligations. Implemented at `POST /admin/leads/:id/erase` (requires `role: admin`).
 
-- `POST /admin/leads/:id/erase` — hard-deletes all PII for a lead (name, email, company data, drafts, events, flags, follow-ups). Replaces the email with `[deleted]` in the `suppression_list` entry so suppression stays in force without retaining PII.
+### What the erase route does
+
+Rather than hard-deleting all rows (which would drop analytics data), the route **de-identifies the lead in place**. This satisfies PDPA/Privacy Act de-identification requirements without requiring schema changes:
+
+| Operation | Table | What happens |
+|---|---|---|
+| Anonymize | `leads` | `email → [deleted-{id}]`, `name → null`, `role → null` — row kept so all FK references remain valid |
+| Anonymize | `replies` | `body → '[deleted]'` — prospect's own words are PII; row kept for reply count/sentiment analytics |
+| Anonymize | `suppression_list` | `email → [deleted-{id}]` — suppression stays in force; unique per lead to satisfy `(email, campaign_id)` constraint |
+| Hard delete | `risk_flags` | Contains PII enrichment data; no analytics value |
+| Hard delete | `enrichment_records` | Contains raw structured PII from enrichment; no analytics value |
+| Hard delete | `campaign_leads` | Link table; no analytics value |
+| Hard delete | `campaign_lead_exclusions` | Link table; no analytics value |
+| Keep intact | `email_events`, `email_drafts`, `follow_ups`, `demos` | Anonymous after lead is stripped; all analytics counts preserved |
+
+What remains after erase: rows that say "a send happened for campaign X using template Y at time Z" — no name, no email, no lead reference that can be linked back to an individual.
+
 - Erasure must complete within **30 days** of request.
-- Log every erasure to `audit_log` with timestamp and requesting actor.
-- CSV exports must exclude erased leads.
+- Every erasure is logged to `audit_log` with timestamp, requesting actor, and lead ID.
 
-> Status: endpoint not yet built.
+> **Implemented** — `POST /admin/leads/:id/erase` in `backend/src/routes/admin.ts`.
 
 ## Audit Log Exportability
 
-The `audit_log` table (admin actions, permission changes, document access, erasures, purges) must be exportable:
+The `audit_log` table records admin actions, draft approvals/rejections/edits/sends, erasures, and purge runs.
 
-- `GET /admin/audit-log?from=&to=` — paginated JSON.
-- `GET /admin/audit-log/export` — CSV download for compliance orgs.
-- Export includes `timestamp, actor, action, target_id, target_type, ip_address`.
-- Access restricted to the admin API key only.
+```
+GET /admin/audit-log?from=&to=&page=&limit=   # paginated JSON; admin only
+GET /admin/audit-log/export                    # full CSV download; admin only
+```
 
-> Status: routes not yet built (table exists; draft approve/reject/edit already call `logAudit()`).
+Export fields: `timestamp, actor, action, target_id, target_type, ip_address, metadata`.
+
+> **Implemented** — both routes in `backend/src/routes/admin.ts`. Draft approve/reject/edit/send also call `logAudit()`.
 
 ## Email Domain Hardening
 
@@ -142,6 +163,8 @@ This is implemented via `SendRawEmailCommand` (SES v1 raw send) in `backend/src/
 
 No dedicated security test suite exists yet. When adding tests, prioritise these invariants:
 
-1. **Suppression integrity** — a lead erased via right-to-deletion must never appear in query results or be re-contacted. The `suppression_list` entry (with PII replaced by `[deleted]`) must survive the erasure.
+1. **Suppression integrity** — a lead erased via right-to-deletion must never appear in query results or be re-contacted. The `suppression_list` entry (with email replaced by `[deleted-{id}]`) must survive the erasure.
 2. **Cross-campaign isolation** — workers must not process leads or drafts outside the campaign they were triggered for. Suppression checks use `(email, campaign_id)` — never email alone.
 3. **Webhook verification** — the SNS signature verification path must reject payloads with invalid signatures, mismatched `TopicArn`, or `SigningCertURL` not matching the expected SNS domain pattern.
+4. **Rate limiting** — verify 429 is returned after the per-minute threshold is exceeded for each scope (API, CSV import, webhook).
+5. **SSRF** — verify that source URLs resolving to private IPs are blocked and logged, not fetched.

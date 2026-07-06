@@ -37,15 +37,17 @@ Leads missing `name` or `role` are skipped before batch submission — incomplet
 
 ## Approval Workflow
 
-All drafts are created with `status = pending_review` and require a rep to act on them from the review queue.
+Drafts are created with `status = pending_review` by default, requiring a rep to act on them from the review queue. Once 50 total sends have been made, drafts with `confidence_score ≥ 70` are automatically created as `status = scheduled` — skipping the review queue.
 
-Rep actions:
+The threshold is evaluated once per `generateDraftsForCampaign()` call (not per draft) using `getTotalSent()`, so the entire batch gets the same status. Before 50 sends, all drafts land in `pending_review` regardless of score.
+
+Rep actions on `pending_review` drafts:
 - **Approve** → `PATCH /drafts/:id/approve` → status becomes `scheduled`
 - **Reject** → `PATCH /drafts/:id/reject` → status becomes `rejected` + reason stored
 - **Edit** → `PATCH /drafts/:id/edit` → body re-scored, status reset to `pending_review`
 - **Send now** → `POST /drafts/:id/send` → only valid on `scheduled` drafts; runs all hard gates
 
-> **Auto-scheduling is not yet wired.** The function `shouldQueueForReview()` in `backend/src/services/sender/index.ts` implements the intended Phase 2 logic (auto-schedule drafts with confidence ≥ 70 once 50 sends have been made), and it has tests, but it is not called anywhere in the production code path. All drafts currently require manual rep approval.
+> **Implemented** — auto-schedule threshold wired in `backend/src/services/drafting/orchestrator.ts`.
 
 ## Email Transport & Deliverability
 
@@ -153,7 +155,7 @@ Rules:
 
 ## Reply Handling (decision tree)
 
-`POST /webhooks/ses/reply` → `services/reply-classifier` (Haiku classification, plain `messages.create`):
+`POST /webhooks/ses/reply` → `services/reply-classifier` (Haiku classification, plain `messages.create`, no prompt caching):
 
 | Classification | Action |
 |---|---|
