@@ -4,9 +4,11 @@ All security requirements for the project. Single source of truth — `CLAUDE.md
 
 ## API Authentication
 
-Every `/api/v1/*` route requires an `X-API-Key` header validated against `SECRET_API_KEY` (env var). Requests that are missing or mismatched return **HTTP 401 immediately** — no DB access, no logging of the payload. The middleware must run **before** any route handler.
+Every `/api/v1/*` route requires a **JWT Bearer token** in the `Authorization` header (`Authorization: Bearer <token>`). The token is verified as HS256 using `AUTH_SECRET` (env var, required). Invalid or missing tokens return HTTP 401 immediately.
 
-> Status: not yet wired. `SECRET_API_KEY` is defined in the env list (`deployment.md`).
+The middleware (`requireAuth` in `backend/src/middleware/auth.ts`) attaches `{ email, role }` to the request context for downstream handlers. A second middleware (`requireAdmin`) gates write operations on registry, templates, and workers to the `admin` role only.
+
+> **Implemented** — `requireAuth` is applied globally to all `/api/v1/*` routes in `backend/src/index.ts`.
 
 ## SSRF Protection
 
@@ -31,7 +33,7 @@ If the resolved IP falls in any of these ranges, reject the job and set `scrape_
 5. Handles `SubscriptionConfirmation` automatically by fetching `SubscribeURL`.
 6. Rejects (HTTP 403) any request that fails verification — never processes unverified payloads.
 7. Parses the raw MIME body via `postal-mime` to extract plain-text reply content.
-8. Resolves the lead by `From`; matches the event via `In-Reply-To` → `email_events.ses_message_id`; falls back to the most recent unread event if the header is absent.
+8. Resolves the lead by `From`; matches the event via `In-Reply-To` → `email_events.ses_message_id`; falls back to the oldest unreplied event for that lead if the header is absent.
 
 > Note: AWS SDK v3 has no built-in SNS validator; the implementation follows the AWS algorithm directly using `node:crypto`.
 
@@ -43,9 +45,9 @@ CSV imports (`POST /campaigns/:id/leads/import`) must strip formula-injection ch
 
 ## CORS Policy
 
-Lock `Access-Control-Allow-Origin` to the value of `NEXT_PUBLIC_API_URL` only. **Never use a wildcard (`*`).** Set this in Hono middleware at app startup so it applies to every route.
+`Access-Control-Allow-Origin` is locked to the value(s) in `CORS_ORIGINS` (comma-separated, env var). Never use a wildcard (`*`). Applied in Hono CORS middleware at startup — applies to every route.
 
-> Status: currently hardcoded to `localhost:3000` / `127.0.0.1:3000`; needs env-driven config.
+> **Implemented** — reads `process.env.CORS_ORIGINS`, defaults to `http://localhost:3000`. Set `CORS_ORIGINS=https://yourdomain.com` in the backend service env vars in Coolify for production.
 
 ## Route-level Rate Limiting
 
@@ -64,7 +66,7 @@ Return **HTTP 429** with a `Retry-After` header on breach. Log the IP and route.
 ## Secrets Management
 
 - Never log env vars or interpolate them into error messages.
-- Rotate `ANTHROPIC_API_KEY`, `SNOVIO_CLIENT_SECRET`, `COWORK_API_KEY`, and `SECRET_API_KEY` on a **90-day minimum** schedule.
+- Rotate `ANTHROPIC_API_KEY`, `SNOVIO_CLIENT_SECRET`, `COWORK_API_KEY`, and `AUTH_SECRET` on a **90-day minimum** schedule.
 - Add `.env*` to `.gitignore` at repo root — enforced, not optional.
 - In production, pull secrets from **AWS Secrets Manager or Parameter Store**; `.env` is for local dev only.
 
@@ -76,16 +78,16 @@ Return **HTTP 429** with a `Retry-After` header on breach. Log the IP and route.
 
 ## Data Retention and Purge Policy
 
-Enforced by the `purge-old-records` worker (weekly; see `workers.md`). Log purge counts to `audit_log`.
+Enforced by the `purge-old-records` worker (weekly; see `workers.md`). The worker currently logs purge counts to the console only — it does not call `logAudit()`. This is a gap vs the intended spec.
 
 | Table | Retention | Action |
 |---|---|---|
 | `email_events` | 365 days after `sent_at` | Hard delete — kept a full year so the 7-day send-cap window and historical analytics always have data |
 | `replies` | 180 days after `received_at` | Hard delete |
-| `risk_flags` | 90 days after lead suppressed | Hard delete |
 | `scrape_jobs` (failed/complete) | 30 days | Hard delete |
 | `suppression_list` | Indefinite | Keep — legal requirement |
 | `audit_log` | Indefinite | Keep — compliance export |
+| `risk_flags` | Not currently purged | ⚠️ The spec calls for 90-day purge after lead suppressed, but `purge-old-records` does not currently implement this. Add to the worker when building the admin erase flow. |
 
 ## Right-to-deletion
 
@@ -119,8 +121,27 @@ Before the first SES send, the sending domain must have all three DNS records co
 
 Without these, cold outreach to SG/AU/US targets is flagged or rejected and the domain is spoofable.
 
-## CI Isolation Tests
+## Email Deliverability Compliance
 
-A dedicated suite (`tests/security/isolation.test.ts`) should run on every push, and CI must fail/block merge if any test fails.
+**Gmail and Yahoo mandated `List-Unsubscribe` headers for all bulk senders in February 2024.** Emails missing these headers are likely to be spam-foldered or rejected by these providers.
 
-> Conflict to resolve: the original spec asserts `org_id = A` returns zero rows from `org_id = B` tables, but the product is **single-tenant** and no table has an `org_id` column. These assertions cannot pass as written. The intent worth keeping: suppression checks must never surface a lead erased via right-to-deletion, and workers must not leak across campaign boundaries. See `roadmap.md` § Open Items.
+Every outbound email (initial + follow-ups) must include:
+
+```
+List-Unsubscribe: <{FRONTEND_URL}/api/unsubscribe?id={leadId}&campaign={campaignId}>
+List-Unsubscribe-Post: List-Unsubscribe=One-Click
+```
+
+This is implemented via `SendRawEmailCommand` (SES v1 raw send) in `backend/src/services/sender/index.ts`. The `SendEmailCommand` API cannot set custom headers and must **not** be used.
+
+**RFC 8058 one-click (required):** The `List-Unsubscribe-Post` header tells Gmail it can send a silent POST to suppress the recipient without redirecting their browser. The frontend route at `GET/POST /api/unsubscribe` handles both cases — GET for link clicks, POST for Gmail one-click — and both trigger the same backend suppression logic.
+
+**Recipient verification:** SES sandbox mode only allows sending to verified email addresses. In production, SES must be moved out of sandbox (submit a sending limit increase request in the AWS console). The sender address (`AWS_SES_FROM_ADDRESS`) must also be verified.
+
+## What to Test for Security
+
+No dedicated security test suite exists yet. When adding tests, prioritise these invariants:
+
+1. **Suppression integrity** — a lead erased via right-to-deletion must never appear in query results or be re-contacted. The `suppression_list` entry (with PII replaced by `[deleted]`) must survive the erasure.
+2. **Cross-campaign isolation** — workers must not process leads or drafts outside the campaign they were triggered for. Suppression checks use `(email, campaign_id)` — never email alone.
+3. **Webhook verification** — the SNS signature verification path must reject payloads with invalid signatures, mismatched `TopicArn`, or `SigningCertURL` not matching the expected SNS domain pattern.

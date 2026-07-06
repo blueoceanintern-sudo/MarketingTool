@@ -67,9 +67,8 @@ decision tree: follow-up | demo booking | suppress | human flag
 
 ## Not-Yet-Built Components
 
-- **`services/campaign-assigner`** — Claude assigns each enriched lead to one or more campaigns (no cap); needs the `campaign_assignments` table.
-- **`services/improver`** — self-updating templates: A/B performance + pgvector similarity on `email_drafts.body_embedding`; auto-mutates winners and adjusts weights; updates `skill.md`. Schema already supports lineage (`parent_template_id`, `created_by`, `weight`, `active`); only manual CRUD exists today via the `/templates` admin page.
-- **Security middleware** — API-key auth, rate limiting, SSRF protection, CSV-injection sanitization, and env-driven CORS (currently hardcoded to localhost). Specs in `security.md`.
+- **`services/campaign-assigner`** — Claude assigns each enriched lead to one or more campaigns. No `campaign_assignments` table exists in the schema — results will land in `campaign_leads` when this is built. Currently, leads are added to campaigns manually or via CSV import into `campaign_leads`.
+- **Security middleware** — rate limiting, SSRF protection, and CSV-injection sanitization are not yet wired. Specs in `security.md`. (JWT auth and env-driven CORS via `CORS_ORIGINS` are already implemented.)
 - **Admin routes** — `POST /admin/leads/:id/erase`, `GET /admin/audit-log`, `GET /admin/audit-log/export` (the `audit_log` table exists; routes do not).
 - **Email domain hardening** — SPF/DKIM/DMARC (DNS/SES console, not code).
 - **Monorepo migration** — still `backend/` + `frontend/`.

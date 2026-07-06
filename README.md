@@ -14,9 +14,9 @@ This internal tool automates the entire B2B outreach pipeline. Staff operate it 
 
 ### Key Features
 - **Lead Scraping** — Source leads from industry directories, government registries (ACRA, ASIC, SEC EDGAR), and public company data
-- **Lead Enrichment** — Auto-enrich contact data via Snov.io API (Apollo.io fallback)
-- **AI Email Drafting** — One personalised email per (lead, campaign) pair via Claude Haiku Batch API. Each draft is generated using one of N admin-managed prompt templates (style variants), picked by weighted-random; engagement is tracked per template so reps can compare which styles land best. Confidence score included in the same generation call
-- **Human Review Queue** — Rep-controlled approval for the first 500 emails; auto-send thereafter for high-confidence drafts (score ≥ 70)
+- **Lead Enrichment** — Auto-enrich contact data through a chain: government registry lookup → Cowork (Playwright-driven) → Snov.io
+- **AI Email Drafting** — One personalised email per (lead, campaign) pair via Claude Haiku 4.5. Templates are selected by Thompson Sampling (favours proven performers, still explores new ones). Drafts are scored by a separate adversarial scoring call. Follow-up content uses the true Batch API for cost efficiency.
+- **Human Review Queue** — All drafts require rep approval (approve / reject / edit). Reps can also trigger a manual send per-draft from the Scheduled tab. Auto-scheduling for high-confidence drafts is designed but not yet wired.
 - **Reply Automation** — Sentiment-based routing: positive → demo booking, no reply → follow-ups, negative → suppress
 - **Analytics Dashboard** — Open rates, reply rates, demo bookings, CAC — filterable by market and vertical
 
@@ -29,10 +29,10 @@ This internal tool automates the entire B2B outreach pipeline. Staff operate it 
 | Backend | Hono on Bun (TypeScript) |
 | Frontend | Next.js 15, App Router, shadcn/ui, Tailwind CSS v4 |
 | Database | PostgreSQL + pgvector, Drizzle ORM |
-| Email | AWS SES |
+| Email | AWS SES (`SendRawEmailCommand` — raw MIME with `List-Unsubscribe` headers) |
 | Scraping | Crawl4AI (Docker) + Cheerio fallback |
-| Enrichment | Snov.io (Apollo.io fallback) |
-| AI | Claude Haiku 4.5 — Batch API for drafting, prompt caching for classification |
+| Enrichment | Registry → Cowork → Snov.io chain |
+| AI | Claude Haiku 4.5 — Batch API for follow-up content; parallel `messages.create` for initial drafts, scoring, and reply classification |
 | Hosting | AWS Lightsail |
 | Background Jobs | node-cron |
 
@@ -116,6 +116,14 @@ cp backend/.env.example backend/.env
 Create `frontend/.env.local`:
 ```
 NEXT_PUBLIC_API_URL=http://localhost:3001
+```
+
+Add to `backend/.env`:
+```
+# Public-facing frontend URL — embedded in List-Unsubscribe headers in every outbound email.
+# MUST be set correctly in production (e.g. https://yourdomain.com).
+# If missing, unsubscribe links in emails will default to localhost:3000 and break for recipients.
+FRONTEND_URL=http://localhost:3000
 ```
 
 ### 3. Set up the database
@@ -285,9 +293,26 @@ If you want a managed PostgreSQL instead of running it on the same instance:
 
 ---
 
-## Deployment (AWS Lightsail)
+## Email Deliverability
 
-Target: single-instance Lightsail VM, 2GB RAM / 2 vCPUs.
+All emails are sent as raw MIME via `SendRawEmailCommand` and include:
+
+- `List-Unsubscribe` — required by Gmail and Yahoo for all bulk senders since February 2024
+- `List-Unsubscribe-Post` — enables RFC 8058 one-click unsubscribe (Gmail shows an "Unsubscribe" button; clicking it sends a silent POST to the unsubscribe URL)
+
+Unsubscribe links point to `{FRONTEND_URL}/api/unsubscribe` (the Next.js proxy route), **not** the backend directly — port 3001 is firewalled externally. The frontend proxies to `localhost:3001/unsubscribe` server-side, then redirects the browser to `/unsubscribe.html`.
+
+> `FRONTEND_URL` in the **backend** environment must be set to your public domain (e.g. `https://yourdomain.com`). Wrong or missing → links in sent emails will be broken.
+
+---
+
+## Deployment (AWS Lightsail via Coolify)
+
+Target: single-instance Lightsail VM, 2GB RAM / 2 vCPUs, managed by **Coolify** (Docker-based PaaS).
+
+**Port exposure:** Only port 80 (Next.js frontend) is publicly reachable. Port 3001 (Hono backend) is internal. The frontend calls the backend via `NEXT_PUBLIC_API_URL=http://localhost:3001` on the same host.
+
+**Environment variables:** Set all env vars in the Coolify UI under each service's "Environment Variables" tab (Runtime-only for secrets). Do not commit `.env` files.
 
 ### First-time setup on the VM
 
@@ -361,6 +386,8 @@ All routes prefixed `/api/v1`.
 | PATCH | `/drafts/:id/approve` | Approve draft |
 | PATCH | `/drafts/:id/reject` | Reject draft |
 | PATCH | `/drafts/:id/edit` | Edit + re-score draft |
+| POST | `/drafts/:id/send` | Manually send a scheduled draft (runs all hard gates) |
+| GET/POST | `/api/unsubscribe` *(frontend)* | Public unsubscribe proxy — linked from every email; GET redirects to confirmation page, POST handles Gmail RFC 8058 one-click |
 | POST | `/webhooks/ses/reply` | Inbound reply webhook |
 | GET | `/replies/flagged` | Flagged replies |
 | GET | `/analytics/overview` | Pipeline metrics |
