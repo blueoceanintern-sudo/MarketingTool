@@ -1,4 +1,4 @@
-import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
+import { SESClient, SendRawEmailCommand } from "@aws-sdk/client-ses";
 import { db } from "../../db";
 import { suppressionList, emailDrafts, emailEvents, campaigns, leads, promptTemplates, campaignLeads } from "../../db/schema";
 import { eq, and, isNotNull, count, gte, min, sql } from "drizzle-orm";
@@ -94,6 +94,51 @@ function buildUnsubscribeUrl(leadId: string, campaignId: string): string {
   return `${base}/api/unsubscribe?id=${leadId}&campaign=${campaignId}`;
 }
 
+function wrapBase64(b64: string): string {
+  return b64.match(/.{1,76}/g)?.join("\r\n") ?? b64;
+}
+
+// Builds a raw MIME email with List-Unsubscribe headers, which Gmail and
+// Yahoo require for bulk mail since Feb 2024. SendEmailCommand does not
+// support custom headers — SendRawEmailCommand is required.
+function buildRawEmail(params: {
+  from: string;
+  to: string;
+  subject: string;
+  textBody: string;
+  htmlBody: string;
+  unsubscribeUrl: string;
+}): Uint8Array {
+  const boundary = `----=_Part_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const subjectEncoded = `=?UTF-8?B?${Buffer.from(params.subject).toString("base64")}?=`;
+
+  const lines = [
+    `From: ${params.from}`,
+    `To: ${params.to}`,
+    `Subject: ${subjectEncoded}`,
+    `MIME-Version: 1.0`,
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
+    `List-Unsubscribe: <${params.unsubscribeUrl}>`,
+    `List-Unsubscribe-Post: List-Unsubscribe=One-Click`,
+    ``,
+    `--${boundary}`,
+    `Content-Type: text/plain; charset=UTF-8`,
+    `Content-Transfer-Encoding: base64`,
+    ``,
+    wrapBase64(Buffer.from(params.textBody).toString("base64")),
+    ``,
+    `--${boundary}`,
+    `Content-Type: text/html; charset=UTF-8`,
+    `Content-Transfer-Encoding: base64`,
+    ``,
+    wrapBase64(Buffer.from(params.htmlBody).toString("base64")),
+    ``,
+    `--${boundary}--`,
+  ];
+
+  return Buffer.from(lines.join("\r\n"));
+}
+
 let sesClient: SESClient | null = null;
 
 function getSesClient(): SESClient {
@@ -178,15 +223,16 @@ export async function sendDraft(payload: SendPayload): Promise<SendResult> {
   const textBody = `${draft.body}\n\nTo unsubscribe: ${unsubscribeUrl}`;
   const htmlBody = buildEmailHtml(draft.body, unsubscribeUrl);
 
-  const command = new SendEmailCommand({
-    Source: fromAddress,
-    Destination: { ToAddresses: [toEmail] },
-    Message: {
-      Subject: { Data: draft.subject, Charset: "UTF-8" },
-      Body: {
-        Text: { Data: textBody, Charset: "UTF-8" },
-        Html: { Data: htmlBody, Charset: "UTF-8" },
-      },
+  const command = new SendRawEmailCommand({
+    RawMessage: {
+      Data: buildRawEmail({
+        from: fromAddress,
+        to: toEmail,
+        subject: draft.subject,
+        textBody,
+        htmlBody,
+        unsubscribeUrl,
+      }),
     },
   });
 
@@ -285,15 +331,16 @@ export async function sendFollowUpEmail(payload: FollowUpPayload): Promise<SendR
   const textBody = `${body}\n\nTo unsubscribe: ${unsubscribeUrl}`;
   const htmlBody = buildEmailHtml(body, unsubscribeUrl);
 
-  const command = new SendEmailCommand({
-    Source: fromAddress,
-    Destination: { ToAddresses: [toEmail] },
-    Message: {
-      Subject: { Data: subject, Charset: "UTF-8" },
-      Body: {
-        Text: { Data: textBody, Charset: "UTF-8" },
-        Html: { Data: htmlBody, Charset: "UTF-8" },
-      },
+  const command = new SendRawEmailCommand({
+    RawMessage: {
+      Data: buildRawEmail({
+        from: fromAddress,
+        to: toEmail,
+        subject,
+        textBody,
+        htmlBody,
+        unsubscribeUrl,
+      }),
     },
   });
 
