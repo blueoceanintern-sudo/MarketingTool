@@ -1,5 +1,4 @@
-export function buildEmailHtml(body: string, leadId: string, apiBaseUrl: string, campaignId: string): string {
-  const unsubscribeUrl = `${apiBaseUrl}/unsubscribe?id=${leadId}&campaign=${campaignId}`;
+export function buildEmailHtml(body: string, unsubscribeUrl: string): string {
   const bodyHtml = body.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>");
 
   return `<!DOCTYPE html>
