@@ -12,11 +12,11 @@
 ├── services/
 │   ├── scraper/              # Crawl4AI + Cheerio fallback
 │   ├── enrichment/           # Snov.io (+ Cowork fallback)
-│   ├── drafting/             # Claude Haiku Batch API
+│   ├── drafting/             # Claude Haiku parallel messages.create
 │   ├── scoring/              # Hard gates + draft quality
 │   ├── sender/               # AWS SES + warm-up
 │   ├── reply-handler/        # SES webhook + decision tree
-│   └── improver/             # Template A/B + skill.md updater
+│   └── improver/             # Template mutation + skill.md updater
 ├── workers/                  # node-cron jobs
 ├── db/
 │   ├── schema/               # Drizzle schema (one file per table)
@@ -52,11 +52,11 @@ services/enrichment (registry lookup → Cowork primary → Snov.io fallback)
         ↓
 services/campaign-assigner (Claude assigns lead to one or more campaigns → campaign_assignments)
         ↓
-services/drafting (Claude Haiku Batch API, 1 draft per campaign per lead)
+services/drafting (Claude Haiku parallel messages.create, 1 draft per campaign per lead)
         ↓
 services/scoring (hard gates + confidence in same call)
         ↓
-rep review queue OR auto-schedule (see email-system.md)
+rep review queue OR auto-schedule (confidence ≥ 70 after 50 sends)
         ↓
 services/sender (AWS SES, warm-up cap, ≤2×/week per lead, unsubscribe link)
         ↓
@@ -68,10 +68,9 @@ decision tree: follow-up | demo booking | suppress | human flag
 ## Not-Yet-Built Components
 
 - **`services/campaign-assigner`** — Claude assigns each enriched lead to one or more campaigns. No `campaign_assignments` table exists in the schema — results will land in `campaign_leads` when this is built. Currently, leads are added to campaigns manually or via CSV import into `campaign_leads`.
-- **Security middleware** — rate limiting, SSRF protection, and CSV-injection sanitization are not yet wired. Specs in `security.md`. (JWT auth and env-driven CORS via `CORS_ORIGINS` are already implemented.)
-- **Admin routes** — `POST /admin/leads/:id/erase`, `GET /admin/audit-log`, `GET /admin/audit-log/export` (the `audit_log` table exists; routes do not).
 - **Email domain hardening** — SPF/DKIM/DMARC (DNS/SES console, not code).
 - **Monorepo migration** — still `backend/` + `frontend/`.
+- **DB migrations** — schema changes have not generated/applied migration files via `drizzle-kit generate` + `drizzle-kit migrate`.
 
 ## Deferred Cleanup (after feature-complete)
 
@@ -79,7 +78,7 @@ Not blocking and not urgent — revisit once the not-yet-built components above 
 
 - `backend/src/config/sourceRegistry.ts` — legacy CSS-selector map, now superseded by selectors stored in the `source_registry` table. Remove once nothing references it.
 - The `Lead` interface currently lives in a scraper file; move it to `shared/` when the monorepo migration happens.
-- Workers are imported in-process by `backend/src/index.ts` for dev convenience; split them into a separate process as part of the production hardening pass.
+- Workers are imported in-process by `backend/src/index.ts` for dev convenience; split them into a separate process as part of the production hardening pass (see `workers.md` § Production Note).
 
 ## Open Items (unresolved questions)
 

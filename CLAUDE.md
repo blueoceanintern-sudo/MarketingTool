@@ -28,28 +28,34 @@ they are target layout only (see `docs/roadmap.md`). Extend the existing `backen
 `frontend/` paths until a deliberate migration.
 
 **Built:** all `/api/v1/*` routes; full Drizzle schema incl. `audit_log` +
-`enrichment_records`; scrapers (Crawl4AI + Cheerio) + `runScrapeJob`; enrichment chain
-(registry → Cowork → Snov.io) persisting `enrichment_records`; drafting (Haiku 4.5 parallel
-`messages.create`, one draft per lead/campaign, separate scoring pass) + orchestrator; sender (SES via `SendRawEmailCommand`,
-warm-up cap, hard gates, follow-up send, `List-Unsubscribe` + `List-Unsubscribe-Post`
-headers for Gmail/Yahoo compliance); all 7 cron workers (incl. `mutation-runner` — auto-
-generates template variants via Thompson Sampling once 300+ sends); SNS/SES webhook
-signature verification; per-draft manual send (`POST /drafts/:id/send`); suppression list
-view per campaign in the UI; frontend unsubscribe proxy (`GET/POST /api/unsubscribe`) for
-RFC 8058 one-click unsubscribe (port 3001 is firewalled — all public links go through the
-frontend).
+`enrichment_records`; scrapers (Crawl4AI + Cheerio) + `runScrapeJob` with SSRF protection;
+enrichment chain (registry → Cowork → Snov.io) persisting `enrichment_records`; drafting
+(Haiku 4.5 parallel `messages.create`, one draft per lead/campaign, separate scoring pass) +
+orchestrator with auto-schedule threshold (≥50 sends + confidence ≥70); sender (SES via
+`SendRawEmailCommand`, warm-up cap, hard gates, follow-up send, `List-Unsubscribe` +
+`List-Unsubscribe-Post` headers for Gmail/Yahoo compliance); all 7 cron workers (incl.
+`mutation-runner` — auto-generates template variants via Thompson Sampling once 300+ sends,
+`purge-old-records` — purges risk_flags for suppressed leads + writes to audit_log);
+SNS/SES webhook signature verification; per-draft manual send (`POST /drafts/:id/send`);
+suppression list view per campaign in the UI; frontend unsubscribe proxy
+(`GET/POST /api/unsubscribe`) for RFC 8058 one-click unsubscribe (port 3001 is firewalled —
+all public links go through the frontend); in-memory rate limiting (100/min API, 10/min CSV
+import, 50/min webhook); CSV-injection sanitization on lead import; admin right-to-deletion
+(`POST /admin/leads/:id/erase`) with analytics-preserving de-identification; audit log
+routes (`GET /admin/audit-log`, `GET /admin/audit-log/export`).
 
-**Not built:** security middleware (rate limiting, SSRF protection, CSV-injection
-sanitization); `campaign-assigner` (leads currently added to campaigns manually via UI/CSV);
-admin erase + audit-log routes; monorepo migration; DB migrations not yet generated/applied.
-JWT auth and env-driven CORS (`CORS_ORIGINS`) are already implemented. Details in `docs/roadmap.md`.
+**Not built:** `campaign-assigner` (leads currently added to campaigns manually via UI/CSV);
+monorepo migration; DB migrations not yet generated/applied; worker process separation
+(workers run in-process with the API for now). JWT auth and env-driven CORS (`CORS_ORIGINS`)
+are implemented. Details in `docs/roadmap.md`.
 
 ## Tech Stack
 
 Bun · Hono · Next.js 15+ (RSC by default) · shadcn/ui + Tailwind v4 · PostgreSQL + pgvector ·
 Drizzle (close to raw SQL) · Crawl4AI (Cheerio fallback) · AWS SES · Claude Haiku 4.5
-(Batch API for drafting, prompt caching for classification) · node-cron · AWS Lightsail
-(2GB / 2 vCPU, single instance).
+(parallel `messages.create` for drafting/scoring, Batch API for follow-ups, plain
+`messages.create` for classification) · node-cron · AWS Lightsail (2GB / 2 vCPU, single
+instance).
 
 ## Coding Conventions
 

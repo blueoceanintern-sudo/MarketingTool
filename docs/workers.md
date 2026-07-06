@@ -1,8 +1,8 @@
 # Workers
 
-All background processing runs through **node-cron** (no Redis, no Bull, no external queue). Six workers are defined in `backend/src/workers/index.ts`.
+All background processing runs through **node-cron** (no Redis, no Bull, no external queue). Seven workers are defined in `backend/src/workers/index.ts`.
 
-**Dev:** Workers are imported directly by `backend/src/index.ts` so they start alongside the API server. **Production:** Remove that import and run them as a separate process (see Production Note below) — this keeps the API and cron loops from competing for the same Postgres connections.
+Workers are currently imported in-process (`import "./workers"` in `backend/src/index.ts`) for dev convenience. See the Production Note below for the intended separation.
 
 There are **7 workers**.
 
@@ -13,7 +13,7 @@ There are **7 workers**.
 | `enrichment-retry` | Daily 3am | Retries unenriched or stale `not_found` scraped leads (CSV-imported leads are skipped); capped by `ENRICHMENT_DAILY_RUN_CAP` (default 200) |
 | `scrape-retry` | Daily 4am | Retries failed `scrape_jobs` still under `max_retries` |
 | `warmup-tracker` | Daily midnight | Logs current warm-up week and daily send cap (counts only successful SES sends) |
-| `purge-old-records` | Weekly, Sunday 2am | Hard-deletes old records per the retention policy; logs purge counts to the console (does not write to `audit_log`) |
+| `purge-old-records` | Weekly, Sunday 2am | Hard-deletes old records per the retention policy; writes purge counts to `audit_log` via `logAudit()` |
 | `mutation-runner` | Weekly, Monday 6am | Auto-generates new template variants via Claude once 300+ total sends exist; see below |
 
 ## Retry Behavior
@@ -23,9 +23,18 @@ There are **7 workers**.
 
 ## Purge Behavior
 
-`purge-old-records` enforces the retention policy in `security.md`. Hard-deletes: `replies > 180d`, `email_events > 365d`, and failed/complete `scrape_jobs > 30d`. `suppression_list` and `audit_log` are kept indefinitely. Purge activity is logged to the console only — the worker does not currently call `logAudit()`.
+`purge-old-records` enforces the retention policy in `security.md`. Runs weekly on Sunday at 2am. After completing, it calls `logAudit()` with the counts of all deleted records.
 
-> **Gap vs spec:** `risk_flags` are not currently purged. The spec calls for a 90-day purge after a lead is suppressed, but this is not yet implemented in the worker.
+| What is purged | Condition |
+|---|---|
+| `replies` | `received_at` older than 180 days |
+| `email_events` | `sent_at` older than 365 days |
+| `scrape_jobs` (failed/complete) | `completed_at` older than 30 days |
+| `risk_flags` | Lead has a `suppression_list` entry older than 90 days |
+
+`suppression_list` and `audit_log` are never purged — kept indefinitely for legal compliance.
+
+The `risk_flags` purge works by joining `leads` with `suppression_list` on email to find leads suppressed more than 90 days ago, then deleting their `risk_flags` rows. This preserves the suppression record itself while removing the operational flag data.
 
 ## Follow-up Processing Flow
 
@@ -47,7 +56,9 @@ Mutations include rich metadata: `mutation_mode`, persuasion strategy shift, `di
 
 ## Production Note: Process Separation
 
-Workers are currently imported in-process (`import "./workers"` in `backend/src/index.ts`) for dev convenience. **Before deploying to production, remove that import** and manage two processes separately:
+Workers are currently imported in-process (`import "./workers"` in `backend/src/index.ts`) for dev convenience. This is the current production state on Coolify — both the API and workers run in the same process.
+
+The intended split (not yet implemented) is two separate processes:
 
 ```bash
 # Process 1 — HTTP API
@@ -57,4 +68,4 @@ bun run src/index.ts
 bun run workers
 ```
 
-Running them separately means a cron crash doesn't take down the API, and their Postgres connection pools don't compete.
+Running them separately means a cron crash doesn't take down the API, and their Postgres connection pools don't compete. This separation is listed in `roadmap.md` § Deferred Cleanup.
