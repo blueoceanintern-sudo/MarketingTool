@@ -251,14 +251,20 @@ draftsRouter.post("/:id/send", async (c) => {
     .where(eq(riskFlags.leadId, row.leadId))
     .limit(1);
 
-  const result = await sendDraft({
-    draftId: row.id,
-    toEmail: row.leadEmail,
-    leadId: row.leadId,
-    campaignId: row.campaignId,
-    isVerified: row.isVerified,
-    hasRiskFlags: !!flag,
-  });
+  let result: Awaited<ReturnType<typeof sendDraft>>;
+  try {
+    result = await sendDraft({
+      draftId: row.id,
+      toEmail: row.leadEmail,
+      leadId: row.leadId,
+      campaignId: row.campaignId,
+      isVerified: row.isVerified,
+      hasRiskFlags: !!flag,
+    });
+  } catch (err) {
+    console.error(`[drafts:send] sendDraft threw for draft ${draftId}:`, err);
+    return c.json({ error: "Send failed due to an internal error" }, 500);
+  }
 
   await logAudit({
     actor: c.get("user"),

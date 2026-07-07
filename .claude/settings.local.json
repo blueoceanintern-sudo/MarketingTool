@@ -26,7 +26,14 @@
       "Bash(GIT_SEQUENCE_EDITOR=\"sed -i 's/^pick 85f5bc6/edit 85f5bc6/'\" git rebase *)",
       "Bash(git stash *)",
       "PowerShell($content = Get-Content \"C:\\\\Users\\\\jachi\\\\Desktop\\\\MarketingTool\\\\.claude\\\\settings.local.json\" -Raw -Encoding UTF8; try { $null = $content | ConvertFrom-Json; Write-Host \"Valid JSON\" } catch { Write-Host \"Error: $\\($_.Exception.Message\\)\" })",
-      "Bash(curl *)"
+      "Bash(curl *)",
+      "Bash(git config *)",
+      "Bash(gh *)",
+      "Bash(git push *)",
+      "Bash(git commit -m ' *)",
+      "Bash(bun run *)",
+      "Bash(npx tsc *)",
+      "Bash(git pull *)"
     ],
     "deny": [
       "Read(*/.env)",
