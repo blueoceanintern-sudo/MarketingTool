@@ -120,13 +120,18 @@ function DraftsTable({ drafts, emptyMessage, onSend }: {
                                   onClick={async (e) => {
                                     e.stopPropagation();
                                     setSendingId(d.id);
-                                    const res = await sendDraftNow(d.id);
-                                    setSendingId(null);
-                                    if ("error" in res) {
-                                      setSendResults((prev) => ({ ...prev, [d.id]: { ok: false, message: res.error } }));
-                                    } else {
-                                      setSendResults((prev) => ({ ...prev, [d.id]: { ok: true, message: res.status === "queued" ? "Queued" : "Sent" } }));
-                                      await onSend();
+                                    try {
+                                      const res = await sendDraftNow(d.id);
+                                      if ("error" in res) {
+                                        setSendResults((prev) => ({ ...prev, [d.id]: { ok: false, message: res.error } }));
+                                      } else {
+                                        setSendResults((prev) => ({ ...prev, [d.id]: { ok: true, message: res.status === "queued" ? "Queued" : "Sent" } }));
+                                        await onSend();
+                                      }
+                                    } catch {
+                                      setSendResults((prev) => ({ ...prev, [d.id]: { ok: false, message: "Unexpected error" } }));
+                                    } finally {
+                                      setSendingId(null);
                                     }
                                   }}
                                   className="px-3 py-1 bg-primary text-white text-[11px] font-semibold rounded-lg disabled:opacity-50"

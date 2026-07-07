@@ -881,7 +881,7 @@ export async function getLeadsSummary(): Promise<LeadsSummaryGlobal> {
 export async function sendDraftNow(draftId: string): Promise<{ status: string; messageId: string | null } | { error: string }> {
   try {
     const res = await apiRequest(`${BASE}/api/v1/drafts/${draftId}/send`, { method: "POST" });
-    return res.json() as Promise<{ status: string; messageId: string | null } | { error: string }>;
+    return await res.json() as { status: string; messageId: string | null } | { error: string };
   } catch {
     return { error: "Could not reach the API." };
   }
