@@ -45,7 +45,7 @@ const ROLE_LOCAL_PARTS = new Set([
 
 // Extracts a clean institution name from a page. Prefers og:site_name/application-name
 // meta tags; falls back to the page <title> with page-name segments stripped.
-function cleanCompanyName($: cheerio.CheerioAPI): string | undefined {
+export function cleanCompanyName($: cheerio.CheerioAPI): string | undefined {
   const ogSiteName = $('meta[property="og:site_name"]').attr("content")?.trim();
   if (ogSiteName) return ogSiteName;
 
@@ -89,7 +89,7 @@ async function fetchPage(url: string): Promise<string | null> {
   }
 }
 
-function findStaffPageLinks($: cheerio.CheerioAPI, baseUrl: string): string[] {
+export function findStaffPageLinks($: cheerio.CheerioAPI, baseUrl: string): string[] {
   const base = new URL(baseUrl);
   const seen = new Set<string>();
 
@@ -132,7 +132,7 @@ function extractRole(text: string): string | null {
   return null;
 }
 
-function extractLeadsFromPage(
+export function extractLeadsFromPage(
   $: cheerio.CheerioAPI,
   website: string,
   company?: string,

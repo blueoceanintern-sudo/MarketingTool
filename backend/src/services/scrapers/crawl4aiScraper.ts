@@ -1,5 +1,6 @@
+import * as cheerio from "cheerio";
 import type { Lead } from "./cheerioScraper";
-import { scrapeWebsite as cheerioFallback } from "./cheerioScraper";
+import { scrapeWebsite as cheerioFallback, cleanCompanyName, extractLeadsFromPage, findStaffPageLinks } from "./cheerioScraper";
 import { isValidLeadEmail } from "./emailFilter";
 
 // Crawl4AI 0.4+ schema. POST /crawl accepts { urls: string[] } and returns
@@ -8,6 +9,7 @@ import { isValidLeadEmail } from "./emailFilter";
 interface Crawl4AIResultItem {
   success: boolean;
   error_message?: string;
+  cleaned_html?: string;
   markdown?: {
     raw_markdown?: string;
     fit_markdown?: string;
@@ -41,11 +43,11 @@ function extractAllEmails(text: string): string[] {
   return Array.from(emails);
 }
 
-async function crawl4aiScrape(url: string): Promise<Lead[]> {
+async function crawl4aiRequest(urls: string[]): Promise<Crawl4AIResultItem[]> {
   const baseUrl = process.env.CRAWL4AI_BASE_URL ?? "http://localhost:11235";
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 45_000); // 45s max per URL
+  const timeout = setTimeout(() => controller.abort(), 45_000);
 
   let res: Response;
   try {
@@ -54,7 +56,7 @@ async function crawl4aiScrape(url: string): Promise<Lead[]> {
       headers: { "Content-Type": "application/json" },
       signal: controller.signal,
       body: JSON.stringify({
-        urls: [url],
+        urls,
         browser_config: {
           type: "BrowserConfig",
           params: {
@@ -89,17 +91,62 @@ async function crawl4aiScrape(url: string): Promise<Lead[]> {
     throw new Error(data.detail ?? "Crawl4AI returned no results");
   }
 
-  const first = data.results[0]!;
-  if (!first.success) {
-    throw new Error(first.error_message || "Crawl4AI per-result failure");
+  return data.results;
+}
+
+function extractFromResult(
+  result: Crawl4AIResultItem,
+  website: string,
+  company: string | undefined,
+): Map<string, Lead> {
+  if (result.cleaned_html) {
+    const $ = cheerio.load(result.cleaned_html);
+    return extractLeadsFromPage($, website, company);
   }
 
-  const text = first.markdown?.raw_markdown
-    ?? first.extracted_content
-    ?? "";
+  // Fallback: regex on markdown — loses name/role context
+  const text = result.markdown?.raw_markdown ?? result.extracted_content ?? "";
+  const fallback = new Map<string, Lead>();
+  for (const email of extractAllEmails(text)) {
+    fallback.set(email, { email, website, company });
+  }
+  return fallback;
+}
 
-  const company = first.metadata?.title?.trim() || undefined;
-  return extractAllEmails(text).map((email) => ({ company, email, website: url }));
+async function crawl4aiScrape(url: string): Promise<Lead[]> {
+  // Step 1: scrape the main page
+  const mainResults = await crawl4aiRequest([url]);
+  const mainResult = mainResults[0]!;
+  if (!mainResult.success) {
+    throw new Error(mainResult.error_message || "Crawl4AI per-result failure");
+  }
+
+  // Step 2: derive company name + discover staff/team sub-pages
+  let company: string | undefined;
+  let staffLinks: string[] = [];
+
+  if (mainResult.cleaned_html) {
+    const $ = cheerio.load(mainResult.cleaned_html);
+    company = cleanCompanyName($);
+    staffLinks = findStaffPageLinks($, url);
+  } else {
+    company = mainResult.metadata?.title?.trim() || undefined;
+  }
+
+  // Step 3: batch-crawl staff pages (if any) for richer contact pages
+  const staffResults = staffLinks.length > 0 ? await crawl4aiRequest(staffLinks) : [];
+
+  // Step 4: extract leads from all pages, deduplicating by email
+  const allLeads = new Map<string, Lead>();
+
+  for (const result of [mainResult, ...staffResults]) {
+    if (!result.success) continue;
+    for (const [email, lead] of extractFromResult(result, url, company)) {
+      if (!allLeads.has(email)) allLeads.set(email, lead);
+    }
+  }
+
+  return Array.from(allLeads.values());
 }
 
 export async function scrapeWithFallback(
