@@ -120,6 +120,12 @@ const SUMMARY_SELECT = {
   pending: sql<number>`cast(sum(case when ${leads.routing} is null then 1 else 0 end) as int)`,
 } as const;
 
+// Prefixes string cells starting with formula-injection characters so they
+// cannot execute as formulas if the CSV is opened in Excel or Google Sheets.
+function sanitizeCsvField(value: string): string {
+  return /^[=+\-@]/.test(value) ? `'${value}` : value;
+}
+
 // Mounted at /api/v1/leads — all leads, no campaign filter
 export const allLeadsRouter = new Hono<{ Variables: { user: AuthUser } }>();
 
@@ -367,7 +373,7 @@ leadsRouter.post("/:id/leads/import", async (c) => {
     }
 
     // Upsert company
-    const companyName = row["company_name"] ?? "";
+    const companyName = sanitizeCsvField(row["company_name"] ?? "");
     let [company] = await db.select().from(companies).where(eq(companies.name, companyName)).limit(1);
     if (!company) {
       const size = (() => {
@@ -389,13 +395,14 @@ leadsRouter.post("/:id/leads/import", async (c) => {
       company = inserted!;
     }
 
-    const fullName = (row["contact_name"] ?? "").trim() || null;
+    const fullName = sanitizeCsvField((row["contact_name"] ?? "").trim()) || null;
+    const role = sanitizeCsvField(row["role"] ?? "");
 
     const [lead] = await db.insert(leads).values({
       companyId: company.id,
       name: fullName,
       email,
-      role: row["role"] ?? "",
+      role,
       isVerified: false,
       emailStatus: "pattern_guessed",
     }).returning();

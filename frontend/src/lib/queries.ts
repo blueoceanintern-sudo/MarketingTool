@@ -27,6 +27,12 @@ export const campaignLeadsOptions = (id: string, page: number, limit = 50, statu
     queryFn: () => api.getCampaignLeadsPaginated(id, { page, limit, status }),
   });
 
+export const campaignSuppressionsOptions = (id: string) =>
+  queryOptions({
+    queryKey: ["campaigns", id, "suppressions"],
+    queryFn: () => api.getCampaignSuppressions(id),
+  });
+
 // ── Leads ─────────────────────────────────────────────────────────────────--
 export type LeadsParams = {
   page: number;
