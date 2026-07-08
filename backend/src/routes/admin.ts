@@ -1,14 +1,16 @@
 import { Hono } from "hono";
 import { db } from "../db";
-import { sourceRegistry, suppressionList, promptTemplates, emailDrafts, campaigns, directoryConfigs, leads, companies, normalizeVertical, normalizeGeo } from "../db/schema";
-import { eq, and, inArray, count, sql } from "drizzle-orm";
+import { sourceRegistry, suppressionList, promptTemplates, emailDrafts, emailEvents, campaigns, directoryConfigs, leads, companies, normalizeVertical, normalizeGeo, followUps, riskFlags, enrichmentRecords, campaignLeads, campaignLeadExclusions, replies, demos, auditLog } from "../db/schema";
+import { eq, and, inArray, count, sql, desc, gte, lt, isNull } from "drizzle-orm";
 import { scrapeWebsite } from "../services/scrapers/cheerioScraper";
 import { scrapeWithFallback } from "../services/scrapers/crawl4aiScraper";
 import { isValidLeadEmail } from "../services/scrapers/emailFilter";
 import { logAudit } from "../services/audit/log";
 import { discoverSources, getDirectoryConfig, getAllDirectoryConfigs, resolveGeo } from "../services/sourceRegistry";
 import { emitJobEvent } from "../services/events";
+import { isSafeUrl } from "../services/scraping/runScrapeJob";
 import { requireAdmin, type AuthUser } from "../middleware/auth";
+import { runFollowUpSender } from "../workers";
 
 // ---------------------------------------------------------------------------
 // CSV helpers (used by /registry/sources/import)
@@ -503,6 +505,10 @@ adminRouter.get("/registry/active-combinations", async (c) => {
 
 // Shared helper — scrapes a single registry source row, persists new leads, and returns the count.
 async function scrapeSourceRecord(source: typeof sourceRegistry.$inferSelect): Promise<number> {
+  if (!await isSafeUrl(source.url)) {
+    console.warn(`[registry/scrape] SSRF blocked: ${source.url}`);
+    return 0;
+  }
   const result = source.scraperType === "crawl4ai"
     ? await scrapeWithFallback(source.url)
     : { leads: await scrapeWebsite(source.url), scraper: "cheerio" as const };
@@ -734,4 +740,209 @@ adminRouter.delete("/templates/:id", async (c) => {
     metadata: { name: existing.name },
   });
   return c.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// Manual worker trigger — POST /workers/send-now
+// Runs the follow-up sender immediately (same logic as the 09:00 cron).
+// Use this when the scheduled run was missed (e.g. container restart after 9am).
+// ---------------------------------------------------------------------------
+adminRouter.post("/workers/send-now", requireAdmin, async (c) => {
+  console.log("[admin] manual send-now triggered");
+  const result = await runFollowUpSender();
+  await logAudit({
+    actor: c.get("user"),
+    action: "workers.send_now",
+    targetType: "worker",
+    metadata: result,
+  });
+  return c.json({ ok: true, sent: result.sent, blocked: result.blocked });
+});
+
+// ---------------------------------------------------------------------------
+// Reset dry-run sent drafts back to scheduled — POST /workers/reset-dry-run
+// One-time use: clears fake email_events rows and resets draft status so the
+// real SES send can proceed.
+// ---------------------------------------------------------------------------
+adminRouter.post("/workers/reset-dry-run", requireAdmin, async (c) => {
+  const dryRunEvents = await db
+    .select({ draftId: emailEvents.draftId })
+    .from(emailEvents)
+    .where(sql`${emailEvents.sesMessageId} LIKE '%dry-run%'`);
+
+  const draftIds = dryRunEvents.map((r) => r.draftId);
+
+  await db.delete(emailEvents).where(sql`${emailEvents.sesMessageId} LIKE '%dry-run%'`);
+
+  let reset = 0;
+  if (draftIds.length > 0) {
+    const result = await db
+      .update(emailDrafts)
+      .set({ status: "scheduled" })
+      .where(and(inArray(emailDrafts.id, draftIds), eq(emailDrafts.status, "sent")))
+      .returning({ id: emailDrafts.id });
+    reset = result.length;
+  }
+
+  await logAudit({
+    actor: c.get("user"),
+    action: "workers.reset_dry_run",
+    targetType: "worker",
+    metadata: { eventsDeleted: dryRunEvents.length, draftsReset: reset },
+  });
+
+  return c.json({ ok: true, events_deleted: dryRunEvents.length, drafts_reset: reset });
+});
+
+// ---------------------------------------------------------------------------
+// Right-to-deletion — POST /admin/leads/:id/erase
+// De-identifies the lead in place: strips PII from the leads row and
+// anonymizes reply bodies, but retains email_events / email_drafts /
+// follow_ups / replies rows so aggregate analytics (send counts, open rates,
+// reply sentiment) are preserved. Satisfies PDPA / AU Privacy Act / CAN-SPAM
+// de-identification requirements without requiring schema migrations.
+// ---------------------------------------------------------------------------
+adminRouter.post("/admin/leads/:id/erase", requireAdmin, async (c) => {
+  const rawId = c.req.param("id");
+  if (!rawId) return c.json({ error: "Lead ID is required" }, 400);
+
+  const [lead] = await db.select({ id: leads.id, email: leads.email })
+    .from(leads)
+    .where(eq(leads.id, rawId))
+    .limit(1);
+  if (!lead) return c.json({ error: "Lead not found" }, 404);
+
+  const id = lead.id;
+
+  // Anonymize reply bodies — the prospect's own words are PII even after the
+  // lead row is stripped. Keep the row so reply counts and sentiment hold.
+  const eventIds = (
+    await db.select({ id: emailEvents.id })
+      .from(emailEvents)
+      .where(eq(emailEvents.leadId, id))
+  ).map((r) => r.id);
+
+  if (eventIds.length > 0) {
+    await db.update(replies)
+      .set({ body: "[deleted]" })
+      .where(inArray(replies.emailEventId, eventIds));
+  }
+
+  // Hard-delete tables with PII enrichment data or no analytics value.
+  await db.delete(riskFlags).where(eq(riskFlags.leadId, id));
+  await db.delete(enrichmentRecords).where(eq(enrichmentRecords.leadId, id));
+  await db.delete(campaignLeads).where(eq(campaignLeads.leadId, id));
+  await db.delete(campaignLeadExclusions).where(eq(campaignLeadExclusions.leadId, id));
+
+  // [deleted-{id}] is unique per lead — avoids a unique constraint collision
+  // on (email, campaign_id) when multiple leads in the same campaign are erased.
+  await db.update(suppressionList)
+    .set({ email: `[deleted-${id}]` })
+    .where(eq(suppressionList.email, lead.email));
+
+  // Anonymize the lead row in place. email_events, email_drafts, follow_ups,
+  // replies, and demos all keep their lead_id FK pointing here — no rows are
+  // orphaned and analytics counts remain intact.
+  await db.update(leads)
+    .set({ email: `[deleted-${id}]`, name: null, role: null })
+    .where(eq(leads.id, id));
+
+  await logAudit({
+    actor: c.get("user"),
+    action: "lead.erase",
+    targetId: id,
+    targetType: "lead",
+    ipAddress:
+      c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ??
+      c.req.header("x-real-ip") ??
+      null,
+  });
+
+  return c.json({ ok: true, lead_id: id });
+});
+
+// ---------------------------------------------------------------------------
+// Audit log — GET /admin/audit-log and GET /admin/audit-log/export
+// ---------------------------------------------------------------------------
+
+adminRouter.get("/admin/audit-log", requireAdmin, async (c) => {
+  const { from, to } = c.req.query();
+  const page = Math.max(1, parseInt(c.req.query("page") ?? "1", 10) || 1);
+  const limit = Math.min(200, Math.max(1, parseInt(c.req.query("limit") ?? "50", 10) || 50));
+  const offset = (page - 1) * limit;
+
+  const where = and(
+    from ? gte(auditLog.timestamp, new Date(from)) : undefined,
+    to ? lt(auditLog.timestamp, new Date(to)) : undefined,
+  );
+
+  const [countRow] = await db.select({ total: count() }).from(auditLog).where(where);
+  const total = Number(countRow?.total ?? 0);
+
+  const rows = await db.select()
+    .from(auditLog)
+    .where(where)
+    .orderBy(desc(auditLog.timestamp))
+    .limit(limit)
+    .offset(offset);
+
+  return c.json({
+    data: rows.map((r) => ({
+      id: r.id,
+      timestamp: r.timestamp.toISOString(),
+      actor: r.actor,
+      action: r.action,
+      target_id: r.targetId,
+      target_type: r.targetType,
+      ip_address: r.ipAddress,
+      metadata: r.metadata,
+    })),
+    total,
+    page,
+    limit,
+    total_pages: Math.ceil(total / limit),
+  });
+});
+
+adminRouter.get("/admin/audit-log/export", requireAdmin, async (c) => {
+  const { from, to } = c.req.query();
+
+  const where = and(
+    from ? gte(auditLog.timestamp, new Date(from)) : undefined,
+    to ? lt(auditLog.timestamp, new Date(to)) : undefined,
+  );
+
+  const rows = await db.select()
+    .from(auditLog)
+    .where(where)
+    .orderBy(desc(auditLog.timestamp));
+
+  function escapeCsv(val: unknown): string {
+    const s = val == null ? "" : String(val);
+    return s.includes(",") || s.includes('"') || s.includes("\n")
+      ? `"${s.replace(/"/g, '""')}"`
+      : s;
+  }
+
+  const header = "timestamp,actor,action,target_id,target_type,ip_address,metadata";
+  const lines = rows.map((r) =>
+    [
+      escapeCsv(r.timestamp.toISOString()),
+      escapeCsv(r.actor),
+      escapeCsv(r.action),
+      escapeCsv(r.targetId),
+      escapeCsv(r.targetType),
+      escapeCsv(r.ipAddress),
+      escapeCsv(r.metadata ? JSON.stringify(r.metadata) : ""),
+    ].join(","),
+  );
+
+  const csv = [header, ...lines].join("\n");
+
+  return new Response(csv, {
+    headers: {
+      "Content-Type": "text/csv",
+      "Content-Disposition": `attachment; filename="audit-log-${new Date().toISOString().slice(0, 10)}.csv"`,
+    },
+  });
 });

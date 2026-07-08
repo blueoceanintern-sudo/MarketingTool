@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Draft } from "@/lib/api";
-import { approveDraft, editDraft, rejectDraft } from "@/lib/api";
+import { approveDraft, editDraft, rejectDraft, triggerSendNow, sendDraftNow } from "@/lib/api";
 import { draftQueueOptions, draftsByStatusOptions, keys } from "@/lib/queries";
 import Pagination from "@/components/pagination";
 
@@ -35,9 +35,15 @@ function groupByCampaign(drafts: Draft[]): { campaign: string; drafts: Draft[] }
 
 // ── Scheduled / Sent table ────────────────────────────────────────────────────
 
-function DraftsTable({ drafts, emptyMessage }: { drafts: Draft[]; emptyMessage: string }) {
+function DraftsTable({ drafts, emptyMessage, onSend }: {
+  drafts: Draft[];
+  emptyMessage: string;
+  onSend?: () => Promise<void>;
+}) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [page, setPage] = useState(1);
+  const [sendingId, setSendingId] = useState<string | null>(null);
+  const [sendResults, setSendResults] = useState<Record<string, { ok: boolean; message: string }>>({});
 
   const totalPages = Math.ceil(drafts.length / DRAFTS_PER_PAGE);
   const pageDrafts = drafts.slice((page - 1) * DRAFTS_PER_PAGE, page * DRAFTS_PER_PAGE);
@@ -68,12 +74,15 @@ function DraftsTable({ drafts, emptyMessage }: { drafts: Draft[]; emptyMessage: 
                     <th className="text-left px-4 py-3 font-medium w-24">Score</th>
                     <th className="text-left px-4 py-3 font-medium w-28">Date</th>
                     <th className="px-4 py-3 w-8" />
+                    {onSend && <th className="px-4 py-3 w-24" />}
                   </tr>
                 </thead>
                 <tbody>
                   {groupDrafts.map((d) => {
                     const conf = confidenceLabel(d.confidence_score);
                     const isOpen = expanded === d.id;
+                    const isSending = sendingId === d.id;
+                    const result = sendResults[d.id];
                     return (
                       <React.Fragment key={d.id}>
                         <tr
@@ -98,10 +107,44 @@ function DraftsTable({ drafts, emptyMessage }: { drafts: Draft[]; emptyMessage: 
                               {isOpen ? "expand_less" : "expand_more"}
                             </span>
                           </td>
+                          {onSend && (
+                            <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                              {result ? (
+                                <span className={`text-[11px] font-medium ${result.ok ? "text-success" : "text-danger"}`}>
+                                  {result.message}
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  disabled={isSending || !!sendingId}
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    setSendingId(d.id);
+                                    try {
+                                      const res = await sendDraftNow(d.id);
+                                      if ("error" in res) {
+                                        setSendResults((prev) => ({ ...prev, [d.id]: { ok: false, message: res.error } }));
+                                      } else {
+                                        setSendResults((prev) => ({ ...prev, [d.id]: { ok: true, message: res.status === "queued" ? "Queued" : "Sent" } }));
+                                        await onSend();
+                                      }
+                                    } catch {
+                                      setSendResults((prev) => ({ ...prev, [d.id]: { ok: false, message: "Unexpected error" } }));
+                                    } finally {
+                                      setSendingId(null);
+                                    }
+                                  }}
+                                  className="px-3 py-1 bg-primary text-white text-[11px] font-semibold rounded-lg disabled:opacity-50"
+                                >
+                                  {isSending ? "Sending…" : "Send"}
+                                </button>
+                              )}
+                            </td>
+                          )}
                         </tr>
                         {isOpen && (
                           <tr className="bg-grey-50 border-b border-grey-100 last:border-0">
-                            <td colSpan={5} className="px-6 py-4">
+                            <td colSpan={onSend ? 6 : 5} className="px-6 py-4">
                               <pre className="font-mono text-[12px] text-grey-700 whitespace-pre-wrap leading-relaxed">
                                 {d.body}
                               </pre>
@@ -470,9 +513,25 @@ export default function DraftsClient() {
   const searchParams = useSearchParams();
   const initialCampaign = searchParams.get("campaign") ?? "";
   const [tab, setTab] = useState<Tab>("queue");
+  const queryClient = useQueryClient();
   const { data: queue = [] } = useQuery(draftQueueOptions());
   const { data: scheduled = [] } = useQuery(draftsByStatusOptions("scheduled"));
   const { data: sent = [] } = useQuery(draftsByStatusOptions("sent"));
+  const [sendNowState, setSendNowState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [sendNowResult, setSendNowResult] = useState<{ sent: number; blocked: number } | null>(null);
+
+  async function handleSendNow() {
+    setSendNowState("loading");
+    setSendNowResult(null);
+    const result = await triggerSendNow();
+    if (!result) {
+      setSendNowState("error");
+      return;
+    }
+    setSendNowState("done");
+    setSendNowResult({ sent: result.sent, blocked: result.blocked });
+    await queryClient.invalidateQueries({ queryKey: keys.drafts });
+  }
 
   const tabs: { key: Tab; label: string; count: number }[] = [
     { key: "queue", label: "Review Queue", count: queue.length },
@@ -482,7 +541,7 @@ export default function DraftsClient() {
 
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)]">
-      <div className="bg-white border-b border-grey-100 px-8 flex gap-6 shrink-0">
+      <div className="bg-white border-b border-grey-100 px-8 flex items-center gap-6 shrink-0">
         {tabs.map((t) => (
           <button
             key={t.key}
@@ -506,12 +565,38 @@ export default function DraftsClient() {
             </span>
           </button>
         ))}
+        {tab === "scheduled" && (
+          <div className="ml-auto flex items-center gap-3">
+            {sendNowState === "done" && sendNowResult && (
+              <span className="text-[12px] text-success font-medium">
+                Sent {sendNowResult.sent}, blocked {sendNowResult.blocked}
+              </span>
+            )}
+            {sendNowState === "error" && (
+              <span className="text-[12px] text-danger font-medium">Failed — check logs</span>
+            )}
+            <button
+              type="button"
+              onClick={handleSendNow}
+              disabled={sendNowState === "loading"}
+              className="px-4 py-1.5 bg-primary text-white text-[13px] font-semibold rounded-lg disabled:opacity-60"
+            >
+              {sendNowState === "loading" ? "Sending…" : "Send Now"}
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="flex-1 overflow-hidden">
         {tab === "queue" && <ReviewQueue initialCampaign={initialCampaign} />}
         {tab === "scheduled" && (
-          <DraftsTable drafts={scheduled} emptyMessage="No drafts scheduled for sending." />
+          <DraftsTable
+            drafts={scheduled}
+            emptyMessage="No drafts scheduled for sending."
+            onSend={async () => {
+              await queryClient.invalidateQueries({ queryKey: keys.drafts });
+            }}
+          />
         )}
         {tab === "sent" && (
           <DraftsTable drafts={sent} emptyMessage="No emails sent yet." />

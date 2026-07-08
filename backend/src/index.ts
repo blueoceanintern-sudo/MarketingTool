@@ -16,8 +16,9 @@ import { db } from "./db";
 import { leads, suppressionList, campaignLeadExclusions } from "./db/schema";
 import { eq } from "drizzle-orm";
 import { requireAuth } from "./middleware/auth";
+import { rateLimitByUser, rateLimitByIp } from "./middleware/rateLimit";
 
-const app = new Hono();
+export const app = new Hono();
 
 const allowedOrigins = (process.env.CORS_ORIGINS ?? "http://localhost:3000")
   .split(",")
@@ -37,6 +38,8 @@ app.use(
 // All /api/v1/* routes require a valid session token.
 const api = new Hono();
 api.use("*", requireAuth);
+api.use("*", rateLimitByUser(100));                                    // 100 req/min per user
+api.use("/campaigns/:id/leads/import", rateLimitByUser(10, "csv"));   // 10 req/min for CSV import
 api.route("/campaigns", campaignsRouter);
 api.route("/campaigns", leadsRouter);
 api.route("/leads", allLeadsRouter);
@@ -46,6 +49,9 @@ api.route("/demos", demosRouter);
 api.route("/analytics", analyticsRouter);
 api.route("", adminRouter);
 api.route("", eventsRouter);
+
+// Webhook is called by AWS SNS (no JWT) — rate limit by IP before auth runs.
+app.use("/api/v1/webhooks/*", rateLimitByIp(50));
 
 app.route("/api/v1", api);
 

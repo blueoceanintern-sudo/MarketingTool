@@ -1,6 +1,7 @@
 import cron from "node-cron";
 import { db } from "../db";
-import { followUps, leads, emailEvents, emailDrafts, riskFlags, scrapeJobs, campaigns, replies, companies, promptTemplates } from "../db/schema";
+import { followUps, leads, emailEvents, emailDrafts, riskFlags, scrapeJobs, campaigns, replies, companies, promptTemplates, suppressionList } from "../db/schema";
+import { logAudit } from "../services/audit/log";
 import { eq, and, isNull, lte, isNotNull, lt, or, inArray, notInArray, asc, gte, sql } from "drizzle-orm";
 import { sendDraft, sendFollowUpEmail, getTotalSent, getWarmupWeek, getDailyCap } from "../services/sender";
 import { runScrapeJob } from "../services/scraping/runScrapeJob";
@@ -294,6 +295,7 @@ export async function runFollowUpSender() {
   }
 
   console.log(`[follow-up-sender] done: sent=${sent}, blocked=${blocked}`);
+  return { sent, blocked };
 }
 
 cron.schedule("0 9 * * *", runFollowUpSender);
@@ -391,6 +393,7 @@ cron.schedule("0 2 * * 0", async () => {
   const oneEightyDaysAgo = new Date(now - 180 * 24 * 60 * 60 * 1000);
   const threeSixtyFiveDaysAgo = new Date(now - 365 * 24 * 60 * 60 * 1000);
   const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+  const ninetyDaysAgo = new Date(now - 90 * 24 * 60 * 60 * 1000);
 
   // Replies older than 180 days.
   const purgedReplies = await db
@@ -426,10 +429,41 @@ cron.schedule("0 2 * * 0", async () => {
     )
     .returning({ id: scrapeJobs.id });
 
+  // risk_flags: delete flags for leads that have been suppressed for 90+ days.
+  const suppressedLeadIds = (
+    await db
+      .select({ id: leads.id })
+      .from(leads)
+      .innerJoin(suppressionList, eq(suppressionList.email, leads.email))
+      .where(lt(suppressionList.addedAt, ninetyDaysAgo))
+  ).map((r) => r.id);
+
+  let purgedRiskFlags = 0;
+  if (suppressedLeadIds.length > 0) {
+    const deleted = await db
+      .delete(riskFlags)
+      .where(inArray(riskFlags.leadId, suppressedLeadIds))
+      .returning({ id: riskFlags.id });
+    purgedRiskFlags = deleted.length;
+  }
+
   console.log(
     `[purge-old-records] done: replies=${purgedReplies.length}, ` +
-    `emailEvents=${purgedEvents}, scrapeJobs=${purgedScrapeJobs.length}`,
+    `emailEvents=${purgedEvents}, scrapeJobs=${purgedScrapeJobs.length}, ` +
+    `riskFlags=${purgedRiskFlags}`,
   );
+
+  await logAudit({
+    actor: "system",
+    action: "purge.records",
+    targetType: "purge",
+    metadata: {
+      replies: purgedReplies.length,
+      email_events: purgedEvents,
+      scrape_jobs: purgedScrapeJobs.length,
+      risk_flags: purgedRiskFlags,
+    },
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -479,7 +513,7 @@ cron.schedule("*/30 * * * *", async () => {
 // positive intent rate, generates one mutation via Claude, inserts it as
 // inactive (requires manual activation), and notifies via webhook if configured.
 // ---------------------------------------------------------------------------
-cron.schedule("0 6 * * 1", async () => {
+export async function runMutationRunner() {
   console.log("[mutation-runner] running");
 
   const totalSent = await getTotalSent();
@@ -599,6 +633,8 @@ cron.schedule("0 6 * * 1", async () => {
       }
     }
   }
-});
+}
+
+cron.schedule("0 6 * * 1", runMutationRunner);
 
 console.log("[workers] all cron jobs registered");

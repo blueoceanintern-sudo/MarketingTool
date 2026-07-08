@@ -2,6 +2,7 @@ import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
 import { db } from "../../db";
 import { campaigns, campaignLeads, companies, emailDrafts, leads, suppressionList } from "../../db/schema";
 import { generateDraftsBatch, type CampaignContext } from "./index";
+import { getTotalSent } from "../sender";
 
 function toCampaignContext(row: typeof campaigns.$inferSelect): CampaignContext {
   return {
@@ -96,7 +97,15 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
 
   const results = await generateDraftsBatch(requests);
 
+  // Check once — totalSent doesn't change between drafts in the same batch.
+  // Auto-schedule only after 50 sends AND confidence ≥ 70; everything else
+  // stays in pending_review for a rep to review.
+  const totalSent = await getTotalSent();
+
   for (const draft of results) {
+    const autoSchedule = totalSent >= 50 && draft.confidenceScore >= 70;
+    const draftStatus = autoSchedule ? "scheduled" : "pending_review";
+
     await db.insert(emailDrafts)
       .values({
         leadId: draft.leadId,
@@ -106,7 +115,7 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
         body: draft.body,
         confidenceScore: draft.confidenceScore,
         scoreBreakdown: draft.scoreBreakdown,
-        status: "pending_review",
+        status: draftStatus,
       })
       .onConflictDoUpdate({
         target: [emailDrafts.leadId, emailDrafts.campaignId],
@@ -116,7 +125,7 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
           body: draft.body,
           confidenceScore: draft.confidenceScore,
           scoreBreakdown: draft.scoreBreakdown,
-          status: "pending_review",
+          status: draftStatus,
           approvedBy: null,
           approvedAt: null,
         },
