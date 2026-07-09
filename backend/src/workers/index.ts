@@ -3,6 +3,9 @@ import { db } from "../db";
 import { followUps, leads, emailEvents, emailDrafts, riskFlags, scrapeJobs, campaigns, replies, companies, promptTemplates, campaignLeads } from "../db/schema";
 import { eq, and, isNull, lte, isNotNull, lt, or, inArray, notInArray, asc, gte, notExists } from "drizzle-orm";
 import { assignLeadToCampaigns } from "../services/campaign-assigner";
+import { followUps, leads, emailEvents, emailDrafts, riskFlags, scrapeJobs, campaigns, replies, companies, promptTemplates, suppressionList } from "../db/schema";
+import { logAudit } from "../services/audit/log";
+import { eq, and, isNull, lte, isNotNull, lt, or, inArray, notInArray, asc, gte, sql } from "drizzle-orm";
 import { sendDraft, sendFollowUpEmail, getTotalSent, getWarmupWeek, getDailyCap } from "../services/sender";
 import { runScrapeJob } from "../services/scraping/runScrapeJob";
 import { enrichLead } from "../services/enrichment/orchestrator";
@@ -124,8 +127,7 @@ export async function runFollowUpSender() {
         attemptNumber: followUps.attemptNumber,
         leadEmail: leads.email,
         isVerified: leads.isVerified,
-        leadFirstName: leads.firstName,
-        leadLastName: leads.lastName,
+        leadName: leads.name,
         leadRole: leads.role,
         companyName: companies.name,
         companyIndustry: companies.industry,
@@ -222,8 +224,7 @@ export async function runFollowUpSender() {
           leadId: fu.leadId,
           campaignId: fu.campaignId,
           lead: {
-            firstName: fu.leadFirstName ?? undefined,
-            lastName: fu.leadLastName ?? undefined,
+            name: fu.leadName ?? undefined,
             role: fu.leadRole ?? undefined,
             companyName: fu.companyName,
             industry: fu.companyIndustry ?? undefined,
@@ -297,6 +298,7 @@ export async function runFollowUpSender() {
   }
 
   console.log(`[follow-up-sender] done: sent=${sent}, blocked=${blocked}`);
+  return { sent, blocked };
 }
 
 cron.schedule("0 9 * * *", runFollowUpSender);
@@ -394,6 +396,7 @@ cron.schedule("0 2 * * 0", async () => {
   const oneEightyDaysAgo = new Date(now - 180 * 24 * 60 * 60 * 1000);
   const threeSixtyFiveDaysAgo = new Date(now - 365 * 24 * 60 * 60 * 1000);
   const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+  const ninetyDaysAgo = new Date(now - 90 * 24 * 60 * 60 * 1000);
 
   // Replies older than 180 days.
   const purgedReplies = await db
@@ -429,10 +432,41 @@ cron.schedule("0 2 * * 0", async () => {
     )
     .returning({ id: scrapeJobs.id });
 
+  // risk_flags: delete flags for leads that have been suppressed for 90+ days.
+  const suppressedLeadIds = (
+    await db
+      .select({ id: leads.id })
+      .from(leads)
+      .innerJoin(suppressionList, eq(suppressionList.email, leads.email))
+      .where(lt(suppressionList.addedAt, ninetyDaysAgo))
+  ).map((r) => r.id);
+
+  let purgedRiskFlags = 0;
+  if (suppressedLeadIds.length > 0) {
+    const deleted = await db
+      .delete(riskFlags)
+      .where(inArray(riskFlags.leadId, suppressedLeadIds))
+      .returning({ id: riskFlags.id });
+    purgedRiskFlags = deleted.length;
+  }
+
   console.log(
     `[purge-old-records] done: replies=${purgedReplies.length}, ` +
-    `emailEvents=${purgedEvents}, scrapeJobs=${purgedScrapeJobs.length}`,
+    `emailEvents=${purgedEvents}, scrapeJobs=${purgedScrapeJobs.length}, ` +
+    `riskFlags=${purgedRiskFlags}`,
   );
+
+  await logAudit({
+    actor: "system",
+    action: "purge.records",
+    targetType: "purge",
+    metadata: {
+      replies: purgedReplies.length,
+      email_events: purgedEvents,
+      scrape_jobs: purgedScrapeJobs.length,
+      risk_flags: purgedRiskFlags,
+    },
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -482,7 +516,7 @@ cron.schedule("*/30 * * * *", async () => {
 // positive intent rate, generates one mutation via Claude, inserts it as
 // inactive (requires manual activation), and notifies via webhook if configured.
 // ---------------------------------------------------------------------------
-cron.schedule("0 6 * * 1", async () => {
+export async function runMutationRunner() {
   console.log("[mutation-runner] running");
 
   const totalSent = await getTotalSent();
@@ -503,7 +537,6 @@ cron.schedule("0 6 * * 1", async () => {
         and(
           eq(promptTemplates.active, true),
           eq(promptTemplates.templateType, templateType),
-          eq(promptTemplates.createdBy, "user"),
           lt(promptTemplates.generationDepth, 5),
           gte(promptTemplates.sendCount, 50),
         ),
@@ -603,7 +636,9 @@ cron.schedule("0 6 * * 1", async () => {
       }
     }
   }
-});
+}
+
+cron.schedule("0 6 * * 1", runMutationRunner);
 
 // ---------------------------------------------------------------------------
 // campaign-assigner  — 03:30 daily (after enrichment at 03:00)

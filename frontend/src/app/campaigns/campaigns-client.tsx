@@ -5,8 +5,10 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState, type SubmitEvent } from "react";
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { createCampaign, type CampaignStatus } from "@/lib/api";
-import { campaignsOptions, keys } from "@/lib/queries";
+import { createCampaign, triggerCampaignFetchLeads, type CampaignStatus } from "@/lib/api";
+import { campaignsOptions, taxonomyOptions, keys } from "@/lib/queries";
+import { resolveGeo } from "@/lib/geo";
+import { resolveVertical } from "@/lib/verticals";
 
 const statusConfig: Record<CampaignStatus, { label: string; className: string }> = {
   active: { label: "Active", className: "bg-success-bg text-success" },
@@ -14,6 +16,12 @@ const statusConfig: Record<CampaignStatus, { label: string; className: string }>
   draft: { label: "Draft", className: "bg-neutral-bg text-neutral" },
   complete: { label: "Complete", className: "bg-grey-100 text-grey-500" },
 };
+
+function suggest(options: string[], input: string, max = 5): string[] {
+  const q = input.trim().toLowerCase();
+  if (!q) return options.slice(0, max);
+  return options.filter((o) => o.toLowerCase().includes(q)).slice(0, max);
+}
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString("en-SG", { day: "numeric", month: "short", year: "numeric" });
@@ -23,10 +31,14 @@ export default function CampaignsClient() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { data: campaigns = [] } = useQuery(campaignsOptions());
+  const { data: taxonomy = { verticals: [], geos: [] } } = useQuery(taxonomyOptions());
   const [statusFilter, setStatusFilter] = useState<CampaignStatus | "all">("all");
+  const [search, setSearch] = useState("");
   const [showModal, setShowModal] = useState(false);
   const [modalStep, setModalStep] = useState<1 | 2>(1);
   const [formError, setFormError] = useState<string | null>(null);
+  const [verticalNote, setVerticalNote] = useState<string | null>(null);
+  const [geoInput, setGeoInput] = useState("");
   const [form, setForm] = useState({
     name: "",
     vertical: "",
@@ -49,6 +61,8 @@ export default function CampaignsClient() {
     });
     setModalStep(1);
     setFormError(null);
+    setVerticalNote(null);
+    setGeoInput("");
   }
 
   function closeModal() {
@@ -66,10 +80,49 @@ export default function CampaignsClient() {
     setModalStep(2);
   }
 
-  const filtered = useMemo(
-    () => (statusFilter === "all" ? campaigns : campaigns.filter((c) => c.status === statusFilter)),
-    [campaigns, statusFilter]
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return campaigns.filter((c) => {
+      if (statusFilter !== "all" && c.status !== statusFilter) return false;
+      if (q && !c.name.toLowerCase().includes(q) && !c.vertical.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [campaigns, statusFilter, search]);
+
+  const availableVerticals = taxonomy.verticals;
+  const availableGeos = taxonomy.geos;
+  const geoChips = useMemo(
+    () => form.geography.split("|").map((g) => g.trim()).filter(Boolean),
+    [form.geography],
   );
+
+  function addGeoChip(raw: string) {
+    const resolved = resolveGeo(raw);
+    if (!resolved) return;
+    setForm((f) => {
+      const current = f.geography.split("|").map((g) => g.trim()).filter(Boolean);
+      if (current.includes(resolved)) return f;
+      return { ...f, geography: [...current, resolved].join("|") };
+    });
+    setGeoInput("");
+  }
+
+  function removeGeoChip(geo: string) {
+    setForm((f) => ({
+      ...f,
+      geography: f.geography.split("|").map((g) => g.trim()).filter((g) => g && g !== geo).join("|"),
+    }));
+  }
+
+  function handleGeoKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter" || e.key === ",") {
+      e.preventDefault();
+      if (geoInput.trim()) addGeoChip(geoInput);
+    }
+    if (e.key === "Backspace" && !geoInput && geoChips.length > 0) {
+      removeGeoChip(geoChips[geoChips.length - 1]!);
+    }
+  }
 
   const totalLeads = campaigns.reduce((s, c) => s + c.leads_count, 0);
   const avgOpenRate =
@@ -86,7 +139,7 @@ export default function CampaignsClient() {
       const { campaign, discovery, error } = await createCampaign({
         name: form.name.trim(),
         vertical: form.vertical.trim(),
-        geography: form.geography.split(",").map((g) => g.trim().toUpperCase()).filter(Boolean),
+        geography: form.geography.split("|").map((g) => g.trim().toUpperCase()).filter(Boolean),
         company_size_target: form.company_size_target,
         status: "draft",
         description: form.description.trim() || null,
@@ -94,24 +147,32 @@ export default function CampaignsClient() {
         call_to_action: form.call_to_action.trim() || null,
       });
       if (error || !campaign) throw new Error(error ?? "Failed to create campaign");
-      return { campaign, discovery };
+      const fetchResult = await triggerCampaignFetchLeads(campaign.id);
+      return { campaign, discovery, added: fetchResult.ok ? (fetchResult.added ?? 0) : 0 };
     },
-    onSuccess: ({ campaign, discovery }) => {
+    onSuccess: ({ campaign, discovery, added }) => {
       queryClient.invalidateQueries({ queryKey: keys.campaigns });
       setShowModal(false);
       resetForm();
 
-      // Surface auto-discovery outcome. already_seeded is the silent case
-      // (source pool already exists) — no toast needed there.
-      if (discovery?.status === "triggered") {
-        toast.info(discovery.message, {
-          description: discovery.domains.length
-            ? `Searching: ${discovery.domains.join(", ")}`
-            : undefined,
+      const geoLabel = `${campaign.vertical} in ${campaign.geography.join(", ")}`;
+
+      if (added > 0) {
+        toast.success(`${added} lead${added === 1 ? "" : "s"} matched`, { description: geoLabel });
+      } else if (discovery?.status === "triggered") {
+        toast.info("Discovery started", {
+          description: `Sources for ${geoLabel} are being scraped — leads will appear shortly.`,
           duration: 8000,
         });
       } else if (discovery?.status === "skipped_no_config") {
-        toast.warning(discovery.message, {
+        toast.warning("No sources configured", {
+          description: `Add a directory config for ${geoLabel} to enable auto-discovery.`,
+          action: { label: "Open Registry", onClick: () => router.push("/registry") },
+          duration: 10000,
+        });
+      } else if (added === 0) {
+        toast.warning("No leads matched yet", {
+          description: `Run scrape or refresh discovery for ${geoLabel} in the Registry.`,
           action: { label: "Open Registry", onClick: () => router.push("/registry") },
           duration: 10000,
         });
@@ -168,7 +229,19 @@ export default function CampaignsClient() {
 
       <div className="bg-white rounded-lg border border-grey-100 overflow-hidden">
         <div className="px-5 py-4 border-b border-grey-100 flex justify-between items-center bg-grey-50 flex-wrap gap-2">
-          <div className="flex gap-2 flex-wrap">
+          <div className="flex gap-2 flex-wrap items-center">
+            <div className="flex">
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search campaigns…"
+                className="px-3 py-1.5 border border-grey-200 rounded-l text-[13px] w-44 focus:outline-none focus:border-primary"
+              />
+              <span className="flex items-center px-2 border border-l-0 border-grey-200 rounded-r bg-white text-grey-400">
+                <span className="material-symbols-outlined text-[16px]">search</span>
+              </span>
+            </div>
             {(["all", "active", "draft", "paused", "complete"] as const).map((s) => (
               <button
                 key={s}
@@ -245,7 +318,11 @@ export default function CampaignsClient() {
             </p>
 
             {modalStep === 1 ? (
-              <form onSubmit={handleNext} className="flex flex-col gap-4">
+              <form
+                onSubmit={handleNext}
+                onKeyDown={(e) => { if (e.key === "Enter" && (e.target as HTMLElement).tagName !== "BUTTON") e.preventDefault(); }}
+                className="flex flex-col gap-4"
+              >
                 <label className="flex flex-col gap-1 text-[13px]">
                   Name
                   <input
@@ -259,20 +336,46 @@ export default function CampaignsClient() {
                   Vertical
                   <input
                     required
+                    list="campaign-verticals"
                     value={form.vertical}
-                    onChange={(e) => setForm((f) => ({ ...f, vertical: e.target.value }))}
+                    onChange={(e) => { setForm((f) => ({ ...f, vertical: e.target.value })); setVerticalNote(null); }}
+                    onBlur={(e) => {
+                      const { canonical, wasAlias } = resolveVertical(e.target.value);
+                      setForm((f) => ({ ...f, vertical: canonical }));
+                      setVerticalNote(wasAlias ? `'${e.target.value.trim()}' is an alias — saved as '${canonical}'` : null);
+                    }}
+                    placeholder="e.g. education"
                     className="border border-grey-200 rounded-lg px-3 py-2"
                   />
+                  {verticalNote && <span className="text-[11px] text-grey-400">{verticalNote}</span>}
                 </label>
-                <label className="flex flex-col gap-1 text-[13px]">
-                  Geography (e.g. SG, AU)
-                  <input
-                    required
-                    value={form.geography}
-                    onChange={(e) => setForm((f) => ({ ...f, geography: e.target.value }))}
-                    className="border border-grey-200 rounded-lg px-3 py-2"
-                  />
-                </label>
+                <div className="flex flex-col gap-1 text-[13px]">
+                  <span className="font-normal">Geography</span>
+                  <div className="border border-grey-200 rounded-lg px-3 py-2 flex flex-wrap gap-1.5 min-h-10 items-center focus-within:border-primary transition-colors">
+                    {geoChips.map((geo) => (
+                      <span key={geo} className="flex items-center gap-0.5 bg-primary/10 text-primary text-[12px] px-2 py-0.5 rounded-full">
+                        {geo}
+                        <button
+                          type="button"
+                          onClick={() => removeGeoChip(geo)}
+                          className="leading-none ml-1 hover:text-danger"
+                        >
+                            x
+                        </button>
+                      </span>
+                    ))}
+                    <input
+                      list="campaign-geos"
+                      value={geoInput}
+                      onChange={(e) => setGeoInput(e.target.value)}
+                      onKeyDown={handleGeoKeyDown}
+                      onBlur={() => { if (geoInput.trim()) addGeoChip(geoInput); }}
+                      placeholder={geoChips.length === 0 ? "e.g. SG" : ""}
+                      className="flex-1 min-w-14 outline-none bg-transparent text-[13px]"
+                    />
+                  </div>
+                  <span className="text-[11px] text-grey-400">Enter to add · Backspace to remove last</span>
+                </div>
                 <label className="flex flex-col gap-1 text-[13px]">
                   Company size
                   <select
@@ -343,6 +446,12 @@ export default function CampaignsClient() {
                 </div>
               </form>
             )}
+            <datalist id="campaign-verticals">
+              {suggest(availableVerticals, form.vertical).map((v) => <option key={v} value={v} />)}
+            </datalist>
+            <datalist id="campaign-geos">
+              {suggest(availableGeos, geoInput).map((g) => <option key={g} value={g} />)}
+            </datalist>
           </div>
         </div>
       )}

@@ -5,36 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1780555567994,
-      "tag": "0000_curvy_black_bolt",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1780563789219,
-      "tag": "0001_tough_rictor",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1780886119857,
-      "tag": "0002_late_valeria_richards",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1780890862515,
-      "tag": "0003_chubby_rogue",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1780994384369,
-      "tag": "0004_cooing_switch",
+      "when": 1781677254779,
+      "tag": "0000_fuzzy_drax",
       "breakpoints": true
     }
   ]

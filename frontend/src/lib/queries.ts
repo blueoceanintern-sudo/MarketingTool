@@ -21,10 +21,16 @@ export const campaignsOptions = () =>
 export const campaignOptions = (id: string) =>
   queryOptions({ queryKey: keys.campaign(id), queryFn: () => api.getCampaign(id) });
 
-export const campaignLeadsOptions = (id: string, page: number, limit = 50) =>
+export const campaignLeadsOptions = (id: string, page: number, limit = 50, status?: string) =>
   queryOptions({
-    queryKey: ["campaigns", id, "leads", { page, limit }],
-    queryFn: () => api.getCampaignLeadsPaginated(id, { page, limit }),
+    queryKey: ["campaigns", id, "leads", { page, limit, status }],
+    queryFn: () => api.getCampaignLeadsPaginated(id, { page, limit, status }),
+  });
+
+export const campaignSuppressionsOptions = (id: string) =>
+  queryOptions({
+    queryKey: ["campaigns", id, "suppressions"],
+    queryFn: () => api.getCampaignSuppressions(id),
   });
 
 // ── Leads ─────────────────────────────────────────────────────────────────--
@@ -35,10 +41,18 @@ export type LeadsParams = {
   email_status?: string;
   routing?: string;
   campaign_id?: string;
+  search?: string;
 };
 
 export const leadsOptions = (params: LeadsParams) =>
   queryOptions({ queryKey: ["leads", params], queryFn: () => api.getLeadsPaginated(params) });
+
+export const leadsSummaryOptions = () =>
+  queryOptions({
+    queryKey: ["leads", "summary"],
+    queryFn: () => api.getLeadsSummary(),
+    staleTime: 30_000,
+  });
 
 export const leadEnrichmentOptions = (leadId: string) =>
   queryOptions({
@@ -68,11 +82,33 @@ export const templateEngagementOptions = () =>
   queryOptions({ queryKey: ["templates", "engagement"], queryFn: () => api.getTemplateEngagement() });
 
 // ── Registry ──────────────────────────────────────────────────────────────--
-export const registrySourcesOptions = () =>
-  queryOptions({ queryKey: ["registry", "sources"], queryFn: () => api.getRegistrySources() });
+export type RegistrySourcesParams = {
+  page: number;
+  limit?: number;
+  geo?: string;
+  vertical?: string;
+  active?: boolean;
+};
+
+export const registrySourcesOptions = (params: RegistrySourcesParams) =>
+  queryOptions({
+    queryKey: ["registry", "sources", params],
+    queryFn: () => api.getRegistrySourcesPaginated(params),
+  });
+
+// Scrapeable (vertical, geo) coverage with source counts — drives the leads
+// scrape picker.
+export const sourceCoverageOptions = () =>
+  queryOptions({
+    queryKey: ["registry", "source-coverage"],
+    queryFn: () => api.getSourceCoverage(),
+  });
 
 export const directoryConfigsOptions = () =>
   queryOptions({ queryKey: ["registry", "directory-configs"], queryFn: () => api.getDirectoryConfigs() });
 
 export const activeCombinationsOptions = () =>
   queryOptions({ queryKey: ["registry", "active-combinations"], queryFn: () => api.getActiveCombinations() });
+
+export const taxonomyOptions = () =>
+  queryOptions({ queryKey: ["registry", "taxonomy"], queryFn: () => api.getTaxonomy() });

@@ -80,8 +80,8 @@ export const snovioProvider: EnrichmentProvider = {
         contact: {
           email: seed.email,
           email_status: verified ? "verified" : "pattern_guessed",
-          full_name: joinName(seed.firstName, seed.lastName),
-          first_name: seed.firstName,
+          full_name: seed.name ?? null,
+          first_name: seed.name?.split(" ")[0] ?? null,
           role: seed.role,
         },
       };

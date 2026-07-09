@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>BlueOcean Outreach Pipeline</title>
+<style>
+  body {
+    margin: 0;
+    padding: 40px 48px 80px;
+    background: #f8f7f4;
+    font-family: 'DM Mono', 'Courier New', monospace;
+    color: #1a1916;
+  }
+  h1 {
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 0 0 4px;
+  }
+  .sub {
+    font-size: 13px;
+    color: #7a7770;
+    margin-bottom: 24px;
+  }
+  .legend {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    margin-bottom: 36px;
+  }
+  .leg {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #7a7770;
+  }
+  .dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    border: 1.5px solid;
+    flex-shrink: 0;
+  }
+  svg {
+    display: block;
+    width: 100%;
+    max-width: 860px;
+  }
+</style>
+</head>
+<body>
+
+<h1>BlueOcean Outreach Pipeline</h1>
+<div class="sub">B2B automated email outreach · SG · AU · US</div>
+
+<div class="legend">
+  <div class="leg"><div class="dot" style="background:#E1F5EE;border-color:#0F6E56"></div>Automated</div>
+  <div class="leg"><div class="dot" style="background:#EEEDFE;border-color:#534AB7"></div>Human review</div>
+  <div class="leg"><div class="dot" style="background:#FAEEDA;border-color:#854F0B"></div>Email drafting</div>
+  <div class="leg"><div class="dot" style="background:#FCEBEB;border-color:#A32D2D"></div>Rejected / stopped</div>
+  <div class="leg"><div class="dot" style="background:#EAF3DE;border-color:#3B6D11"></div>Success</div>
+  <div class="leg"><div class="dot" style="background:#FAEEDA;border-color:#BA7517"></div>Not yet built</div>
+</div>
+
+<svg viewBox="0 0 680 1460" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <!-- ══════════════════════════════════════ -->
+  <!-- STAGE 1: ACQUISITION  y=14..404 -->
+  <!-- ══════════════════════════════════════ -->
+  <rect x="30" y="14" width="620" height="390" rx="10" fill="#f0efed" stroke="#c8c5bc" stroke-width="1" stroke-dasharray="4 3"/>
+  <text x="50" y="34" font-size="12" fill="#7a7770" font-family="'DM Mono',monospace">① Acquisition</text>
+
+  <!-- Campaign Trigger -->
+  <rect x="230" y="46" width="220" height="48" rx="8" fill="#f0efed" stroke="#b0aaa0" stroke-width="0.8"/>
+  <text x="340" y="65" text-anchor="middle" font-size="13" font-weight="600" fill="#1a1916" font-family="'DM Mono',monospace">Campaign trigger</text>
+  <text x="340" y="83" text-anchor="middle" font-size="11" fill="#5a5750" font-family="'DM Mono',monospace">source_registry → URLs</text>
+
+  <line x1="340" y1="94" x2="340" y2="124" stroke="#b0aaa0" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <!-- Scrape -->
+  <rect x="210" y="124" width="260" height="48" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.8"/>
+  <text x="340" y="143" text-anchor="middle" font-size="13" font-weight="600" fill="#085041" font-family="'DM Mono',monospace">Scrape</text>
+  <text x="340" y="161" text-anchor="middle" font-size="11" fill="#0F6E56" font-family="'DM Mono',monospace">Cheerio · ≤500/domain/day · 1 req/2s</text>
+  <text x="474" y="140" font-size="9.5" fill="#7a7770" font-family="'DM Mono',monospace">fallback:</text>
+  <text x="474" y="153" font-size="9.5" fill="#7a7770" font-family="'DM Mono',monospace">Crawl4AI</text>
+
+  <line x1="340" y1="172" x2="340" y2="202" stroke="#b0aaa0" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <!-- Enrich -->
+  <rect x="210" y="202" width="260" height="48" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.8"/>
+  <text x="340" y="221" text-anchor="middle" font-size="13" font-weight="600" fill="#085041" font-family="'DM Mono',monospace">Enrich</text>
+  <text x="340" y="239" text-anchor="middle" font-size="11" fill="#0F6E56" font-family="'DM Mono',monospace">registry → Cowork → enrichment_records</text>
+  <text x="474" y="218" font-size="9.5" fill="#7a7770" font-family="'DM Mono',monospace">fallback:</text>
+  <text x="474" y="231" font-size="9.5" fill="#7a7770" font-family="'DM Mono',monospace">Snov.io</text>
+
+  <line x1="340" y1="250" x2="340" y2="280" stroke="#b0aaa0" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <!-- Hard Gate diamond: centre (340,310), pts top(340,274) right(430,310) bottom(340,346) left(250,310) -->
+  <polygon points="340,274 430,310 340,346 250,310" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.8"/>
+  <text x="340" y="303" text-anchor="middle" font-size="13" font-weight="600" fill="#3b0764" font-family="'DM Mono',monospace">Hard gate</text>
+  <text x="340" y="321" text-anchor="middle" font-size="11" fill="#534AB7" font-family="'DM Mono',monospace">unverified · risk flag · missing field</text>
+
+  <!-- Blocked box: x=52 w=108, y=286 h=48 cy=310 -->
+  <rect x="52" y="286" width="108" height="48" rx="8" fill="#FCEBEB" stroke="#A32D2D" stroke-width="0.8"/>
+  <text x="106" y="305" text-anchor="middle" font-size="13" font-weight="600" fill="#7f1d1d" font-family="'DM Mono',monospace">Blocked</text>
+  <text x="106" y="323" text-anchor="middle" font-size="11" fill="#A32D2D" font-family="'DM Mono',monospace">rep_review</text>
+  <line x1="250" y1="310" x2="160" y2="310" stroke="#A32D2D" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <text x="205" y="302" text-anchor="middle" font-size="11" fill="#A32D2D" font-family="'DM Mono',monospace">fail</text>
+
+  <!-- pass down -->
+  <line x1="340" y1="346" x2="340" y2="380" stroke="#b0aaa0" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <text x="354" y="365" font-size="11" fill="#5a5750" font-family="'DM Mono',monospace">pass</text>
+
+  <!-- ══════════════════════════════════════ -->
+  <!-- STAGE 2: DRAFTING  y=424..970 -->
+  <!-- ══════════════════════════════════════ -->
+  <rect x="30" y="424" width="620" height="546" rx="10" fill="#f0efed" stroke="#c8c5bc" stroke-width="1" stroke-dasharray="4 3"/>
+  <text x="50" y="444" font-size="12" fill="#7a7770" font-family="'DM Mono',monospace">② Drafting · Approval · Send</text>
+
+  <!-- Campaign Assigner -->
+  <rect x="180" y="458" width="320" height="48" rx="8" fill="#FAEEDA" stroke="#BA7517" stroke-width="0.8"/>
+  <text x="340" y="477" text-anchor="middle" font-size="13" font-weight="600" fill="#633806" font-family="'DM Mono',monospace">Campaign assigner ⚠ not built</text>
+  <text x="340" y="495" text-anchor="middle" font-size="11" fill="#854F0B" font-family="'DM Mono',monospace">Claude Haiku · → campaign_assignments</text>
+
+  <line x1="340" y1="506" x2="340" y2="536" stroke="#b0aaa0" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <!-- Draft Generation -->
+  <rect x="200" y="536" width="280" height="48" rx="8" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.8"/>
+  <text x="340" y="555" text-anchor="middle" font-size="13" font-weight="600" fill="#633806" font-family="'DM Mono',monospace">Draft generation</text>
+  <text x="340" y="573" text-anchor="middle" font-size="11" fill="#854F0B" font-family="'DM Mono',monospace">Haiku 4.5 Batch API · ≤125 words</text>
+
+  <line x1="340" y1="584" x2="340" y2="614" stroke="#b0aaa0" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <!-- Confidence Score -->
+  <rect x="200" y="614" width="280" height="48" rx="8" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.8"/>
+  <text x="340" y="633" text-anchor="middle" font-size="13" font-weight="600" fill="#633806" font-family="'DM Mono',monospace">Confidence score 0–100</text>
+  <text x="340" y="651" text-anchor="middle" font-size="11" fill="#854F0B" font-family="'DM Mono',monospace">completeness · alignment · personalisation</text>
+
+  <line x1="340" y1="662" x2="340" y2="692" stroke="#b0aaa0" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <!-- Phase 1 Gate diamond: centre (340,722), top(340,692) right(424,722) bottom(340,752) left(256,722) -->
+  <polygon points="340,692 424,722 340,752 256,722" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.8"/>
+  <text x="340" y="715" text-anchor="middle" font-size="13" font-weight="600" fill="#3b0764" font-family="'DM Mono',monospace">Phase 1 gate</text>
+  <text x="340" y="733" text-anchor="middle" font-size="11" fill="#534AB7" font-family="'DM Mono',monospace">total sent &lt; 50?</text>
+
+  <!-- Rep Review box: x=528 w=112, y=698 h=48 cy=722 -->
+  <rect x="528" y="698" width="112" height="48" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.8"/>
+  <text x="584" y="717" text-anchor="middle" font-size="13" font-weight="600" fill="#3b0764" font-family="'DM Mono',monospace">Rep review</text>
+  <text x="584" y="735" text-anchor="middle" font-size="11" fill="#534AB7" font-family="'DM Mono',monospace">approve/edit/reject</text>
+  <!-- yes → rep review -->
+  <line x1="424" y1="722" x2="528" y2="722" stroke="#534AB7" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <text x="476" y="714" text-anchor="middle" font-size="11" fill="#534AB7" font-family="'DM Mono',monospace">yes, all</text>
+
+  <!-- no → score gate -->
+  <line x1="340" y1="752" x2="340" y2="786" stroke="#b0aaa0" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <text x="354" y="771" font-size="11" fill="#5a5750" font-family="'DM Mono',monospace">no</text>
+
+  <!-- Score Gate diamond: centre (340,816), top(340,786) right(424,816) bottom(340,846) left(256,816) -->
+  <polygon points="340,786 424,816 340,846 256,816" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.8"/>
+  <text x="340" y="809" text-anchor="middle" font-size="13" font-weight="600" fill="#3b0764" font-family="'DM Mono',monospace">Score gate</text>
+  <text x="340" y="827" text-anchor="middle" font-size="11" fill="#534AB7" font-family="'DM Mono',monospace">score &lt; 70?</text>
+
+  <!-- score < 70 rail: right(424,816) → x=514 → up to y=722 → rep review left(528,722) -->
+  <line x1="424" y1="816" x2="514" y2="816" stroke="#534AB7" stroke-width="1.2" fill="none"/>
+  <line x1="514" y1="816" x2="514" y2="722" stroke="#534AB7" stroke-width="1.2" fill="none"/>
+  <line x1="514" y1="722" x2="528" y2="722" stroke="#534AB7" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <text x="469" y="808" text-anchor="middle" font-size="11" fill="#534AB7" font-family="'DM Mono',monospace">score &lt; 70</text>
+
+  <!-- Logged box: x=52 w=108, y=792 h=48 cy=816 -->
+  <rect x="52" y="792" width="108" height="48" rx="8" fill="#FCEBEB" stroke="#A32D2D" stroke-width="0.8"/>
+  <text x="106" y="811" text-anchor="middle" font-size="13" font-weight="600" fill="#7f1d1d" font-family="'DM Mono',monospace">Logged</text>
+  <text x="106" y="829" text-anchor="middle" font-size="11" fill="#A32D2D" font-family="'DM Mono',monospace">&amp; rejected</text>
+
+  <!-- rejected rail: rep review left(528,722) → x=168 → down to y=816 → logged right(160,816) -->
+  <line x1="528" y1="722" x2="168" y2="722" stroke="#A32D2D" stroke-width="1.2" fill="none"/>
+  <line x1="168" y1="722" x2="168" y2="816" stroke="#A32D2D" stroke-width="1.2" fill="none"/>
+  <line x1="168" y1="816" x2="160" y2="816" stroke="#A32D2D" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <text x="124" y="776" font-size="9.5" fill="#A32D2D" font-family="'DM Mono',monospace" text-anchor="middle" transform="rotate(-90,124,776)">rejected</text>
+
+  <!-- score ≥ 70 → A/B Split -->
+  <line x1="340" y1="846" x2="340" y2="876" stroke="#b0aaa0" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <text x="354" y="863" font-size="11" fill="#5a5750" font-family="'DM Mono',monospace">score ≥ 70</text>
+
+  <!-- approved from rep review: bottom(584,746) → down to y=884 → left to x=505 → A/B top -->
+  <line x1="584" y1="746" x2="584" y2="884" stroke="#b0aaa0" stroke-width="1.2" stroke-dasharray="4 2" fill="none"/>
+  <line x1="584" y1="884" x2="510" y2="884" stroke="#b0aaa0" stroke-width="1.2" stroke-dasharray="4 2" fill="none"/>
+  <line x1="510" y1="884" x2="510" y2="888" stroke="#b0aaa0" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <text x="596" y="820" font-size="9.5" fill="#7a7770" font-family="'DM Mono',monospace">approved</text>
+
+  <!-- A/B Split: x=175 w=330, y=876 h=48 -->
+  <rect x="175" y="876" width="330" height="48" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.8"/>
+  <text x="340" y="895" text-anchor="middle" font-size="13" font-weight="600" fill="#085041" font-family="'DM Mono',monospace">A/B split + schedule</text>
+  <text x="340" y="913" text-anchor="middle" font-size="11" fill="#0F6E56" font-family="'DM Mono',monospace">80% ctrl · 20% test</text>
+
+  <line x1="340" y1="924" x2="340" y2="954" stroke="#b0aaa0" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <!-- AWS SES: x=210 w=260, y=954 h=48 -->
+  <rect x="210" y="954" width="260" height="48" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.8"/>
+  <text x="340" y="973" text-anchor="middle" font-size="13" font-weight="600" fill="#085041" font-family="'DM Mono',monospace">AWS SES</text>
+  <text x="340" y="991" text-anchor="middle" font-size="11" fill="#0F6E56" font-family="'DM Mono',monospace">≤ 2× per week per lead</text>
+
+  <!-- ══════════════════════════════════════ -->
+  <!-- STAGE 3: REPLY HANDLING  y=1046..1386 -->
+  <!-- ══════════════════════════════════════ -->
+  <rect x="30" y="1046" width="620" height="340" rx="10" fill="#f0efed" stroke="#c8c5bc" stroke-width="1" stroke-dasharray="4 3"/>
+  <text x="50" y="1066" font-size="12" fill="#7a7770" font-family="'DM Mono',monospace">③ Reply handling · see expanded diagram below</text>
+
+  <line x1="340" y1="1002" x2="340" y2="1082" stroke="#b0aaa0" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <!-- Follow-ups: x=175 w=330, y=1082 h=48 -->
+  <rect x="175" y="1082" width="330" height="48" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.8"/>
+  <text x="340" y="1101" text-anchor="middle" font-size="13" font-weight="600" fill="#085041" font-family="'DM Mono',monospace">Follow-ups (no reply)</text>
+  <text x="340" y="1119" text-anchor="middle" font-size="11" fill="#0F6E56" font-family="'DM Mono',monospace">+3 / +7 / +14 days · Batch API · max 3 attempts</text>
+
+  <!-- Retry loop: left(175,1106) → rail x=150 → up to y=978 → SES left(210,978) -->
+  <line x1="175" y1="1106" x2="150" y2="1106" stroke="#c8c5bc" stroke-width="1" stroke-dasharray="4 2" fill="none"/>
+  <line x1="150" y1="1106" x2="150" y2="978" stroke="#c8c5bc" stroke-width="1" stroke-dasharray="4 2" fill="none"/>
+  <line x1="150" y1="978" x2="210" y2="978" stroke="#c8c5bc" stroke-width="1" marker-end="url(#arrow)"/>
+  <text x="128" y="1046" font-size="9.5" fill="#7a7770" font-family="'DM Mono',monospace" text-anchor="middle" transform="rotate(-90,128,1046)">retry ↩</text>
+
+  <!-- Fan to 4 outcomes
+       4 boxes w=130 gap=10 total=550 start x=65
+       box1 cx=130  box2 cx=270  box3 cx=410  box4 cx=550 -->
+  <line x1="340" y1="1130" x2="340" y2="1168" stroke="#b0aaa0" stroke-width="1" fill="none"/>
+  <line x1="130" y1="1168" x2="550" y2="1168" stroke="#b0aaa0" stroke-width="1" fill="none"/>
+  <line x1="130" y1="1168" x2="130" y2="1186" stroke="#b0aaa0" stroke-width="1" marker-end="url(#arrow)"/>
+  <line x1="270" y1="1168" x2="270" y2="1186" stroke="#b0aaa0" stroke-width="1" marker-end="url(#arrow)"/>
+  <line x1="410" y1="1168" x2="410" y2="1186" stroke="#b0aaa0" stroke-width="1" marker-end="url(#arrow)"/>
+  <line x1="550" y1="1168" x2="550" y2="1186" stroke="#b0aaa0" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <!-- Demo booked -->
+  <rect x="65" y="1186" width="130" height="48" rx="8" fill="#EAF3DE" stroke="#3B6D11" stroke-width="0.8"/>
+  <text x="130" y="1205" text-anchor="middle" font-size="13" font-weight="600" fill="#173404" font-family="'DM Mono',monospace">Demo booked</text>
+  <text x="130" y="1223" text-anchor="middle" font-size="11" fill="#3B6D11" font-family="'DM Mono',monospace">positive reply</text>
+
+  <!-- Suppressed -->
+  <rect x="205" y="1186" width="130" height="48" rx="8" fill="#FCEBEB" stroke="#A32D2D" stroke-width="0.8"/>
+  <text x="270" y="1205" text-anchor="middle" font-size="13" font-weight="600" fill="#7f1d1d" font-family="'DM Mono',monospace">Suppressed</text>
+  <text x="270" y="1223" text-anchor="middle" font-size="11" fill="#A32D2D" font-family="'DM Mono',monospace">unsubscribe</text>
+
+  <!-- Flagged -->
+  <rect x="345" y="1186" width="130" height="48" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.8"/>
+  <text x="410" y="1205" text-anchor="middle" font-size="13" font-weight="600" fill="#3b0764" font-family="'DM Mono',monospace">Flagged</text>
+  <text x="410" y="1223" text-anchor="middle" font-size="11" fill="#534AB7" font-family="'DM Mono',monospace">neutral / question</text>
+
+  <!-- Risk flagged -->
+  <rect x="485" y="1186" width="130" height="48" rx="8" fill="#FCEBEB" stroke="#A32D2D" stroke-width="0.8"/>
+  <text x="550" y="1205" text-anchor="middle" font-size="13" font-weight="600" fill="#7f1d1d" font-family="'DM Mono',monospace">Risk flagged</text>
+  <text x="550" y="1223" text-anchor="middle" font-size="11" fill="#A32D2D" font-family="'DM Mono',monospace">hostile / legal</text>
+
+  <!-- Converge to dashboard -->
+  <line x1="130" y1="1234" x2="130" y2="1308" stroke="#c8c5bc" stroke-width="0.8" fill="none"/>
+  <line x1="270" y1="1234" x2="270" y2="1308" stroke="#c8c5bc" stroke-width="0.8" fill="none"/>
+  <line x1="410" y1="1234" x2="410" y2="1308" stroke="#c8c5bc" stroke-width="0.8" fill="none"/>
+  <line x1="550" y1="1234" x2="550" y2="1308" stroke="#c8c5bc" stroke-width="0.8" fill="none"/>
+  <line x1="130" y1="1308" x2="550" y2="1308" stroke="#c8c5bc" stroke-width="0.8" fill="none"/>
+  <line x1="340" y1="1308" x2="340" y2="1334" stroke="#c8c5bc" stroke-width="0.8" marker-end="url(#arrow)"/>
+
+  <!-- Dashboard -->
+  <rect x="155" y="1334" width="370" height="48" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.8"/>
+  <text x="340" y="1353" text-anchor="middle" font-size="13" font-weight="600" fill="#085041" font-family="'DM Mono',monospace">Dashboard</text>
+  <text x="340" y="1371" text-anchor="middle" font-size="11" fill="#0F6E56" font-family="'DM Mono',monospace">open rate · reply rate · demos · spam · A/B analytics</text>
+
+</svg>
+
+</body>
+</html>

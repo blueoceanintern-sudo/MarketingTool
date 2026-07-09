@@ -1,7 +1,8 @@
-import { and, eq, inArray, notInArray } from "drizzle-orm";
+import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
 import { db } from "../../db";
 import { campaigns, campaignLeads, companies, emailDrafts, leads, suppressionList } from "../../db/schema";
 import { generateDraftsBatch, type CampaignContext } from "./index";
+import { getTotalSent } from "../sender";
 
 function toCampaignContext(row: typeof campaigns.$inferSelect): CampaignContext {
   return {
@@ -51,8 +52,7 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
   const eligible = await db
     .select({
       id: leads.id,
-      firstName: leads.firstName,
-      lastName: leads.lastName,
+      name: leads.name,
       role: leads.role,
       companyName: companies.name,
       industry: companies.industry,
@@ -68,13 +68,13 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
     return { generated: 0, skipped_no_eligible: true, errors: [] };
   }
 
-  const incomplete = eligible.filter((l) => !l.role || (!l.firstName && !l.lastName));
+  const incomplete = eligible.filter((l) => !l.role || !l.name);
   if (incomplete.length > 0) {
     console.warn(
       `[drafting] skipping ${incomplete.length} lead(s) with missing role or name: ${incomplete.map((l) => l.id).join(", ")}`,
     );
   }
-  const complete = eligible.filter((l) => l.role && (l.firstName || l.lastName));
+  const complete = eligible.filter((l) => l.role && l.name);
 
   if (complete.length === 0) {
     return { generated: 0, skipped_no_eligible: true, errors: [] };
@@ -85,8 +85,7 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
     leadId: lead.id,
     campaignId,
     lead: {
-      firstName: lead.firstName ?? undefined,
-      lastName: lead.lastName ?? undefined,
+      name: lead.name ?? undefined,
       role: lead.role ?? undefined,
       companyName: lead.companyName,
       industry: lead.industry ?? undefined,
@@ -98,7 +97,15 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
 
   const results = await generateDraftsBatch(requests);
 
+  // Check once — totalSent doesn't change between drafts in the same batch.
+  // Auto-schedule only after 50 sends AND confidence ≥ 70; everything else
+  // stays in pending_review for a rep to review.
+  const totalSent = await getTotalSent();
+
   for (const draft of results) {
+    const autoSchedule = totalSent >= 50 && draft.confidenceScore >= 70;
+    const draftStatus = autoSchedule ? "scheduled" : "pending_review";
+
     await db.insert(emailDrafts)
       .values({
         leadId: draft.leadId,
@@ -108,7 +115,7 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
         body: draft.body,
         confidenceScore: draft.confidenceScore,
         scoreBreakdown: draft.scoreBreakdown,
-        status: "pending_review",
+        status: draftStatus,
       })
       .onConflictDoUpdate({
         target: [emailDrafts.leadId, emailDrafts.campaignId],
@@ -118,7 +125,7 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
           body: draft.body,
           confidenceScore: draft.confidenceScore,
           scoreBreakdown: draft.scoreBreakdown,
-          status: "pending_review",
+          status: draftStatus,
           approvedBy: null,
           approvedAt: null,
         },

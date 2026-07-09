@@ -1,11 +1,16 @@
 import { Hono } from "hono";
 import { db } from "../db";
-import { sourceRegistry, suppressionList, promptTemplates, emailDrafts, campaigns, directoryConfigs, normalizeVertical, normalizeGeo } from "../db/schema";
-import { eq, and, inArray } from "drizzle-orm";
+import { sourceRegistry, suppressionList, promptTemplates, emailDrafts, emailEvents, campaigns, directoryConfigs, leads, companies, normalizeVertical, normalizeGeo, followUps, riskFlags, enrichmentRecords, campaignLeads, campaignLeadExclusions, replies, demos, auditLog } from "../db/schema";
+import { eq, and, inArray, count, sql, desc, gte, lt, isNull } from "drizzle-orm";
+import { scrapeWebsite } from "../services/scrapers/cheerioScraper";
+import { scrapeWithFallback } from "../services/scrapers/crawl4aiScraper";
+import { isValidLeadEmail } from "../services/scrapers/emailFilter";
 import { logAudit } from "../services/audit/log";
 import { discoverSources, getDirectoryConfig, getAllDirectoryConfigs, resolveGeo } from "../services/sourceRegistry";
 import { emitJobEvent } from "../services/events";
+import { isSafeUrl } from "../services/scraping/runScrapeJob";
 import { requireAdmin, type AuthUser } from "../middleware/auth";
+import { runFollowUpSender } from "../workers";
 
 // ---------------------------------------------------------------------------
 // CSV helpers (used by /registry/sources/import)
@@ -42,20 +47,73 @@ export const adminRouter = new Hono<{ Variables: { user: AuthUser } }>();
 // ---------------------------------------------------------------------------
 
 adminRouter.get("/registry/sources", async (c) => {
-  const rows = await db.select().from(sourceRegistry).orderBy(sourceRegistry.createdAt);
-  return c.json(rows.map((r) => ({
-    id: r.id,
-    name: r.name,
-    vertical: r.vertical,
-    geo: r.geo,
-    url: r.url,
-    scraper_type: r.scraperType,
-    legal_flag: r.legalFlag,
-    selectors: r.selectors,
-    active: r.active,
-    created_at: r.createdAt.toISOString(),
-    updated_at: r.updatedAt.toISOString(),
-  })));
+  const page = Math.max(1, parseInt(c.req.query("page") ?? "1", 10) || 1);
+  const limit = Math.min(200, Math.max(1, parseInt(c.req.query("limit") ?? "25", 10) || 25));
+  const offset = (page - 1) * limit;
+
+  const geoParam = c.req.query("geo");
+  const verticalParam = c.req.query("vertical");
+  const activeParam = c.req.query("active");
+
+  const where = and(
+    geoParam ? eq(sourceRegistry.geo, geoParam) : undefined,
+    verticalParam ? eq(sourceRegistry.vertical, verticalParam) : undefined,
+    activeParam === "true" ? eq(sourceRegistry.active, true) : undefined,
+  );
+
+  const [filteredCount] = await db.select({ total: count() }).from(sourceRegistry).where(where);
+  const total = Number(filteredCount?.total ?? 0);
+
+  const rows = await db
+    .select()
+    .from(sourceRegistry)
+    .where(where)
+    .orderBy(sourceRegistry.createdAt)
+    .limit(limit)
+    .offset(offset);
+
+  // Global stats + distinct facets (unfiltered) — power the overview cards,
+  // the filter dropdowns, and the vertical/geo autocomplete in the modals.
+  const [globalRow] = await db
+    .select({
+      total: count(),
+      active: sql<number>`count(*) filter (where ${sourceRegistry.active})`,
+    })
+    .from(sourceRegistry);
+
+  const geoRows = await db.selectDistinct({ geo: sourceRegistry.geo }).from(sourceRegistry).orderBy(sourceRegistry.geo);
+  const verticalRows = await db
+    .selectDistinct({ vertical: sourceRegistry.vertical })
+    .from(sourceRegistry)
+    .orderBy(sourceRegistry.vertical);
+
+  return c.json({
+    data: rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      vertical: r.vertical,
+      geo: r.geo,
+      url: r.url,
+      scraper_type: r.scraperType,
+      legal_flag: r.legalFlag,
+      selectors: r.selectors,
+      active: r.active,
+      created_at: r.createdAt.toISOString(),
+      updated_at: r.updatedAt.toISOString(),
+    })),
+    total,
+    page,
+    limit,
+    total_pages: Math.ceil(total / limit),
+    summary: {
+      total: Number(globalRow?.total ?? 0),
+      active: Number(globalRow?.active ?? 0),
+    },
+    facets: {
+      geos: geoRows.map((r) => r.geo),
+      verticals: verticalRows.map((r) => r.vertical),
+    },
+  });
 });
 
 adminRouter.post("/registry/sources", requireAdmin, async (c) => {
@@ -321,7 +379,17 @@ adminRouter.post("/registry/discover", async (c) => {
     .limit(1);
 
   void discoverSources(vertical, geo, anyCampaign?.id ?? null)
-    .then((inserted) => emitJobEvent({ kind: "discovery", vertical, geo, inserted }))
+    .then(async ({ inserted, sourceIds }) => {
+      await emitJobEvent({ kind: "discovery", vertical, geo, inserted });
+      if (sourceIds.length > 0) {
+        const newSources = await db.select().from(sourceRegistry).where(inArray(sourceRegistry.id, sourceIds));
+        const results = await Promise.allSettled(newSources.map((s) => scrapeSourceRecord(s)));
+        const leadsAdded = results.reduce((sum, r) => (r.status === "fulfilled" ? sum + r.value : sum), 0);
+        await emitJobEvent({ kind: "discovery_scrape_complete", vertical, geo, leadsAdded });
+      } else {
+        await emitJobEvent({ kind: "discovery_scrape_complete", vertical, geo, leadsAdded: 0 });
+      }
+    })
     .catch((err) => {
       console.error(`[discovery] manual refresh ${key} failed:`, err);
       void emitJobEvent({ kind: "discovery", vertical, geo, inserted: 0 });
@@ -348,6 +416,59 @@ adminRouter.post("/registry/discover", async (c) => {
   );
 });
 
+// Scrapeable coverage: distinct (vertical, geo) pairs that have active sources
+// in the registry, with a count. Drives the leads-page scrape picker — every
+// row here resolves to real URLs (unlike directory_configs, which are discovery
+// intent and may have zero sources behind them).
+adminRouter.get("/registry/source-coverage", async (c) => {
+  const rows = await db
+    .select({
+      vertical: sourceRegistry.vertical,
+      geo: sourceRegistry.geo,
+      source_count: count(),
+    })
+    .from(sourceRegistry)
+    .where(eq(sourceRegistry.active, true))
+    .groupBy(sourceRegistry.vertical, sourceRegistry.geo)
+    .orderBy(sourceRegistry.vertical, sourceRegistry.geo);
+
+  return c.json(rows.map((r) => ({ vertical: r.vertical, geo: r.geo, source_count: Number(r.source_count) })));
+});
+
+// Canonical taxonomy: distinct normalized verticals + geos from all authoritative
+// tables (source_registry, directory_configs, companies). Used to populate
+// autocomplete datalists so every modal suggests only consistent canonical values.
+adminRouter.get("/registry/taxonomy", async (c) => {
+  const [srVerticals, dcVerticals, coVerticals, srGeos, dcGeos, coGeos] = await Promise.all([
+    db.selectDistinct({ v: sourceRegistry.vertical }).from(sourceRegistry),
+    db.selectDistinct({ v: directoryConfigs.vertical }).from(directoryConfigs),
+    db.selectDistinct({ v: companies.industry }).from(companies)
+      .where(sql`${companies.industry} IS NOT NULL AND ${companies.industry} NOT IN ('general', '')`),
+    db.selectDistinct({ g: sourceRegistry.geo }).from(sourceRegistry),
+    db.selectDistinct({ g: directoryConfigs.geo }).from(directoryConfigs),
+    db.selectDistinct({ g: companies.location }).from(companies)
+      .where(sql`${companies.location} IS NOT NULL AND ${companies.location} NOT IN ('unknown', '')`),
+  ]);
+
+  const verticals = Array.from(
+    new Set([
+      ...srVerticals.map((r) => normalizeVertical(r.v)),
+      ...dcVerticals.map((r) => normalizeVertical(r.v)),
+      ...coVerticals.map((r) => normalizeVertical(r.v ?? "")),
+    ].filter(Boolean)),
+  ).sort();
+
+  const geos = Array.from(
+    new Set([
+      ...srGeos.map((r) => normalizeGeo(r.g)),
+      ...dcGeos.map((r) => normalizeGeo(r.g)),
+      ...coGeos.map((r) => normalizeGeo(r.g ?? "")),
+    ].filter(Boolean)),
+  ).sort();
+
+  return c.json({ verticals, geos });
+});
+
 // Convenience: returns (vertical, geo) tuples currently used by any active
 // campaign. The UI uses this to render a "Refresh" button per active
 // combination, regardless of whether DIRECTORY_CONFIGS has them.
@@ -357,10 +478,10 @@ adminRouter.get("/registry/active-combinations", async (c) => {
     .from(campaigns)
     .where(inArray(campaigns.status, ["active", "paused"]));
 
-  // geography is comma-separated → expand to (vertical, geo) pairs
+  // geography is pipe-separated → expand to (vertical, geo) pairs
   const pairs = new Set<string>();
   for (const row of rows) {
-    for (const g of row.geography.split(",")) {
+    for (const g of row.geography.split("|")) {
       const geo = g.trim();
       if (geo) pairs.add(`${row.vertical}:${geo}`);
     }
@@ -380,6 +501,70 @@ adminRouter.get("/registry/active-combinations", async (c) => {
   );
 
   return c.json(withConfig);
+});
+
+// Shared helper — scrapes a single registry source row, persists new leads, and returns the count.
+async function scrapeSourceRecord(source: typeof sourceRegistry.$inferSelect): Promise<number> {
+  if (!await isSafeUrl(source.url)) {
+    console.warn(`[registry/scrape] SSRF blocked: ${source.url}`);
+    return 0;
+  }
+  const result = source.scraperType === "crawl4ai"
+    ? await scrapeWithFallback(source.url)
+    : { leads: await scrapeWebsite(source.url), scraper: "cheerio" as const };
+
+  let saved = 0;
+  for (const scraped of result.leads) {
+    if (!scraped.email) continue;
+    const email = scraped.email.trim().toLowerCase();
+    if (!isValidLeadEmail(email)) continue;
+
+    const [existing] = await db.select({ id: leads.id }).from(leads).where(eq(leads.email, email)).limit(1);
+    if (existing) continue;
+
+    const companyName = scraped.company?.trim() || new URL(scraped.website).hostname;
+    let [company] = await db.select().from(companies).where(eq(companies.name, companyName)).limit(1);
+    if (!company) {
+      const [inserted] = await db.insert(companies).values({
+        name: companyName,
+        industry: source.vertical,
+        companySize: "unknown",
+        location: source.geo,
+        source: scraped.website,
+      }).returning();
+      company = inserted!;
+    }
+
+    const adminScrapedName = scraped.name?.trim() || null;
+    await db.insert(leads).values({
+      companyId: company.id,
+      email,
+      name: adminScrapedName,
+      role: scraped.role ?? null,
+      isVerified: false,
+      emailStatus: "pattern_guessed",
+      scraperUsed: result.scraper,
+    });
+    saved++;
+  }
+  console.log(`[registry/scrape] ${source.name} → saved=${saved}`);
+  return saved;
+}
+
+// Scrape a specific registry source — persists new leads without campaign linkage.
+adminRouter.post("/registry/sources/:id/scrape", async (c) => {
+  const sourceId = c.req.param("id");
+  const [source] = await db.select().from(sourceRegistry).where(eq(sourceRegistry.id, sourceId)).limit(1);
+  if (!source) return c.json({ error: "Source not found" }, 404);
+  if (!source.active) return c.json({ error: "Source is inactive" }, 400);
+
+  void scrapeSourceRecord(source)
+    .then((count) => emitJobEvent({ kind: "enrichment_complete", campaignId: "", count }))
+    .catch((err) => {
+      console.error(`[registry/scrape] failed for ${source.name}:`, err);
+    });
+
+  return c.json({ status: "queued", source_id: sourceId, source_name: source.name }, 202);
 });
 
 // ---------------------------------------------------------------------------
@@ -555,4 +740,209 @@ adminRouter.delete("/templates/:id", async (c) => {
     metadata: { name: existing.name },
   });
   return c.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// Manual worker trigger — POST /workers/send-now
+// Runs the follow-up sender immediately (same logic as the 09:00 cron).
+// Use this when the scheduled run was missed (e.g. container restart after 9am).
+// ---------------------------------------------------------------------------
+adminRouter.post("/workers/send-now", requireAdmin, async (c) => {
+  console.log("[admin] manual send-now triggered");
+  const result = await runFollowUpSender();
+  await logAudit({
+    actor: c.get("user"),
+    action: "workers.send_now",
+    targetType: "worker",
+    metadata: result,
+  });
+  return c.json({ ok: true, sent: result.sent, blocked: result.blocked });
+});
+
+// ---------------------------------------------------------------------------
+// Reset dry-run sent drafts back to scheduled — POST /workers/reset-dry-run
+// One-time use: clears fake email_events rows and resets draft status so the
+// real SES send can proceed.
+// ---------------------------------------------------------------------------
+adminRouter.post("/workers/reset-dry-run", requireAdmin, async (c) => {
+  const dryRunEvents = await db
+    .select({ draftId: emailEvents.draftId })
+    .from(emailEvents)
+    .where(sql`${emailEvents.sesMessageId} LIKE '%dry-run%'`);
+
+  const draftIds = dryRunEvents.map((r) => r.draftId);
+
+  await db.delete(emailEvents).where(sql`${emailEvents.sesMessageId} LIKE '%dry-run%'`);
+
+  let reset = 0;
+  if (draftIds.length > 0) {
+    const result = await db
+      .update(emailDrafts)
+      .set({ status: "scheduled" })
+      .where(and(inArray(emailDrafts.id, draftIds), eq(emailDrafts.status, "sent")))
+      .returning({ id: emailDrafts.id });
+    reset = result.length;
+  }
+
+  await logAudit({
+    actor: c.get("user"),
+    action: "workers.reset_dry_run",
+    targetType: "worker",
+    metadata: { eventsDeleted: dryRunEvents.length, draftsReset: reset },
+  });
+
+  return c.json({ ok: true, events_deleted: dryRunEvents.length, drafts_reset: reset });
+});
+
+// ---------------------------------------------------------------------------
+// Right-to-deletion — POST /admin/leads/:id/erase
+// De-identifies the lead in place: strips PII from the leads row and
+// anonymizes reply bodies, but retains email_events / email_drafts /
+// follow_ups / replies rows so aggregate analytics (send counts, open rates,
+// reply sentiment) are preserved. Satisfies PDPA / AU Privacy Act / CAN-SPAM
+// de-identification requirements without requiring schema migrations.
+// ---------------------------------------------------------------------------
+adminRouter.post("/admin/leads/:id/erase", requireAdmin, async (c) => {
+  const rawId = c.req.param("id");
+  if (!rawId) return c.json({ error: "Lead ID is required" }, 400);
+
+  const [lead] = await db.select({ id: leads.id, email: leads.email })
+    .from(leads)
+    .where(eq(leads.id, rawId))
+    .limit(1);
+  if (!lead) return c.json({ error: "Lead not found" }, 404);
+
+  const id = lead.id;
+
+  // Anonymize reply bodies — the prospect's own words are PII even after the
+  // lead row is stripped. Keep the row so reply counts and sentiment hold.
+  const eventIds = (
+    await db.select({ id: emailEvents.id })
+      .from(emailEvents)
+      .where(eq(emailEvents.leadId, id))
+  ).map((r) => r.id);
+
+  if (eventIds.length > 0) {
+    await db.update(replies)
+      .set({ body: "[deleted]" })
+      .where(inArray(replies.emailEventId, eventIds));
+  }
+
+  // Hard-delete tables with PII enrichment data or no analytics value.
+  await db.delete(riskFlags).where(eq(riskFlags.leadId, id));
+  await db.delete(enrichmentRecords).where(eq(enrichmentRecords.leadId, id));
+  await db.delete(campaignLeads).where(eq(campaignLeads.leadId, id));
+  await db.delete(campaignLeadExclusions).where(eq(campaignLeadExclusions.leadId, id));
+
+  // [deleted-{id}] is unique per lead — avoids a unique constraint collision
+  // on (email, campaign_id) when multiple leads in the same campaign are erased.
+  await db.update(suppressionList)
+    .set({ email: `[deleted-${id}]` })
+    .where(eq(suppressionList.email, lead.email));
+
+  // Anonymize the lead row in place. email_events, email_drafts, follow_ups,
+  // replies, and demos all keep their lead_id FK pointing here — no rows are
+  // orphaned and analytics counts remain intact.
+  await db.update(leads)
+    .set({ email: `[deleted-${id}]`, name: null, role: null })
+    .where(eq(leads.id, id));
+
+  await logAudit({
+    actor: c.get("user"),
+    action: "lead.erase",
+    targetId: id,
+    targetType: "lead",
+    ipAddress:
+      c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ??
+      c.req.header("x-real-ip") ??
+      null,
+  });
+
+  return c.json({ ok: true, lead_id: id });
+});
+
+// ---------------------------------------------------------------------------
+// Audit log — GET /admin/audit-log and GET /admin/audit-log/export
+// ---------------------------------------------------------------------------
+
+adminRouter.get("/admin/audit-log", requireAdmin, async (c) => {
+  const { from, to } = c.req.query();
+  const page = Math.max(1, parseInt(c.req.query("page") ?? "1", 10) || 1);
+  const limit = Math.min(200, Math.max(1, parseInt(c.req.query("limit") ?? "50", 10) || 50));
+  const offset = (page - 1) * limit;
+
+  const where = and(
+    from ? gte(auditLog.timestamp, new Date(from)) : undefined,
+    to ? lt(auditLog.timestamp, new Date(to)) : undefined,
+  );
+
+  const [countRow] = await db.select({ total: count() }).from(auditLog).where(where);
+  const total = Number(countRow?.total ?? 0);
+
+  const rows = await db.select()
+    .from(auditLog)
+    .where(where)
+    .orderBy(desc(auditLog.timestamp))
+    .limit(limit)
+    .offset(offset);
+
+  return c.json({
+    data: rows.map((r) => ({
+      id: r.id,
+      timestamp: r.timestamp.toISOString(),
+      actor: r.actor,
+      action: r.action,
+      target_id: r.targetId,
+      target_type: r.targetType,
+      ip_address: r.ipAddress,
+      metadata: r.metadata,
+    })),
+    total,
+    page,
+    limit,
+    total_pages: Math.ceil(total / limit),
+  });
+});
+
+adminRouter.get("/admin/audit-log/export", requireAdmin, async (c) => {
+  const { from, to } = c.req.query();
+
+  const where = and(
+    from ? gte(auditLog.timestamp, new Date(from)) : undefined,
+    to ? lt(auditLog.timestamp, new Date(to)) : undefined,
+  );
+
+  const rows = await db.select()
+    .from(auditLog)
+    .where(where)
+    .orderBy(desc(auditLog.timestamp));
+
+  function escapeCsv(val: unknown): string {
+    const s = val == null ? "" : String(val);
+    return s.includes(",") || s.includes('"') || s.includes("\n")
+      ? `"${s.replace(/"/g, '""')}"`
+      : s;
+  }
+
+  const header = "timestamp,actor,action,target_id,target_type,ip_address,metadata";
+  const lines = rows.map((r) =>
+    [
+      escapeCsv(r.timestamp.toISOString()),
+      escapeCsv(r.actor),
+      escapeCsv(r.action),
+      escapeCsv(r.targetId),
+      escapeCsv(r.targetType),
+      escapeCsv(r.ipAddress),
+      escapeCsv(r.metadata ? JSON.stringify(r.metadata) : ""),
+    ].join(","),
+  );
+
+  const csv = [header, ...lines].join("\n");
+
+  return new Response(csv, {
+    headers: {
+      "Content-Type": "text/csv",
+      "Content-Disposition": `attachment; filename="audit-log-${new Date().toISOString().slice(0, 10)}.csv"`,
+    },
+  });
 });

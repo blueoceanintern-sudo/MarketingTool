@@ -2,13 +2,14 @@
 
 import { useState } from "react";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
-import type { Lead } from "@/lib/api";
+import type { Lead, LeadStatus } from "@/lib/api";
 import { campaignLeadsOptions } from "@/lib/queries";
 import { useJobEvents } from "@/lib/job-events";
 import LeadActions from "./lead-actions";
 import Pagination from "@/components/pagination";
+import { LeadEnrichmentDrawer, statusConfig } from "@/components/lead-enrichment-drawer";
 
-const LEADS_PER_PAGE = 50;
+const LEADS_PER_PAGE = 25;
 
 const AVATAR_COLORS = [
   "bg-primary-fixed text-on-primary-fixed",
@@ -18,16 +19,23 @@ const AVATAR_COLORS = [
   "bg-primary-container text-white",
 ];
 
-const statusMap: Record<string, { label: string; className: string }> = {
-  new:        { label: "New",        className: "bg-neutral-bg text-neutral" },
-  contacted:  { label: "Contacted",  className: "bg-ocean-wash text-primary" },
-  replied:    { label: "Replied",    className: "bg-warning-bg text-warning" },
-  converted:  { label: "Converted",  className: "bg-success-bg text-success" },
-  suppressed: { label: "Suppressed", className: "bg-danger-bg text-danger" },
+const STATUS_OPTIONS: { value: LeadStatus | ""; label: string }[] = [
+  { value: "", label: "All statuses" },
+  { value: "new", label: "New" },
+  { value: "contacted", label: "Contacted" },
+  { value: "replied", label: "Replied" },
+  { value: "converted", label: "Converted" },
+  { value: "suppressed", label: "Suppressed" },
+];
+
+const DRAFT_STATUS_BADGE: Record<string, { label: string; className: string }> = {
+  pending_review: { label: "Review", className: "bg-warning-bg text-warning" },
+  scheduled: { label: "Scheduled", className: "bg-ocean-wash text-primary" },
 };
 
 function initials(lead: Lead) {
-  return `${lead.first_name?.[0] ?? ""}${lead.last_name?.[0] ?? ""}`.toUpperCase() || "?";
+  const parts = lead.name.trim().split(/\s+/);
+  return `${parts[0]?.[0] ?? ""}${parts[1]?.[0] ?? ""}`.toUpperCase() || "?";
 }
 
 interface Props {
@@ -37,10 +45,12 @@ interface Props {
 
 export default function CampaignLeadsClient({ campaignId, initialPage }: Props) {
   const [page, setPage] = useState(initialPage);
+  const [statusFilter, setStatusFilter] = useState<LeadStatus | "">("");
   const [toast, setToast] = useState<string | null>(null);
+  const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
 
   const { data, isFetching } = useQuery({
-    ...campaignLeadsOptions(campaignId, page, LEADS_PER_PAGE),
+    ...campaignLeadsOptions(campaignId, page, LEADS_PER_PAGE, statusFilter || undefined),
     placeholderData: keepPreviousData,
   });
 
@@ -56,7 +66,11 @@ export default function CampaignLeadsClient({ campaignId, initialPage }: Props) 
     setTimeout(() => setToast(null), 4000);
   }
 
-  // Listen for enrichment_complete SSE events scoped to this campaign.
+  function handleStatusChange(value: LeadStatus | "") {
+    setStatusFilter(value);
+    setPage(1);
+  }
+
   useJobEvents((event) => {
     if (event.kind === "enrichment_complete" && event.campaignId === campaignId) {
       showToast(
@@ -78,11 +92,22 @@ export default function CampaignLeadsClient({ campaignId, initialPage }: Props) 
                 {`${start}–${end} of ${total.toLocaleString()}`}
               </p>
             )}
+            <select
+              value={statusFilter}
+              onChange={(e) => handleStatusChange(e.target.value as LeadStatus | "")}
+              className="px-2.5 py-1.5 border border-grey-200 rounded text-[12px] bg-white text-grey-700 focus:outline-none focus:border-primary"
+            >
+              {STATUS_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
           </div>
         </div>
 
         {leads.length === 0 && !isFetching ? (
-          <div className="px-6 py-12 text-center text-grey-400 text-[14px]">No leads for this campaign yet.</div>
+          <div className="px-6 py-12 text-center text-grey-400 text-[14px]">
+            {statusFilter ? `No ${statusFilter} leads for this campaign.` : "No leads for this campaign yet."}
+          </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
@@ -90,52 +115,53 @@ export default function CampaignLeadsClient({ campaignId, initialPage }: Props) 
                 <tr className="bg-grey-50 border-b border-grey-100">
                   <th className="px-6 py-3 text-[14px] font-semibold text-grey-700">Name</th>
                   <th className="px-6 py-3 text-[14px] font-semibold text-grey-700">Company</th>
-                  <th className="px-6 py-3 text-[14px] font-semibold text-grey-700">Campaign</th>
                   <th className="px-6 py-3 text-[14px] font-semibold text-grey-700">Email</th>
                   <th className="px-6 py-3 text-[14px] font-semibold text-grey-700">Role</th>
                   <th className="px-6 py-3 text-[14px] font-semibold text-grey-700">Status</th>
+                  <th className="px-6 py-3 text-[14px] font-semibold text-grey-700">Draft</th>
                   <th className="px-2 py-3 text-[14px] font-semibold text-grey-700 text-right pr-6"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-grey-100">
                 {leads.map((lead, i) => {
-                  const badge = statusMap[lead.status] ?? statusMap.new!;
+                  const badge = statusConfig[lead.status] ?? statusConfig.new;
+                  const draftBadge = lead.draft_status ? DRAFT_STATUS_BADGE[lead.draft_status] : null;
                   const avatarClass = AVATAR_COLORS[i % AVATAR_COLORS.length] ?? AVATAR_COLORS[0];
                   return (
-                    <tr key={lead.id} className="hover:bg-ocean-wash transition-colors duration-150 cursor-pointer">
+                    <tr
+                      key={lead.id}
+                      className="hover:bg-ocean-wash transition-colors duration-150 cursor-pointer"
+                      onClick={() => setSelectedLead(lead)}
+                    >
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
                           <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${avatarClass}`}>
                             {initials(lead)}
                           </div>
                           <span className="text-[14px] font-medium text-primary">
-                            {[lead.first_name, lead.last_name].filter(Boolean).join(" ")}
+                            {lead.name}
                           </span>
                         </div>
                       </td>
                       <td className="px-6 py-4 text-[13px] text-grey-700">{lead.company_name}</td>
-                      <td className="px-6 py-4 text-[13px] text-grey-500">
-                        {lead.campaigns.length === 0 ? "—" : (
-                          <div className="flex flex-wrap gap-1">
-                            {lead.campaigns.map((c) => (
-                              <span key={c.id} className="inline-flex items-center px-2 py-0.5 rounded-full bg-ocean-wash text-primary text-[11px] font-medium">
-                                {c.name}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      </td>
                       <td className="px-6 py-4 text-[13px] font-mono text-ocean-light">{lead.email}</td>
                       <td className="px-6 py-4 text-[13px] text-grey-500">{lead.role}</td>
                       <td className="px-6 py-4">
-                        <span className={`px-2.5 py-0.5 rounded-full text-[13px] font-medium ${badge.className}`}>
+                        <span className={`px-2.5 py-0.5 rounded-full text-[12px] font-medium ${badge.className}`}>
                           {badge.label}
                         </span>
                       </td>
-                      <td className="px-2 py-4 text-right pr-6">
+                      <td className="px-6 py-4">
+                        {draftBadge && (
+                          <span className={`px-2.5 py-0.5 rounded-full text-[12px] font-medium ${draftBadge.className}`}>
+                            {draftBadge.label}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-2 py-4 text-right pr-6" onClick={(e) => e.stopPropagation()}>
                         <LeadActions
                           leadId={lead.id}
-                          leadName={[lead.first_name, lead.last_name].filter(Boolean).join(" ") || lead.email}
+                          leadName={lead.name || lead.email}
                           currentCampaignId={campaignId}
                         />
                       </td>
@@ -159,7 +185,10 @@ export default function CampaignLeadsClient({ campaignId, initialPage }: Props) 
         )}
       </div>
 
-      {/* Toast notification — appears at bottom of page when enrichment completes */}
+      {selectedLead && (
+        <LeadEnrichmentDrawer lead={selectedLead} onClose={() => setSelectedLead(null)} />
+      )}
+
       {toast && (
         <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 bg-primary text-white px-4 py-3 rounded-lg shadow-lg text-[14px] max-w-xs animate-fade-in">
           <span className="material-symbols-outlined text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>

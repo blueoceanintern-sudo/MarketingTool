@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, boolean, integer, real, timestamp, json, jsonb, vector, index, unique, primaryKey } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, boolean, integer, real, timestamp, json, jsonb, vector, index, unique, primaryKey, type PgTableExtraConfigValue } from "drizzle-orm/pg-core";
 import {
   companySizeEnum,
   leadStatusEnum,
@@ -50,12 +50,10 @@ export const campaigns = pgTable("campaigns", {
 export const leads = pgTable("leads", {
   id: uuid("id").primaryKey().defaultRandom(),
   companyId: uuid("company_id").references(() => companies.id).notNull(),
-  firstName: text("first_name"),
-  lastName: text("last_name"),
+  name: text("name"),
   email: text("email").unique().notNull(),
   role: text("role"),
   isVerified: boolean("is_verified").default(false).notNull(),
-  status: leadStatusEnum("status").default("new").notNull(),
   emailStatus: emailStatusEnum("email_status"),
   enrichmentSource: enrichmentSourceEnum("enrichment_source"),
   routing: enrichmentRoutingEnum("routing"),
@@ -76,7 +74,8 @@ export const campaignLeads = pgTable("campaign_leads", {
   campaignId: uuid("campaign_id").references(() => campaigns.id, { onDelete: "cascade" }).notNull(),
   addedAt: timestamp("added_at").defaultNow().notNull(),
   source: text("source"),
-}, (t) => [
+  status: leadStatusEnum("status").default("new").notNull(),
+}, (t): PgTableExtraConfigValue[] => [
   primaryKey({ columns: [t.leadId, t.campaignId] }),
   index("campaign_leads_campaign_id_idx").on(t.campaignId),
 ]);
@@ -128,7 +127,7 @@ export const emailDrafts = pgTable("email_drafts", {
   approvedAt: timestamp("approved_at"),
   bodyEmbedding: vector("body_embedding", { dimensions: 1536 }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-}, (t) => [
+}, (t): PgTableExtraConfigValue[] => [
   // One draft per (lead, campaign) — replaces the old (lead, campaign, persona) shape
   unique("email_drafts_lead_campaign_unique").on(t.leadId, t.campaignId),
   index("email_drafts_body_embedding_idx").using("hnsw", t.bodyEmbedding.op("vector_cosine_ops")),
@@ -199,7 +198,7 @@ export const suppressionList = pgTable("suppression_list", {
   campaignId: uuid("campaign_id").references(() => campaigns.id, { onDelete: "cascade" }).notNull(),
   reason: suppressionReasonEnum("reason").notNull(),
   addedAt: timestamp("added_at").defaultNow().notNull(),
-}, (t) => [
+}, (t): PgTableExtraConfigValue[] => [
   unique("suppression_list_email_campaign_unique").on(t.email, t.campaignId),
   index("suppression_list_campaign_id_idx").on(t.campaignId),
 ]);
@@ -279,7 +278,7 @@ export const campaignLeadExclusions = pgTable("campaign_lead_exclusions", {
   excludedAt: timestamp("excluded_at").defaultNow().notNull(),
   excludedBy: text("excluded_by").notNull(),
   reason: text("reason"),
-}, (t) => [
+}, (t): PgTableExtraConfigValue[] => [
   primaryKey({ columns: [t.leadId, t.campaignId] }),
   index("campaign_lead_exclusions_campaign_id_idx").on(t.campaignId),
 ]);
@@ -297,7 +296,7 @@ export const enrichmentRecords = pgTable("enrichment_records", {
   routing: enrichmentRoutingEnum("routing").notNull(),
   routingReason: text("routing_reason"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-}, (t) => [
+}, (t): PgTableExtraConfigValue[] => [
   index("enrichment_records_lead_enriched_at_idx").on(t.leadId, t.enrichedAt.desc()),
 ]);
 
@@ -311,6 +310,6 @@ export const directoryConfigs = pgTable("directory_configs", {
   domains: text("domains").array().notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-}, (t) => [
+}, (t): PgTableExtraConfigValue[] => [
   unique("directory_configs_vertical_geo_unique").on(t.vertical, t.geo),
 ]);

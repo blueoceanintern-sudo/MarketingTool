@@ -42,9 +42,16 @@ export interface Paginated<T> {
 }
 
 export interface LeadsSummary {
-  verified: number;
   auto_queue: number;
   rep_review: number;
+  pending: number;
+}
+
+export interface LeadsSummaryGlobal {
+  total: number;
+  auto_queue: number;
+  rep_review: number;
+  pending: number;
 }
 
 export type PaginatedLeads = Paginated<Lead> & { summary: LeadsSummary };
@@ -78,8 +85,7 @@ export type EnrichmentRouting = "auto_queue" | "rep_review";
 
 export interface Lead {
   id: string;
-  first_name: string;
-  last_name: string;
+  name: string;
   email: string;
   role: string;
   is_verified: boolean;
@@ -89,8 +95,12 @@ export interface Lead {
   enriched_at: string | null;
   scraper_used: ScraperType | null;
   status: LeadStatus;
+  draft_status: DraftStatus | null;
   company_name: string;
-  campaigns: { id: string; name: string }[];
+  company_source: string | null;
+  company_industry: string | null;
+  company_location: string | null;
+  campaigns: { id: string; name: string; status: LeadStatus }[];
   created_at: string;
 }
 
@@ -282,6 +292,20 @@ export async function triggerCampaignScrape(campaignId: string): Promise<{ ok: b
   }
 }
 
+export async function triggerCampaignFetchLeads(campaignId: string): Promise<{ ok: boolean; added?: number; error?: string }> {
+  try {
+    const res = await apiRequest(`${BASE}/api/v1/campaigns/${campaignId}/fetch-leads`, { method: "POST" });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return { ok: false, error: body.error ?? `Fetch leads failed (${res.status})` };
+    }
+    const body = (await res.json()) as { added: number };
+    return { ok: true, added: body.added };
+  } catch {
+    return { ok: false, error: "Could not reach the API." };
+  }
+}
+
 export async function triggerCampaignEnrich(campaignId: string): Promise<{ ok: boolean; count?: number; error?: string }> {
   try {
     const res = await apiRequest(`${BASE}/api/v1/campaigns/${campaignId}/enrich`, { method: "POST" });
@@ -380,6 +404,7 @@ export async function getLeadsPaginated(params?: {
   email_status?: string;
   routing?: string;
   campaign_id?: string;
+  search?: string;
 }): Promise<PaginatedLeads> {
   const q = new URLSearchParams();
   if (params?.page && params.page > 1) q.set("page", String(params.page));
@@ -388,18 +413,20 @@ export async function getLeadsPaginated(params?: {
   if (params?.email_status) q.set("email_status", params.email_status);
   if (params?.routing) q.set("routing", params.routing);
   if (params?.campaign_id) q.set("campaign_id", params.campaign_id);
+  if (params?.search) q.set("search", params.search);
   const qs = q.toString();
   const result = await apiFetch<PaginatedLeads>(`/leads${qs ? `?${qs}` : ""}`);
-  return result ?? { data: [], total: 0, page: 1, limit: 50, total_pages: 0, summary: { verified: 0, auto_queue: 0, rep_review: 0 } };
+  return result ?? { data: [], total: 0, page: 1, limit: 50, total_pages: 0, summary: { auto_queue: 0, rep_review: 0, pending: 0 } };
 }
 
 export async function getCampaignLeadsPaginated(
   campaignId: string,
-  params?: { page?: number; limit?: number },
+  params?: { page?: number; limit?: number; status?: string },
 ): Promise<Paginated<Lead>> {
   const q = new URLSearchParams();
   if (params?.page && params.page > 1) q.set("page", String(params.page));
   if (params?.limit) q.set("limit", String(params.limit));
+  if (params?.status) q.set("status", params.status);
   const qs = q.toString();
   const result = await apiFetch<Paginated<Lead>>(`/campaigns/${campaignId}/leads${qs ? `?${qs}` : ""}`);
   return result ?? { data: [], total: 0, page: 1, limit: 50, total_pages: 0 };
@@ -562,8 +589,37 @@ export async function getDemos(): Promise<Demo[]> {
   return (await apiFetch<Demo[]>("/demos")) ?? [];
 }
 
-export async function getRegistrySources(): Promise<SourceRegistry[]> {
-  return (await apiFetch<SourceRegistry[]>("/registry/sources")) ?? [];
+export interface PaginatedSources extends Paginated<SourceRegistry> {
+  summary: { total: number; active: number };
+  facets: { geos: string[]; verticals: string[] };
+}
+
+const EMPTY_SOURCES: PaginatedSources = {
+  data: [],
+  total: 0,
+  page: 1,
+  limit: 25,
+  total_pages: 0,
+  summary: { total: 0, active: 0 },
+  facets: { geos: [], verticals: [] },
+};
+
+export async function getRegistrySourcesPaginated(params?: {
+  page?: number;
+  limit?: number;
+  geo?: string;
+  vertical?: string;
+  active?: boolean;
+}): Promise<PaginatedSources> {
+  const q = new URLSearchParams();
+  if (params?.page && params.page > 1) q.set("page", String(params.page));
+  if (params?.limit) q.set("limit", String(params.limit));
+  if (params?.geo) q.set("geo", params.geo);
+  if (params?.vertical) q.set("vertical", params.vertical);
+  if (params?.active) q.set("active", "true");
+  const qs = q.toString();
+  const result = await apiFetch<PaginatedSources>(`/registry/sources${qs ? `?${qs}` : ""}`);
+  return result ?? EMPTY_SOURCES;
 }
 
 export interface DirectoryConfig {
@@ -586,6 +642,10 @@ export async function getDirectoryConfigs(): Promise<DirectoryConfig[]> {
 
 export async function getActiveCombinations(): Promise<ActiveCombination[]> {
   return (await apiFetch<ActiveCombination[]>("/registry/active-combinations")) ?? [];
+}
+
+export async function getTaxonomy(): Promise<{ verticals: string[]; geos: string[] }> {
+  return (await apiFetch<{ verticals: string[]; geos: string[] }>("/registry/taxonomy")) ?? { verticals: [], geos: [] };
 }
 
 export async function triggerDiscovery(
@@ -714,6 +774,18 @@ export async function deleteDirectoryConfig(id: string): Promise<{ ok: boolean; 
   }
 }
 
+export interface SuppressionEntry {
+  id: string;
+  email: string;
+  campaign_id: string;
+  reason: "unsubscribed" | "manual";
+  added_at: string;
+}
+
+export async function getCampaignSuppressions(campaignId: string): Promise<SuppressionEntry[]> {
+  return (await apiFetch<SuppressionEntry[]>(`/suppression?campaign_id=${campaignId}`)) ?? [];
+}
+
 export async function getAnalyticsOverview(): Promise<AnalyticsOverview | null> {
   return apiFetch<AnalyticsOverview>("/analytics/overview");
 }
@@ -799,11 +871,78 @@ export async function resolveReply(id: string): Promise<boolean> {
   }
 }
 
+export async function getLeadsSummary(): Promise<LeadsSummaryGlobal> {
+  return (
+    (await apiFetch<LeadsSummaryGlobal>("/leads/summary")) ??
+    { total: 0, auto_queue: 0, rep_review: 0, pending: 0 }
+  );
+}
+
+export async function sendDraftNow(draftId: string): Promise<{ status: string; messageId: string | null } | { error: string }> {
+  try {
+    const res = await apiRequest(`${BASE}/api/v1/drafts/${draftId}/send`, { method: "POST" });
+    return await res.json() as { status: string; messageId: string | null } | { error: string };
+  } catch {
+    return { error: "Could not reach the API." };
+  }
+}
+
+
+export async function triggerSendNow(): Promise<{ ok: boolean; sent: number; blocked: number } | null> {
+  try {
+    const res = await apiRequest(`${BASE}/api/v1/workers/send-now`, { method: "POST" });
+    if (!res.ok) return null;
+    return res.json() as Promise<{ ok: boolean; sent: number; blocked: number }>;
+  } catch {
+    return null;
+  }
+}
+
 export async function triggerEnrichment(): Promise<{ queued: number } | null> {
   try {
     const res = await apiRequest(`${BASE}/api/v1/leads/enrich`, { method: "POST" });
     if (!res.ok) return null;
     return res.json() as Promise<{ queued: number }>;
+  } catch {
+    return null;
+  }
+}
+
+export interface SourceCoverage {
+  vertical: string;
+  geo: string;
+  source_count: number;
+}
+
+// Distinct (vertical, geo) pairs that have active registry sources, with counts.
+// Drives the leads-page scrape picker.
+export async function getSourceCoverage(): Promise<SourceCoverage[]> {
+  return (await apiFetch<SourceCoverage[]>("/registry/source-coverage")) ?? [];
+}
+
+export async function scrapeLeads(params: {
+  combos?: { vertical: string; geo: string }[];
+  urls?: string[];
+  scraper_type?: "cheerio" | "crawl4ai";
+}): Promise<{ queued: number } | null> {
+  try {
+    const res = await apiRequest(`${BASE}/api/v1/leads/scrape`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) return null;
+    return res.json() as Promise<{ queued: number }>;
+  } catch {
+    return null;
+  }
+}
+
+export async function scrapeRegistrySource(sourceId: string): Promise<{ status: string; source_name: string } | null> {
+  try {
+    const res = await apiRequest(`${BASE}/api/v1/registry/sources/${sourceId}/scrape`, { method: "POST" });
+    if (!res.ok) return null;
+    return res.json() as Promise<{ status: string; source_name: string }>;
   } catch {
     return null;
   }

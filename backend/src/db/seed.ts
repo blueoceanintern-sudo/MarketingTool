@@ -4,8 +4,7 @@ import postgres from "postgres";
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) throw new Error("DATABASE_URL is required");
 
-const sqlPath = new URL("./seed.sql", import.meta.url);
-const seedSql = readFileSync(sqlPath, "utf8");
+const seedSql = readFileSync(new URL("./seed.sql", import.meta.url), "utf8");
 
 const sql = postgres(connectionString);
 try {

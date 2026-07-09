@@ -19,8 +19,7 @@ const ATTEMPT_TO_TYPE: Record<number, TemplateType> = {
 };
 
 interface LeadContext {
-  firstName?: string;
-  lastName?: string;
+  name?: string;
   role?: string;
   companyName?: string;
   industry?: string;
@@ -247,7 +246,7 @@ async function scoreEmailsBatch(
 // ---------------------------------------------------------------------------
 
 function buildLeadBlock(lead: LeadContext): string {
-  const name = [lead.firstName, lead.lastName].filter(Boolean).join(" ") || "Unknown";
+  const name = lead.name || "Unknown";
   return `## Lead data
 - contact_name: ${name}
 - role: ${lead.role ?? "Unknown"}
@@ -343,15 +342,6 @@ export async function generateFollowUpBatch(requests: FollowUpRequest[]): Promis
     templatesByType.set(type, bucket);
   }
 
-  const templateByType = new Map<TemplateType, typeof templateRows[number]>();
-  for (const type of neededTypes) {
-    const pool = templatesByType.get(type);
-    if (!pool || pool.length === 0) throw new Error(`No active prompt template for type: ${type}`);
-    const selected = thompsonSample(pool);
-    if (!selected) throw new Error(`Thompson sampling failed for type: ${type}`);
-    templateByType.set(type, selected);
-  }
-
   const client = new Anthropic({ apiKey });
 
   const maxTokensByType: Record<TemplateType, number> = {
@@ -369,8 +359,11 @@ export async function generateFollowUpBatch(requests: FollowUpRequest[]): Promis
   const batch = await client.messages.batches.create({
     requests: sorted.map((req) => {
       const type = ATTEMPT_TO_TYPE[req.attemptNumber] ?? "followup_1";
-      const tmpl = templateByType.get(type)!;
-      const customId = `followup:${req.followUpId}`;
+      const pool = templatesByType.get(type);
+      if (!pool || pool.length === 0) throw new Error(`No active prompt template for type: ${type}`);
+      const tmpl = thompsonSample(pool);
+      if (!tmpl) throw new Error(`Thompson sampling failed for type: ${type}`);
+      const customId = `followup-${req.followUpId}`;
       requestTemplateMap.set(customId, tmpl.id);
       requestTypeMap.set(customId, type);
       return {
@@ -412,7 +405,7 @@ export async function generateFollowUpBatch(requests: FollowUpRequest[]): Promis
   // Score all generated emails in a separate call
   const scoreMap = await scoreEmailsBatch(
     generated.map(({ customId, subject, body }) => {
-      const req = requests.find((r) => `followup:${r.followUpId}` === customId)!;
+      const req = requests.find((r) => `followup-${r.followUpId}` === customId)!;
       return { key: customId, email: { subject, body }, lead: req.lead, campaign: req.campaign };
     }),
     client,
@@ -459,36 +452,36 @@ export async function generateDraftsBatch(requests: DraftRequest[]): Promise<Dra
     throw new Error("No active initial prompt template — run db:seed to insert templates");
   }
 
-  const template = thompsonSample(allTemplates);
-  if (!template) throw new Error("Thompson sampling returned no template");
   const client = new Anthropic({ apiKey });
 
   console.log(`[drafting] generating ${requests.length} draft(s)`);
 
-  // Call 1: generate emails
+  // Call 1: generate emails — each request independently samples a template
   const genSettled = await Promise.allSettled(
-    requests.map((req) =>
-      client.messages.create({
+    requests.map((req) => {
+      const template = thompsonSample(allTemplates);
+      if (!template) throw new Error("Thompson sampling returned no template");
+      return client.messages.create({
         model: "claude-haiku-4-5",
         max_tokens: 400,
         system: [{ type: "text" as const, text: template.systemPrompt, cache_control: { type: "ephemeral" as const } }],
         messages: [{ role: "user" as const, content: buildUserPrompt(req.lead, req.campaign) }],
-      }).then((msg) => ({ req, msg }))
-    ),
+      }).then((msg) => ({ req, msg, template }));
+    }),
   );
 
-  const generated: { req: DraftRequest; subject: string; body: string }[] = [];
+  const generated: { req: DraftRequest; subject: string; body: string; template: typeof allTemplates[number] }[] = [];
   for (const outcome of genSettled) {
     if (outcome.status === "rejected") {
       console.error(`[drafting] generation failed:`, outcome.reason);
       continue;
     }
-    const { req, msg } = outcome.value;
+    const { req, msg, template } = outcome.value;
     const text = msg.content.find((b) => b.type === "text");
     if (!text || text.type !== "text") continue;
     try {
       const { subject, body } = parseResponse(text.text);
-      generated.push({ req, subject, body });
+      generated.push({ req, subject, body, template });
     } catch (err) {
       console.error(`[drafting] failed to parse draft for lead ${outcome.value.req.leadId}:`, err);
     }
@@ -506,7 +499,7 @@ export async function generateDraftsBatch(requests: DraftRequest[]): Promise<Dra
   );
 
   const results: DraftResult[] = [];
-  for (const { req, subject, body } of generated) {
+  for (const { req, subject, body, template } of generated) {
     const wordCount = body.trim().split(/\s+/).length;
     const lengthCompliance = wordCount <= WORD_LIMIT.initial ? 25 : 0;
     const sub = scoreMap.get(req.leadId) ?? { painPointFit: 0, campaignAlignment: 0, personalisationQuality: 0 };

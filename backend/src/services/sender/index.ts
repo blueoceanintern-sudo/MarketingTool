@@ -1,6 +1,6 @@
-import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
+import { SESClient, SendRawEmailCommand } from "@aws-sdk/client-ses";
 import { db } from "../../db";
-import { suppressionList, emailDrafts, emailEvents, campaigns, leads, promptTemplates } from "../../db/schema";
+import { suppressionList, emailDrafts, emailEvents, campaigns, leads, promptTemplates, campaignLeads } from "../../db/schema";
 import { eq, and, isNotNull, count, gte, min, sql } from "drizzle-orm";
 
 import { buildEmailHtml } from "../../templates/outreachEmail";
@@ -86,8 +86,57 @@ export async function getTotalSent(): Promise<number> {
   return getTotalSentFromDB();
 }
 
-function getApiBase(): string {
-  return process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+function buildUnsubscribeUrl(leadId: string, campaignId: string): string {
+  // Route through the frontend (port 80, publicly open) rather than the
+  // backend directly (port 3001 is firewalled). The frontend /api/unsubscribe
+  // route proxies to localhost:3001 internally.
+  const base = process.env.FRONTEND_URL ?? "http://localhost:3000";
+  return `${base}/api/unsubscribe?id=${leadId}&campaign=${campaignId}`;
+}
+
+function wrapBase64(b64: string): string {
+  return b64.match(/.{1,76}/g)?.join("\r\n") ?? b64;
+}
+
+// Builds a raw MIME email with List-Unsubscribe headers, which Gmail and
+// Yahoo require for bulk mail since Feb 2024. SendEmailCommand does not
+// support custom headers — SendRawEmailCommand is required.
+function buildRawEmail(params: {
+  from: string;
+  to: string;
+  subject: string;
+  textBody: string;
+  htmlBody: string;
+  unsubscribeUrl: string;
+}): Uint8Array {
+  const boundary = `----=_Part_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const subjectEncoded = `=?UTF-8?B?${Buffer.from(params.subject).toString("base64")}?=`;
+
+  const lines = [
+    `From: ${params.from}`,
+    `To: ${params.to}`,
+    `Subject: ${subjectEncoded}`,
+    `MIME-Version: 1.0`,
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
+    `List-Unsubscribe: <${params.unsubscribeUrl}>`,
+    `List-Unsubscribe-Post: List-Unsubscribe=One-Click`,
+    ``,
+    `--${boundary}`,
+    `Content-Type: text/plain; charset=UTF-8`,
+    `Content-Transfer-Encoding: base64`,
+    ``,
+    wrapBase64(Buffer.from(params.textBody).toString("base64")),
+    ``,
+    `--${boundary}`,
+    `Content-Type: text/html; charset=UTF-8`,
+    `Content-Transfer-Encoding: base64`,
+    ``,
+    wrapBase64(Buffer.from(params.htmlBody).toString("base64")),
+    ``,
+    `--${boundary}--`,
+  ];
+
+  return Buffer.from(lines.join("\r\n"));
 }
 
 let sesClient: SESClient | null = null;
@@ -151,14 +200,6 @@ export async function sendDraft(payload: SendPayload): Promise<SendResult> {
     return { draftId, status: "blocked", reason: `campaign_status_${campaign.status}` };
   }
 
-  const fromAddress = process.env.AWS_SES_FROM_ADDRESS;
-  if (!fromAddress) return { draftId, status: "blocked", reason: "ses_not_configured" };
-
-  const apiBase = getApiBase();
-  const unsubscribeUrl = `${apiBase}/unsubscribe?id=${leadId}&campaign=${campaignId}`;
-  const textBody = `${draft.body}\n\nTo unsubscribe: ${unsubscribeUrl}`;
-  const htmlBody = buildEmailHtml(draft.body, leadId, apiBase, campaignId);
-
   // SES_DRY_RUN=true skips the actual SES call — use this to test the full
   // pipeline locally without AWS credentials.
   if (process.env.SES_DRY_RUN === "true") {
@@ -169,20 +210,29 @@ export async function sendDraft(payload: SendPayload): Promise<SendResult> {
       db.update(emailDrafts).set({ status: "sent" }).where(eq(emailDrafts.id, draftId)),
       db.update(leads).set({ lastContactedAt: now, lastDeliveredTemplateId: draft.templateId }).where(eq(leads.id, leadId)),
       db.update(promptTemplates).set({ sendCount: sql`${promptTemplates.sendCount} + 1` }).where(eq(promptTemplates.id, draft.templateId)),
+      db.update(campaignLeads).set({ status: "contacted" }).where(and(eq(campaignLeads.leadId, leadId), eq(campaignLeads.campaignId, campaignId))),
     ]);
     console.log(`[sender:dry-run] draft ${draftId} → ${toEmail} | subject: "${draft.subject}"`);
     return { draftId, status: "sent", messageId: fakeMessageId };
   }
 
-  const command = new SendEmailCommand({
-    Source: fromAddress,
-    Destination: { ToAddresses: [toEmail] },
-    Message: {
-      Subject: { Data: draft.subject, Charset: "UTF-8" },
-      Body: {
-        Text: { Data: textBody, Charset: "UTF-8" },
-        Html: { Data: htmlBody, Charset: "UTF-8" },
-      },
+  const fromAddress = process.env.AWS_SES_FROM_ADDRESS;
+  if (!fromAddress) return { draftId, status: "blocked", reason: "ses_not_configured" };
+
+  const unsubscribeUrl = buildUnsubscribeUrl(leadId, campaignId);
+  const textBody = `${draft.body}\n\nTo unsubscribe: ${unsubscribeUrl}`;
+  const htmlBody = buildEmailHtml(draft.body, unsubscribeUrl);
+
+  const command = new SendRawEmailCommand({
+    RawMessage: {
+      Data: buildRawEmail({
+        from: fromAddress,
+        to: toEmail,
+        subject: draft.subject,
+        textBody,
+        htmlBody,
+        unsubscribeUrl,
+      }),
     },
   });
 
@@ -196,6 +246,7 @@ export async function sendDraft(payload: SendPayload): Promise<SendResult> {
     db.update(emailDrafts).set({ status: "sent" }).where(eq(emailDrafts.id, draftId)),
     db.update(leads).set({ lastContactedAt: now, lastDeliveredTemplateId: draft.templateId }).where(eq(leads.id, leadId)),
     db.update(promptTemplates).set({ sendCount: sql`${promptTemplates.sendCount} + 1` }).where(eq(promptTemplates.id, draft.templateId)),
+    db.update(campaignLeads).set({ status: "contacted" }).where(and(eq(campaignLeads.leadId, leadId), eq(campaignLeads.campaignId, campaignId))),
   ]);
 
   return { draftId, status: "sent", messageId };
@@ -254,14 +305,6 @@ export async function sendFollowUpEmail(payload: FollowUpPayload): Promise<SendR
     return { draftId: originalDraftId, status: "blocked", reason: `campaign_status_${campaign.status}` };
   }
 
-  const fromAddress = process.env.AWS_SES_FROM_ADDRESS;
-  if (!fromAddress) return { draftId: originalDraftId, status: "blocked", reason: "ses_not_configured" };
-
-  const apiBase = getApiBase();
-  const unsubscribeUrl = `${apiBase}/unsubscribe?id=${leadId}&campaign=${campaignId}`;
-  const textBody = `${body}\n\nTo unsubscribe: ${unsubscribeUrl}`;
-  const htmlBody = buildEmailHtml(body, leadId, apiBase, campaignId);
-
   if (process.env.SES_DRY_RUN === "true") {
     const fakeMessageId = `dry-run-${Date.now()}`;
     const now = new Date();
@@ -271,6 +314,7 @@ export async function sendFollowUpEmail(payload: FollowUpPayload): Promise<SendR
     const updates: Promise<unknown>[] = [
       db.insert(emailEvents).values({ draftId: originalDraftId, leadId, sesMessageId: `<${fakeMessageId}@dry-run.local>`, sentAt: now }),
       db.update(leads).set(leadSet).where(eq(leads.id, leadId)),
+      db.update(campaignLeads).set({ status: "contacted" }).where(and(eq(campaignLeads.leadId, leadId), eq(campaignLeads.campaignId, campaignId))),
     ];
     if (templateId) {
       updates.push(db.update(promptTemplates).set({ sendCount: sql`${promptTemplates.sendCount} + 1` }).where(eq(promptTemplates.id, templateId)));
@@ -280,15 +324,23 @@ export async function sendFollowUpEmail(payload: FollowUpPayload): Promise<SendR
     return { draftId: originalDraftId, status: "sent", messageId: fakeMessageId };
   }
 
-  const command = new SendEmailCommand({
-    Source: fromAddress,
-    Destination: { ToAddresses: [toEmail] },
-    Message: {
-      Subject: { Data: subject, Charset: "UTF-8" },
-      Body: {
-        Text: { Data: textBody, Charset: "UTF-8" },
-        Html: { Data: htmlBody, Charset: "UTF-8" },
-      },
+  const fromAddress = process.env.AWS_SES_FROM_ADDRESS;
+  if (!fromAddress) return { draftId: originalDraftId, status: "blocked", reason: "ses_not_configured" };
+
+  const unsubscribeUrl = buildUnsubscribeUrl(leadId, campaignId);
+  const textBody = `${body}\n\nTo unsubscribe: ${unsubscribeUrl}`;
+  const htmlBody = buildEmailHtml(body, unsubscribeUrl);
+
+  const command = new SendRawEmailCommand({
+    RawMessage: {
+      Data: buildRawEmail({
+        from: fromAddress,
+        to: toEmail,
+        subject,
+        textBody,
+        htmlBody,
+        unsubscribeUrl,
+      }),
     },
   });
 
@@ -303,6 +355,7 @@ export async function sendFollowUpEmail(payload: FollowUpPayload): Promise<SendR
   const updates: Promise<unknown>[] = [
     db.insert(emailEvents).values({ draftId: originalDraftId, leadId, sesMessageId, sentAt: now }),
     db.update(leads).set(leadSet).where(eq(leads.id, leadId)),
+    db.update(campaignLeads).set({ status: "contacted" }).where(and(eq(campaignLeads.leadId, leadId), eq(campaignLeads.campaignId, campaignId))),
   ];
   if (templateId) {
     updates.push(db.update(promptTemplates).set({ sendCount: sql`${promptTemplates.sendCount} + 1` }).where(eq(promptTemplates.id, templateId)));

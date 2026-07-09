@@ -6,6 +6,7 @@ import { campaignOptions } from "@/lib/queries";
 import CampaignActions from "./campaign-actions";
 import CampaignDetails from "./campaign-details";
 import CampaignLeadsClient from "./campaign-leads-client";
+import CampaignSuppressionClient from "./campaign-suppression-client";
 
 interface Props {
   campaignId: string;
@@ -45,15 +46,24 @@ export default function CampaignDetailClient({ campaignId, leadsPage }: Props) {
             <p className="text-[13px] text-grey-500 mb-1">Total Leads</p>
             <h3 className="text-[28px] font-bold text-primary font-mono">{campaign.leads_count.toLocaleString()}</h3>
           </div>
-          <div className="bg-white p-6 rounded-lg shadow-[0_1px_3px_rgba(27,45,91,0.08)] border border-grey-100">
+          <Link
+            href={`/drafts?campaign=${campaignId}`}
+            className="bg-white p-6 rounded-lg shadow-[0_1px_3px_rgba(27,45,91,0.08)] border border-grey-100 hover:border-warning transition-colors block"
+          >
             <div className="flex justify-between items-start mb-4">
               <div className="p-2 bg-warning-bg text-warning rounded-lg">
                 <span className="material-symbols-outlined">edit_note</span>
               </div>
+              {campaign.drafts_pending > 0 && (
+                <span className="text-[11px] font-medium text-warning flex items-center gap-0.5">
+                  Review
+                  <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+                </span>
+              )}
             </div>
             <p className="text-[13px] text-grey-500 mb-1">Drafts Pending</p>
             <h3 className="text-[28px] font-bold text-primary font-mono">{campaign.drafts_pending}</h3>
-          </div>
+          </Link>
           <div className="bg-white p-6 rounded-lg shadow-[0_1px_3px_rgba(27,45,91,0.08)] border border-grey-100">
             <div className="flex justify-between items-start mb-4">
               <div className="p-2 bg-ocean-wash text-ocean-light rounded-lg">
@@ -80,6 +90,9 @@ export default function CampaignDetailClient({ campaignId, leadsPage }: Props) {
 
       {/* Leads — KPI tile + paginated table */}
       <CampaignLeadsClient campaignId={campaignId} initialPage={leadsPage} />
+
+      {/* Suppression list for this campaign */}
+      <CampaignSuppressionClient campaignId={campaignId} />
     </div>
   );
 }

@@ -1,8 +1,9 @@
 import { Hono } from "hono";
 import { db } from "../db";
-import { emailDrafts, leads, campaigns } from "../db/schema";
-import { count, eq, and } from "drizzle-orm";
+import { emailDrafts, leads, campaigns, riskFlags } from "../db/schema";
+import { count, eq, and, sql } from "drizzle-orm";
 import { logAudit } from "../services/audit/log";
+import { sendDraft } from "../services/sender";
 import type { AuthUser } from "../middleware/auth";
 
 function formatDraft(row: {
@@ -16,15 +17,14 @@ function formatDraft(row: {
   scoreBreakdown: { painPointFit: number; campaignAlignment: number; personalisationQuality: number; lengthCompliance: number } | null;
   status: string;
   createdAt: Date;
-  leadFirstName: string | null;
-  leadLastName: string | null;
+  leadName: string | null;
   leadRole: string | null;
   campaignName: string;
 }) {
   return {
     id: row.id,
     lead_id: row.leadId,
-    lead_name: [row.leadFirstName, row.leadLastName].filter(Boolean).join(" "),
+    lead_name: row.leadName ?? "",
     lead_role: row.leadRole ?? "",
     campaign_id: row.campaignId,
     campaign_name: row.campaignName,
@@ -51,8 +51,7 @@ async function getDraftWithJoins(draftId: string) {
       scoreBreakdown: emailDrafts.scoreBreakdown,
       status: emailDrafts.status,
       createdAt: emailDrafts.createdAt,
-      leadFirstName: leads.firstName,
-      leadLastName: leads.lastName,
+      leadName: leads.name,
       leadRole: leads.role,
       campaignName: campaigns.name,
     })
@@ -101,8 +100,7 @@ draftsRouter.get("/", async (c) => {
       scoreBreakdown: emailDrafts.scoreBreakdown,
       status: emailDrafts.status,
       createdAt: emailDrafts.createdAt,
-      leadFirstName: leads.firstName,
-      leadLastName: leads.lastName,
+      leadName: leads.name,
       leadRole: leads.role,
       campaignName: campaigns.name,
     })
@@ -136,8 +134,7 @@ draftsRouter.get("/queue", async (c) => {
       scoreBreakdown: emailDrafts.scoreBreakdown,
       status: emailDrafts.status,
       createdAt: emailDrafts.createdAt,
-      leadFirstName: leads.firstName,
-      leadLastName: leads.lastName,
+      leadName: leads.name,
       leadRole: leads.role,
       campaignName: campaigns.name,
     })
@@ -224,6 +221,65 @@ draftsRouter.patch("/:id/edit", async (c) => {
   const row = await getDraftWithJoins(draftId);
   if (!row) return c.json({ error: "Draft not found after update" }, 500);
   return c.json(formatDraft(row));
+});
+
+draftsRouter.post("/:id/send", async (c) => {
+  const draftId = c.req.param("id");
+
+  const [row] = await db
+    .select({
+      id: emailDrafts.id,
+      leadId: emailDrafts.leadId,
+      campaignId: emailDrafts.campaignId,
+      status: emailDrafts.status,
+      leadEmail: leads.email,
+      isVerified: leads.isVerified,
+    })
+    .from(emailDrafts)
+    .innerJoin(leads, eq(emailDrafts.leadId, leads.id))
+    .where(eq(emailDrafts.id, draftId))
+    .limit(1);
+
+  if (!row) return c.json({ error: "Draft not found" }, 404);
+  if (row.status !== "scheduled") {
+    return c.json({ error: `Cannot send a draft with status '${row.status}'` }, 409);
+  }
+
+  const [flag] = await db
+    .select({ id: riskFlags.id })
+    .from(riskFlags)
+    .where(eq(riskFlags.leadId, row.leadId))
+    .limit(1);
+
+  let result: Awaited<ReturnType<typeof sendDraft>>;
+  try {
+    result = await sendDraft({
+      draftId: row.id,
+      toEmail: row.leadEmail,
+      leadId: row.leadId,
+      campaignId: row.campaignId,
+      isVerified: row.isVerified,
+      hasRiskFlags: !!flag,
+    });
+  } catch (err) {
+    console.error(`[drafts:send] sendDraft threw for draft ${draftId}:`, err);
+    return c.json({ error: "Send failed due to an internal error" }, 500);
+  }
+
+  await logAudit({
+    actor: c.get("user"),
+    action: "draft.send",
+    targetId: draftId,
+    targetType: "email_draft",
+    metadata: { ...result },
+    ipAddress: c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? c.req.header("x-real-ip") ?? null,
+  });
+
+  if (result.status === "blocked") {
+    return c.json({ error: `Blocked: ${result.reason}` }, 422);
+  }
+
+  return c.json({ status: result.status, messageId: result.messageId ?? null });
 });
 
 function scoreBody(body: string): number {

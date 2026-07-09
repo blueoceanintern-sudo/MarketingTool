@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { db } from "../db";
-import { campaigns, campaignLeads, emailDrafts, emailEvents, scrapeJobs, sourceRegistry, normalizeVertical, normalizeGeo } from "../db/schema";
-import { eq, and, isNotNull, count } from "drizzle-orm";
+import { campaigns, campaignLeads, campaignLeadExclusions, leads, companies, emailDrafts, emailEvents, scrapeJobs, sourceRegistry, normalizeVertical, normalizeGeo } from "../db/schema";
+import { eq, and, isNotNull, count, inArray, sql } from "drizzle-orm";
 import { runScrapeJob } from "../services/scraping/runScrapeJob";
 import { generateDraftsForCampaign } from "../services/drafting/orchestrator";
 import { enrichLead } from "../services/enrichment/orchestrator";
@@ -49,7 +49,7 @@ function formatCampaign(row: typeof campaigns.$inferSelect, stats: Awaited<Retur
     id: row.id,
     name: row.name,
     vertical: row.vertical,
-    geography: row.geography.split(",").map((g) => g.trim()).filter(Boolean),
+    geography: row.geography.split("|").map((g) => g.trim()).filter(Boolean),
     company_size_target: row.companySizeTarget,
     status: row.status,
     description: row.description,
@@ -97,8 +97,8 @@ campaignsRouter.post("/", async (c) => {
     return c.json({ error: "name, vertical, geography, company_size_target are required" }, 400);
   }
 
-  const rawGeo = Array.isArray(body.geography) ? body.geography.join(",") : body.geography;
-  const geo = rawGeo.split(",").map((g) => normalizeGeo(g)).filter(Boolean).join(",");
+  const rawGeo = Array.isArray(body.geography) ? body.geography.join("|") : body.geography;
+  const geo = rawGeo.split("|").map((g) => normalizeGeo(g)).filter(Boolean).join("|");
   const sizeTarget = body.company_size_target as "small" | "medium" | "large" | "enterprise";
 
   const description = body.description?.trim() || null;
@@ -140,7 +140,7 @@ async function maybeAutoDiscover(
 ): Promise<DiscoveryStatus> {
   // Campaign geography is a comma-separated list — trigger discovery for
   // every geo independently so an SG+AU campaign auto-fills both pools.
-  const geos = geographyRaw.split(",").map((g) => g.trim()).filter(Boolean);
+  const geos = geographyRaw.split("|").map((g) => g.trim()).filter(Boolean);
   if (geos.length === 0) {
     return { status: "skipped_no_config", message: "Campaign has no geography to discover sources for." };
   }
@@ -175,6 +175,7 @@ async function maybeAutoDiscover(
       console.error(`[discovery] ${verticalNormalized}:${geo} failed:`, err);
     });
     outcomes.push({ geo, status: "triggered", domains: config.domains });
+
   }
 
   // Aggregate to a single DiscoveryStatus. Priority: triggered > skipped > seeded.
@@ -238,8 +239,8 @@ campaignsRouter.patch("/:id", async (c) => {
     updates.vertical = normalizeVertical(trimmed);
   }
   if (body.geography !== undefined) {
-    const rawGeo = Array.isArray(body.geography) ? body.geography.join(",") : body.geography;
-    const geo = rawGeo.split(",").map((g) => normalizeGeo(g)).filter(Boolean).join(",");
+    const rawGeo = Array.isArray(body.geography) ? body.geography.join("|") : body.geography;
+    const geo = rawGeo.split("|").map((g) => normalizeGeo(g)).filter(Boolean).join("|");
     if (!geo) return c.json({ error: "geography cannot be empty" }, 400);
     updates.geography = geo;
   }
@@ -331,6 +332,59 @@ campaignsRouter.post("/:id/scrape", async (c) => {
   });
 
   return c.json({ scrape_job_id: jobId, status: "queued" }, 201);
+});
+
+campaignsRouter.post("/:id/fetch-leads", async (c) => {
+  const campaignId = c.req.param("id");
+  const [campaign] = await db
+    .select()
+    .from(campaigns)
+    .where(eq(campaigns.id, campaignId))
+    .limit(1);
+  if (!campaign) return c.json({ error: "Campaign not found" }, 404);
+  if (campaign.status === "complete") {
+    return c.json({ error: "Cannot fetch leads for a completed campaign" }, 400);
+  }
+
+  const geos = campaign.geography.split("|").map(normalizeGeo).filter(Boolean);
+  const vertical = normalizeVertical(campaign.vertical);
+
+  // Match leads whose company was seeded with this campaign's vertical + geo
+  // at scrape time. Exclude leads already in this campaign or manually removed.
+  const matchingLeads = await db
+    .select({ id: leads.id })
+    .from(leads)
+    .innerJoin(companies, eq(leads.companyId, companies.id))
+    .where(
+      and(
+        eq(companies.industry, vertical),
+        geos.length > 0 ? inArray(companies.location, geos) : undefined,
+        eq(leads.routing, "auto_queue"),
+        sql`NOT EXISTS (
+          SELECT 1 FROM campaign_leads cl_sup
+          WHERE cl_sup.lead_id = ${leads.id}
+          AND cl_sup.status = 'suppressed'
+        )`,
+        sql`NOT EXISTS (
+          SELECT 1 FROM campaign_leads
+          WHERE campaign_leads.lead_id = ${leads.id}
+          AND campaign_leads.campaign_id = ${campaignId}::uuid
+        )`,
+        sql`NOT EXISTS (
+          SELECT 1 FROM campaign_lead_exclusions
+          WHERE campaign_lead_exclusions.lead_id = ${leads.id}
+          AND campaign_lead_exclusions.campaign_id = ${campaignId}::uuid
+        )`,
+      ),
+    );
+
+  if (matchingLeads.length === 0) return c.json({ added: 0 });
+
+  await db.insert(campaignLeads).values(
+    matchingLeads.map((l) => ({ leadId: l.id, campaignId, source: "fetch" })),
+  );
+
+  return c.json({ added: matchingLeads.length });
 });
 
 campaignsRouter.post("/:id/enrich", async (c) => {

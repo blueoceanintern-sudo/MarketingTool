@@ -1,5 +1,5 @@
 CREATE TYPE "public"."campaign_status" AS ENUM('draft', 'active', 'paused', 'complete');--> statement-breakpoint
-CREATE TYPE "public"."company_size" AS ENUM('small', 'medium', 'large', 'enterprise');--> statement-breakpoint
+CREATE TYPE "public"."company_size" AS ENUM('small', 'medium', 'large', 'enterprise', 'unknown');--> statement-breakpoint
 CREATE TYPE "public"."draft_status" AS ENUM('pending_review', 'approved', 'rejected', 'scheduled', 'sent');--> statement-breakpoint
 CREATE TYPE "public"."email_status" AS ENUM('verified', 'pattern_guessed', 'not_found');--> statement-breakpoint
 CREATE TYPE "public"."enrichment_routing" AS ENUM('auto_queue', 'rep_review');--> statement-breakpoint
@@ -35,6 +35,7 @@ CREATE TABLE "campaign_leads" (
 	"campaign_id" uuid NOT NULL,
 	"added_at" timestamp DEFAULT now() NOT NULL,
 	"source" text,
+	"status" "lead_status" DEFAULT 'new' NOT NULL,
 	CONSTRAINT "campaign_leads_lead_id_campaign_id_pk" PRIMARY KEY("lead_id","campaign_id")
 );
 --> statement-breakpoint
@@ -55,7 +56,7 @@ CREATE TABLE "campaigns" (
 CREATE TABLE "companies" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"name" text NOT NULL,
-	"industry" text NOT NULL,
+	"industry" text,
 	"company_size" "company_size" NOT NULL,
 	"location" text NOT NULL,
 	"source" text,
@@ -73,6 +74,17 @@ CREATE TABLE "demos" (
 	"created_at" timestamp DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE "directory_configs" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"vertical" text NOT NULL,
+	"geo" text NOT NULL,
+	"query" text NOT NULL,
+	"domains" text[] NOT NULL,
+	"created_at" timestamp DEFAULT now() NOT NULL,
+	"updated_at" timestamp DEFAULT now() NOT NULL,
+	CONSTRAINT "directory_configs_vertical_geo_unique" UNIQUE("vertical","geo")
+);
+--> statement-breakpoint
 CREATE TABLE "email_drafts" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"lead_id" uuid NOT NULL,
@@ -81,6 +93,7 @@ CREATE TABLE "email_drafts" (
 	"subject" text NOT NULL,
 	"body" text NOT NULL,
 	"confidence_score" real NOT NULL,
+	"score_breakdown" jsonb,
 	"status" "draft_status" DEFAULT 'pending_review' NOT NULL,
 	"approved_by" text,
 	"approved_at" timestamp,
@@ -125,24 +138,24 @@ CREATE TABLE "follow_ups" (
 	"draft_id" uuid,
 	"subject" text,
 	"body" text,
-	"angle_tag" text
+	"angle_tag" text,
+	"template_id" uuid
 );
 --> statement-breakpoint
 CREATE TABLE "leads" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"company_id" uuid NOT NULL,
-	"first_name" text,
-	"last_name" text,
+	"name" text,
 	"email" text NOT NULL,
 	"role" text,
 	"is_verified" boolean DEFAULT false NOT NULL,
-	"status" "lead_status" DEFAULT 'new' NOT NULL,
 	"email_status" "email_status",
 	"enrichment_source" "enrichment_source",
 	"routing" "enrichment_routing",
 	"enriched_at" timestamp,
 	"scraper_used" "scraper_type",
 	"last_contacted_at" timestamp with time zone,
+	"last_delivered_template_id" uuid,
 	"created_at" timestamp DEFAULT now() NOT NULL,
 	"updated_at" timestamp DEFAULT now() NOT NULL,
 	CONSTRAINT "leads_email_unique" UNIQUE("email")
@@ -158,6 +171,18 @@ CREATE TABLE "prompt_templates" (
 	"active" boolean DEFAULT true NOT NULL,
 	"parent_template_id" uuid,
 	"created_by" text DEFAULT 'user' NOT NULL,
+	"generation_depth" integer DEFAULT 0 NOT NULL,
+	"send_count" integer DEFAULT 0 NOT NULL,
+	"positive_intent_count" integer DEFAULT 0 NOT NULL,
+	"negative_reply_count" integer DEFAULT 0 NOT NULL,
+	"spam_complaint_count" integer DEFAULT 0 NOT NULL,
+	"mutation_mode" text,
+	"parent_persuasion_strategy" text,
+	"child_persuasion_strategy" text,
+	"dimensions_changed" jsonb,
+	"mutation_distance" text,
+	"mutation_reason" text,
+	"hypothesis_tested" text,
 	"created_at" timestamp DEFAULT now() NOT NULL,
 	"updated_at" timestamp DEFAULT now() NOT NULL
 );
@@ -235,7 +260,9 @@ ALTER TABLE "enrichment_records" ADD CONSTRAINT "enrichment_records_campaign_id_
 ALTER TABLE "follow_ups" ADD CONSTRAINT "follow_ups_lead_id_leads_id_fk" FOREIGN KEY ("lead_id") REFERENCES "public"."leads"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "follow_ups" ADD CONSTRAINT "follow_ups_campaign_id_campaigns_id_fk" FOREIGN KEY ("campaign_id") REFERENCES "public"."campaigns"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "follow_ups" ADD CONSTRAINT "follow_ups_draft_id_email_drafts_id_fk" FOREIGN KEY ("draft_id") REFERENCES "public"."email_drafts"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "follow_ups" ADD CONSTRAINT "follow_ups_template_id_prompt_templates_id_fk" FOREIGN KEY ("template_id") REFERENCES "public"."prompt_templates"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "leads" ADD CONSTRAINT "leads_company_id_companies_id_fk" FOREIGN KEY ("company_id") REFERENCES "public"."companies"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "leads" ADD CONSTRAINT "leads_last_delivered_template_id_prompt_templates_id_fk" FOREIGN KEY ("last_delivered_template_id") REFERENCES "public"."prompt_templates"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "replies" ADD CONSTRAINT "replies_email_event_id_email_events_id_fk" FOREIGN KEY ("email_event_id") REFERENCES "public"."email_events"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "risk_flags" ADD CONSTRAINT "risk_flags_lead_id_leads_id_fk" FOREIGN KEY ("lead_id") REFERENCES "public"."leads"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "scrape_jobs" ADD CONSTRAINT "scrape_jobs_campaign_id_campaigns_id_fk" FOREIGN KEY ("campaign_id") REFERENCES "public"."campaigns"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
