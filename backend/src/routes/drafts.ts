@@ -155,7 +155,7 @@ draftsRouter.patch("/:id/approve", async (c) => {
     return c.json({ error: `Cannot approve a draft with status '${draft.status}'` }, 409);
   }
 
-  await db.update(emailDrafts).set({ status: "scheduled" }).where(eq(emailDrafts.id, draftId));
+  await db.update(emailDrafts).set({ status: "scheduled", approvedBy: c.get("user").email }).where(eq(emailDrafts.id, draftId));
   await logAudit({
     actor: c.get("user"),
     action: "draft.approve",

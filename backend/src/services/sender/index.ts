@@ -221,7 +221,13 @@ export async function sendDraft(payload: SendPayload): Promise<SendResult> {
 
   const unsubscribeUrl = buildUnsubscribeUrl(leadId, campaignId);
   const textBody = `${draft.body}\n\nTo unsubscribe: ${unsubscribeUrl}`;
-  const htmlBody = buildEmailHtml(draft.body, unsubscribeUrl);
+  const htmlBody = buildEmailHtml({
+    subject: draft.subject,
+    body: draft.body,
+    unsubscribeUrl,
+    senderEmail: draft.approvedBy,
+    bookingUrl: process.env.BOOKING_URL,
+  });
 
   const command = new SendRawEmailCommand({
     RawMessage: {
@@ -329,7 +335,21 @@ export async function sendFollowUpEmail(payload: FollowUpPayload): Promise<SendR
 
   const unsubscribeUrl = buildUnsubscribeUrl(leadId, campaignId);
   const textBody = `${body}\n\nTo unsubscribe: ${unsubscribeUrl}`;
-  const htmlBody = buildEmailHtml(body, unsubscribeUrl);
+
+  // Reuse the original draft's approver for signature continuity across the thread.
+  const [originalDraft] = await db
+    .select({ approvedBy: emailDrafts.approvedBy })
+    .from(emailDrafts)
+    .where(eq(emailDrafts.id, originalDraftId))
+    .limit(1);
+
+  const htmlBody = buildEmailHtml({
+    subject,
+    body,
+    unsubscribeUrl,
+    senderEmail: originalDraft?.approvedBy,
+    bookingUrl: process.env.BOOKING_URL,
+  });
 
   const command = new SendRawEmailCommand({
     RawMessage: {

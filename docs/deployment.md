@@ -49,6 +49,10 @@ SES_DRY_RUN=false                # set to 'true' to skip the actual SES call and
 
 MUTATION_NOTIFY_WEBHOOK_URL=     # optional — if set, mutation-runner posts a JSON payload here after each new template
                                  # variant is created. Use for Slack/Discord alerts. Leave blank to disable.
+
+BOOKING_URL=                     # optional — scheduling/booking page link. When set, outbound emails render a
+                                 # "Book a time to chat" CTA button (see backend/src/templates/outreachEmail.ts).
+                                 # Leave blank to omit the button entirely.
 ```
 
 ## Local Development (current layout)
