@@ -87,8 +87,8 @@ export function LeadEnrichmentDrawer({ lead, onClose }: { lead: Lead; onClose: (
             {lead.company_industry && lead.company_industry !== "general" && (
               <Field label="Vertical" value={lead.company_industry} />
             )}
-            {lead.company_location && lead.company_location !== "unknown" && (
-              <Field label="Geo" value={lead.company_location} />
+            {lead.company_location && (
+              <Field label="Geo" value={lead.company_location.name} />
             )}
             <div className="flex justify-between text-[13px] gap-4">
               <span className="text-grey-500 whitespace-nowrap">Status</span>

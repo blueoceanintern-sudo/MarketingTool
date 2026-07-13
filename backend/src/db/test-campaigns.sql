@@ -3,11 +3,19 @@
 -- Dev / test campaigns — three distinct verticals, geos, and personas.
 -- ---------------------------------------------------------------------------
 
-INSERT INTO campaigns (name, vertical, geography, company_size_target, status, description, pain_points, call_to_action)
+-- Standalone-runnable: bootstrap the same 3 target-market geo_places rows as
+-- seed.sql (ON CONFLICT-safe) in case this script runs without seed.sql first.
+INSERT INTO geo_places (geoname_id, name, ascii_name, country_code, feature_code)
+VALUES
+  (1880251, 'Singapore', 'Singapore', 'SG', 'PCLI'),
+  (2077456, 'Australia', 'Australia', 'AU', 'PCLI'),
+  (6252001, 'United States', 'United States', 'US', 'PCLI')
+ON CONFLICT (geoname_id) DO NOTHING;
+
+INSERT INTO campaigns (name, vertical, company_size_target, status, description, pain_points, call_to_action)
 SELECT
   'AU Healthcare — Patient Enquiry Automation',
   'healthcare',
-  'AU',
   'large',
   'active',
   'CompanyBrain sits on top of a hospital or clinic''s patient-facing knowledge base — appointment booking procedures, referral pathways, billing FAQs, specialist wait times — and answers routine patient enquiries instantly, without routing every call through reception or admin staff.',
@@ -21,11 +29,14 @@ WHERE NOT EXISTS (
   SELECT 1 FROM campaigns WHERE name = 'AU Healthcare — Patient Enquiry Automation'
 );
 
-INSERT INTO campaigns (name, vertical, geography, company_size_target, status, description, pain_points, call_to_action)
+INSERT INTO campaign_geos (campaign_id, geoname_id)
+SELECT id, 2077456 FROM campaigns WHERE name = 'AU Healthcare — Patient Enquiry Automation'
+ON CONFLICT DO NOTHING;
+
+INSERT INTO campaigns (name, vertical, company_size_target, status, description, pain_points, call_to_action)
 SELECT
   'US SaaS — Engineering Team Knowledge Base',
   'technology',
-  'US',
   'medium',
   'active',
   'CompanyBrain indexes a software company''s internal engineering documentation — runbooks, incident post-mortems, architecture decision records, onboarding guides — so engineers get answers instantly without interrupting senior staff or digging through stale Confluence pages.',
@@ -39,11 +50,14 @@ WHERE NOT EXISTS (
   SELECT 1 FROM campaigns WHERE name = 'US SaaS — Engineering Team Knowledge Base'
 );
 
-INSERT INTO campaigns (name, vertical, geography, company_size_target, status, description, pain_points, call_to_action)
+INSERT INTO campaign_geos (campaign_id, geoname_id)
+SELECT id, 6252001 FROM campaigns WHERE name = 'US SaaS — Engineering Team Knowledge Base'
+ON CONFLICT DO NOTHING;
+
+INSERT INTO campaigns (name, vertical, company_size_target, status, description, pain_points, call_to_action)
 SELECT
   'SG Hospitality — Guest Services AI',
   'hospitality',
-  'SG',
   'medium',
   'active',
   'CompanyBrain sits on top of a hotel or serviced apartment''s guest information — check-in procedures, amenity bookings, dining options, local recommendations, property policies — and answers guest enquiries instantly via chat, reducing pressure on front desk staff during peak periods.',
@@ -56,6 +70,10 @@ SELECT
 WHERE NOT EXISTS (
   SELECT 1 FROM campaigns WHERE name = 'SG Hospitality — Guest Services AI'
 );
+
+INSERT INTO campaign_geos (campaign_id, geoname_id)
+SELECT id, 1880251 FROM campaigns WHERE name = 'SG Hospitality — Guest Services AI'
+ON CONFLICT DO NOTHING;
 
 -- ---------------------------------------------------------------------------
 -- Dev / test leads — one per campaign above.

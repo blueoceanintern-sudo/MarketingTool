@@ -1,6 +1,6 @@
 import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
 import { db } from "../../db";
-import { campaigns, campaignLeads, companies, emailDrafts, leads, suppressionList } from "../../db/schema";
+import { campaigns, campaignLeads, companies, emailDrafts, geoPlaces, leads, suppressionList } from "../../db/schema";
 import { generateDraftsBatch, type CampaignContext } from "./index";
 import { getTotalSent } from "../sender";
 
@@ -57,11 +57,12 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
       companyName: companies.name,
       industry: companies.industry,
       companySize: companies.companySize,
-      location: companies.location,
+      location: geoPlaces.name,
     })
     .from(campaignLeads)
     .innerJoin(leads, eq(campaignLeads.leadId, leads.id))
     .innerJoin(companies, eq(leads.companyId, companies.id))
+    .leftJoin(geoPlaces, eq(companies.geonameId, geoPlaces.geonameId))
     .where(and(...conditions));
 
   if (eligible.length === 0) {
@@ -90,7 +91,7 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
       companyName: lead.companyName,
       industry: lead.industry ?? undefined,
       companySize: lead.companySize,
-      location: lead.location,
+      location: lead.location ?? undefined,
     },
     campaign: campaignContext,
   }));

@@ -4,7 +4,12 @@ import type {
   EnrichmentPipelineFlags,
 } from "../../db/schema/tables";
 
-export type Market = "SG" | "AU" | "US";
+// UNKNOWN covers companies outside the three target markets, and companies
+// whose location hasn't been resolved to a geoname_id yet (see
+// backfill-company-geo.ts) — we no longer default an unresolved location to
+// "US", since that silently applied CAN-SPAM logic to a lead a different
+// legal regime (PDPA/Privacy Act) might actually apply to.
+export type Market = "SG" | "AU" | "US" | "UNKNOWN";
 export type EmailStatus = "verified" | "pattern_guessed" | "not_found";
 export type EnrichmentSource = "registry" | "cowork_claude" | "snovio" | "manual";
 export type EnrichmentRouting = "auto_queue" | "rep_review";

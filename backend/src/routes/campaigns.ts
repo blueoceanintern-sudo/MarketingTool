@@ -1,11 +1,12 @@
 import { Hono } from "hono";
 import { db } from "../db";
-import { campaigns, campaignLeads, campaignLeadExclusions, leads, companies, emailDrafts, emailEvents, scrapeJobs, sourceRegistry, normalizeVertical, normalizeGeo } from "../db/schema";
-import { eq, and, isNotNull, count, inArray, sql } from "drizzle-orm";
+import { campaigns, campaignGeos, campaignLeads, campaignLeadExclusions, geoPlaces, leads, companies, emailDrafts, emailEvents, scrapeJobs, sourceRegistry, normalizeVertical } from "../db/schema";
+import { eq, and, or, isNotNull, count, inArray, sql } from "drizzle-orm";
 import { runScrapeJob } from "../services/scraping/runScrapeJob";
 import { generateDraftsForCampaign } from "../services/drafting/orchestrator";
 import { enrichLead } from "../services/enrichment/orchestrator";
 import { discoverSources, getDirectoryConfig } from "../services/sourceRegistry";
+import { getGeoPlaces, type GeoPlace } from "../services/geoPlaces";
 import { emitJobEvent } from "../services/events";
 
 type CampaignStatus = "draft" | "active" | "paused" | "complete";
@@ -44,12 +45,31 @@ async function computeStats(campaignId: string) {
   };
 }
 
-function formatCampaign(row: typeof campaigns.$inferSelect, stats: Awaited<ReturnType<typeof computeStats>>) {
+// Fetches the GeoNames places targeted by one or more campaigns in a single
+// query, keyed by campaignId — avoids an N+1 when formatting a list.
+async function getCampaignGeoPlaces(campaignIds: string[]): Promise<Map<string, GeoPlace[]>> {
+  if (campaignIds.length === 0) return new Map();
+  const rows = await db
+    .select({ campaignId: campaignGeos.campaignId, place: geoPlaces })
+    .from(campaignGeos)
+    .innerJoin(geoPlaces, eq(campaignGeos.geonameId, geoPlaces.geonameId))
+    .where(inArray(campaignGeos.campaignId, campaignIds));
+
+  const byCampaign = new Map<string, GeoPlace[]>();
+  for (const { campaignId, place } of rows) {
+    const list = byCampaign.get(campaignId) ?? [];
+    list.push(place);
+    byCampaign.set(campaignId, list);
+  }
+  return byCampaign;
+}
+
+function formatCampaign(row: typeof campaigns.$inferSelect, stats: Awaited<ReturnType<typeof computeStats>>, places: GeoPlace[]) {
   return {
     id: row.id,
     name: row.name,
     vertical: row.vertical,
-    geography: row.geography.split("|").map((g) => g.trim()).filter(Boolean),
+    geographies: places.map((p) => ({ geoname_id: p.geonameId, name: p.name, country_code: p.countryCode, admin1_name: p.admin1Name })),
     company_size_target: row.companySizeTarget,
     status: row.status,
     description: row.description,
@@ -65,8 +85,9 @@ export const campaignsRouter = new Hono();
 
 campaignsRouter.get("/", async (c) => {
   const rows = await db.select().from(campaigns).orderBy(campaigns.createdAt);
+  const geosByCampaign = await getCampaignGeoPlaces(rows.map((r) => r.id));
   const result = await Promise.all(
-    rows.map(async (row) => formatCampaign(row, await computeStats(row.id)))
+    rows.map(async (row) => formatCampaign(row, await computeStats(row.id), geosByCampaign.get(row.id) ?? []))
   );
   return c.json(result);
 });
@@ -78,14 +99,15 @@ campaignsRouter.get("/:id", async (c) => {
     .where(eq(campaigns.id, c.req.param("id")))
     .limit(1);
   if (!row) return c.json({ error: "Campaign not found" }, 404);
-  return c.json(formatCampaign(row, await computeStats(row.id)));
+  const geosByCampaign = await getCampaignGeoPlaces([row.id]);
+  return c.json(formatCampaign(row, await computeStats(row.id), geosByCampaign.get(row.id) ?? []));
 });
 
 campaignsRouter.post("/", async (c) => {
   const body = await c.req.json<{
     name?: string;
     vertical?: string;
-    geography?: string | string[];
+    geoname_ids?: number[];
     company_size_target?: string;
     status?: CampaignStatus;
     description?: string | null;
@@ -93,12 +115,16 @@ campaignsRouter.post("/", async (c) => {
     call_to_action?: string | null;
   }>();
 
-  if (!body.name || !body.vertical || !body.geography || !body.company_size_target) {
-    return c.json({ error: "name, vertical, geography, company_size_target are required" }, 400);
+  if (!body.name || !body.vertical || !body.geoname_ids?.length || !body.company_size_target) {
+    return c.json({ error: "name, vertical, geoname_ids, company_size_target are required" }, 400);
   }
 
-  const rawGeo = Array.isArray(body.geography) ? body.geography.join("|") : body.geography;
-  const geo = rawGeo.split("|").map((g) => normalizeGeo(g)).filter(Boolean).join("|");
+  const geonameIds = Array.from(new Set(body.geoname_ids));
+  const places = await getGeoPlaces(geonameIds);
+  if (places.length !== geonameIds.length) {
+    return c.json({ error: "One or more geoname_ids are unknown" }, 400);
+  }
+
   const sizeTarget = body.company_size_target as "small" | "medium" | "large" | "enterprise";
 
   const description = body.description?.trim() || null;
@@ -112,7 +138,6 @@ campaignsRouter.post("/", async (c) => {
     .values({
       name: body.name,
       vertical: normalizeVertical(body.vertical),
-      geography: geo,
       companySizeTarget: sizeTarget,
       status: body.status ?? "draft",
       description,
@@ -121,9 +146,11 @@ campaignsRouter.post("/", async (c) => {
     })
     .returning();
 
-  const discovery = await maybeAutoDiscover(row!.id, row!.vertical, row!.geography);
+  await db.insert(campaignGeos).values(geonameIds.map((geonameId) => ({ campaignId: row!.id, geonameId })));
 
-  return c.json({ ...formatCampaign(row!, await computeStats(row!.id)), discovery }, 201);
+  const discovery = await maybeAutoDiscover(row!.id, row!.vertical, geonameIds);
+
+  return c.json({ ...formatCampaign(row!, await computeStats(row!.id), places), discovery }, 201);
 });
 
 // Auto-discovery contract returned to the client on campaign create. The UI
@@ -136,14 +163,14 @@ type DiscoveryStatus =
 async function maybeAutoDiscover(
   campaignId: string,
   verticalNormalized: string,
-  geographyRaw: string,
+  geonameIds: number[],
 ): Promise<DiscoveryStatus> {
-  // Campaign geography is a comma-separated list — trigger discovery for
-  // every geo independently so an SG+AU campaign auto-fills both pools.
-  const geos = geographyRaw.split("|").map((g) => g.trim()).filter(Boolean);
-  if (geos.length === 0) {
+  if (geonameIds.length === 0) {
     return { status: "skipped_no_config", message: "Campaign has no geography to discover sources for." };
   }
+
+  const places = await getGeoPlaces(geonameIds);
+  const nameById = new Map(places.map((p) => [p.geonameId, p.name]));
 
   type PerGeoOutcome = {
     geo: string;
@@ -152,18 +179,21 @@ async function maybeAutoDiscover(
   };
   const outcomes: PerGeoOutcome[] = [];
 
-  for (const geo of geos) {
+  // Trigger discovery for every geo independently so an SG+AU campaign
+  // auto-fills both pools.
+  for (const geonameId of geonameIds) {
+    const geo = nameById.get(geonameId) ?? String(geonameId);
     const [existing] = await db
       .select({ id: sourceRegistry.id })
       .from(sourceRegistry)
-      .where(and(eq(sourceRegistry.vertical, verticalNormalized), eq(sourceRegistry.geo, geo)))
+      .where(and(eq(sourceRegistry.vertical, verticalNormalized), eq(sourceRegistry.geonameId, geonameId)))
       .limit(1);
     if (existing) {
       outcomes.push({ geo, status: "already_seeded", domains: [] });
       continue;
     }
 
-    const config = await getDirectoryConfig(verticalNormalized, geo);
+    const config = await getDirectoryConfig(verticalNormalized, geonameId);
     if (!config) {
       outcomes.push({ geo, status: "skipped_no_config", domains: [] });
       continue;
@@ -171,7 +201,7 @@ async function maybeAutoDiscover(
 
     // Fire-and-forget — Tavily + HEAD checks take ~10–30s per geo, run
     // independently so one slow domain doesn't block the others.
-    void discoverSources(verticalNormalized, geo, campaignId).catch((err) => {
+    void discoverSources(verticalNormalized, geonameId, campaignId).catch((err) => {
       console.error(`[discovery] ${verticalNormalized}:${geo} failed:`, err);
     });
     outcomes.push({ geo, status: "triggered", domains: config.domains });
@@ -204,7 +234,7 @@ async function maybeAutoDiscover(
 
   return {
     status: "already_seeded",
-    message: `Source pool already exists for ${verticalNormalized} in ${geos.join(", ")}.`,
+    message: `Source pool already exists for ${verticalNormalized} in ${outcomes.map((o) => o.geo).join(", ")}.`,
   };
 }
 
@@ -219,7 +249,7 @@ campaignsRouter.patch("/:id", async (c) => {
   const body = await c.req.json<{
     name?: string;
     vertical?: string;
-    geography?: string | string[];
+    geoname_ids?: number[];
     company_size_target?: string;
     description?: string | null;
     pain_points?: string[] | null;
@@ -238,11 +268,14 @@ campaignsRouter.patch("/:id", async (c) => {
     if (!trimmed) return c.json({ error: "vertical cannot be empty" }, 400);
     updates.vertical = normalizeVertical(trimmed);
   }
-  if (body.geography !== undefined) {
-    const rawGeo = Array.isArray(body.geography) ? body.geography.join("|") : body.geography;
-    const geo = rawGeo.split("|").map((g) => normalizeGeo(g)).filter(Boolean).join("|");
-    if (!geo) return c.json({ error: "geography cannot be empty" }, 400);
-    updates.geography = geo;
+  let newGeonameIds: number[] | undefined;
+  if (body.geoname_ids !== undefined) {
+    if (!body.geoname_ids.length) return c.json({ error: "geoname_ids cannot be empty" }, 400);
+    newGeonameIds = Array.from(new Set(body.geoname_ids));
+    const places = await getGeoPlaces(newGeonameIds);
+    if (places.length !== newGeonameIds.length) {
+      return c.json({ error: "One or more geoname_ids are unknown" }, 400);
+    }
   }
   if (body.company_size_target !== undefined) {
     const valid = ["small", "medium", "large", "enterprise"] as const;
@@ -265,7 +298,14 @@ campaignsRouter.patch("/:id", async (c) => {
   }
 
   const [updated] = await db.update(campaigns).set(updates).where(eq(campaigns.id, row.id)).returning();
-  return c.json(formatCampaign(updated!, await computeStats(updated!.id)));
+
+  if (newGeonameIds !== undefined) {
+    await db.delete(campaignGeos).where(eq(campaignGeos.campaignId, row.id));
+    await db.insert(campaignGeos).values(newGeonameIds.map((geonameId) => ({ campaignId: row.id, geonameId })));
+  }
+
+  const places = (await getCampaignGeoPlaces([updated!.id])).get(updated!.id) ?? [];
+  return c.json(formatCampaign(updated!, await computeStats(updated!.id), places));
 });
 
 const ALLOWED_TRANSITIONS: Record<CampaignStatus, CampaignStatus[]> = {
@@ -303,7 +343,8 @@ campaignsRouter.patch("/:id/status", async (c) => {
     .where(eq(campaigns.id, row.id))
     .returning();
 
-  return c.json(formatCampaign(updated!, await computeStats(updated!.id)));
+  const places = (await getCampaignGeoPlaces([updated!.id])).get(updated!.id) ?? [];
+  return c.json(formatCampaign(updated!, await computeStats(updated!.id), places));
 });
 
 campaignsRouter.post("/:id/scrape", async (c) => {
@@ -346,7 +387,29 @@ campaignsRouter.post("/:id/fetch-leads", async (c) => {
     return c.json({ error: "Cannot fetch leads for a completed campaign" }, 400);
   }
 
-  const geos = campaign.geography.split("|").map(normalizeGeo).filter(Boolean);
+  // Resolve this campaign's targeted places, then match a company's place
+  // against each target at the target's own granularity — a country target
+  // matches any company in that country, a region target matches only
+  // companies in that region, a city target matches only that exact city.
+  // Matching everything down to country code alone (the previous approach)
+  // meant a region-level target like "New York, US" pulled in every US
+  // company regardless of state. Companies whose location was never
+  // resolved to a geoname_id (legacy free-text rows — see
+  // backfill-company-geo.ts) are excluded by the inner join rather than
+  // guessed at.
+  const targetPlaces = await db
+    .select({ geonameId: geoPlaces.geonameId, countryCode: geoPlaces.countryCode, admin1Code: geoPlaces.admin1Code, featureCode: geoPlaces.featureCode })
+    .from(campaignGeos)
+    .innerJoin(geoPlaces, eq(campaignGeos.geonameId, geoPlaces.geonameId))
+    .where(eq(campaignGeos.campaignId, campaignId));
+
+  const geoConds = targetPlaces.map((t) =>
+    t.featureCode === "PCLI"
+      ? eq(geoPlaces.countryCode, t.countryCode)
+      : t.featureCode === "ADM1"
+        ? and(eq(geoPlaces.countryCode, t.countryCode), eq(geoPlaces.admin1Code, t.admin1Code!))
+        : eq(geoPlaces.geonameId, t.geonameId),
+  );
   const vertical = normalizeVertical(campaign.vertical);
 
   // Match leads whose company was seeded with this campaign's vertical + geo
@@ -355,10 +418,11 @@ campaignsRouter.post("/:id/fetch-leads", async (c) => {
     .select({ id: leads.id })
     .from(leads)
     .innerJoin(companies, eq(leads.companyId, companies.id))
+    .innerJoin(geoPlaces, eq(companies.geonameId, geoPlaces.geonameId))
     .where(
       and(
         eq(companies.industry, vertical),
-        geos.length > 0 ? inArray(companies.location, geos) : undefined,
+        geoConds.length > 0 ? or(...geoConds) : undefined,
         eq(leads.routing, "auto_queue"),
         sql`NOT EXISTS (
           SELECT 1 FROM campaign_leads cl_sup

@@ -56,6 +56,40 @@ export interface LeadsSummaryGlobal {
 
 export type PaginatedLeads = Paginated<Lead> & { summary: LeadsSummary };
 
+// A GeoNames place as referenced from another entity (campaign, source, etc).
+export interface GeoRef {
+  geoname_id: number;
+  name: string;
+  country_code: string;
+  admin1_name: string | null;
+}
+
+// Lighter display-only label — used where the entity already carries its own
+// geoname_id column and only needs the place's name/country for rendering.
+export interface GeoLabel {
+  name: string;
+  country_code: string;
+  admin1_name?: string | null;
+}
+
+// A GeoLabel plus its geoname_id — used for filter facets, where the id is
+// needed to build the filter query but the full GeoRef shape isn't returned.
+export type GeoOption = GeoLabel & { geoname_id: number };
+
+// A GeoNames place as returned from search — includes feature_code so the UI
+// can distinguish countries/regions/cities in the results list.
+export interface GeoPlace extends GeoRef {
+  feature_code: string;
+}
+
+export async function searchGeoPlaces(query: string, countryCode?: string): Promise<GeoPlace[]> {
+  const q = new URLSearchParams();
+  if (query) q.set("q", query);
+  if (countryCode) q.set("country", countryCode);
+  const result = await apiFetch<{ results: GeoPlace[] }>(`/geo/search?${q.toString()}`);
+  return result?.results ?? [];
+}
+
 export type CampaignStatus = "draft" | "active" | "paused" | "complete";
 export type LeadStatus = "new" | "contacted" | "replied" | "converted" | "suppressed";
 export type DraftStatus = "pending_review" | "approved" | "rejected" | "scheduled" | "sent";
@@ -66,7 +100,7 @@ export interface Campaign {
   id: string;
   name: string;
   vertical: string;
-  geography: string[];
+  geographies: GeoRef[];
   company_size_target: string;
   status: CampaignStatus;
   description: string | null;
@@ -99,7 +133,9 @@ export interface Lead {
   company_name: string;
   company_source: string | null;
   company_industry: string | null;
-  company_location: string | null;
+  // null when the company's location hasn't been resolved to a geoname_id
+  // yet (legacy free-text row on the backend).
+  company_location: GeoRef | null;
   campaigns: { id: string; name: string; status: LeadStatus }[];
   created_at: string;
 }
@@ -230,7 +266,8 @@ export interface SourceRegistry {
   id: string;
   name: string;
   vertical: string;
-  geo: string;
+  geoname_id: number;
+  geo: GeoLabel;
   url: string;
   scraper_type: ScraperType;
   legal_flag: boolean;
@@ -254,7 +291,7 @@ export type DiscoveryStatus =
 export async function createCampaign(payload: {
   name: string;
   vertical: string;
-  geography: string[];
+  geoname_ids: number[];
   company_size_target: string;
   status?: CampaignStatus;
   description?: string | null;
@@ -340,7 +377,7 @@ export async function updateCampaign(
   payload: {
     name?: string;
     vertical?: string;
-    geography?: string[];
+    geoname_ids?: number[];
     company_size_target?: string;
     description?: string | null;
     pain_points?: string[] | null;
@@ -591,7 +628,7 @@ export async function getDemos(): Promise<Demo[]> {
 
 export interface PaginatedSources extends Paginated<SourceRegistry> {
   summary: { total: number; active: number };
-  facets: { geos: string[]; verticals: string[] };
+  facets: { geos: GeoOption[]; verticals: string[] };
 }
 
 const EMPTY_SOURCES: PaginatedSources = {
@@ -607,14 +644,14 @@ const EMPTY_SOURCES: PaginatedSources = {
 export async function getRegistrySourcesPaginated(params?: {
   page?: number;
   limit?: number;
-  geo?: string;
+  geoname_id?: number;
   vertical?: string;
   active?: boolean;
 }): Promise<PaginatedSources> {
   const q = new URLSearchParams();
   if (params?.page && params.page > 1) q.set("page", String(params.page));
   if (params?.limit) q.set("limit", String(params.limit));
-  if (params?.geo) q.set("geo", params.geo);
+  if (params?.geoname_id) q.set("geoname_id", String(params.geoname_id));
   if (params?.vertical) q.set("vertical", params.vertical);
   if (params?.active) q.set("active", "true");
   const qs = q.toString();
@@ -625,14 +662,16 @@ export async function getRegistrySourcesPaginated(params?: {
 export interface DirectoryConfig {
   id: string;
   vertical: string;
-  geo: string;
+  geoname_id: number;
+  geo: GeoLabel;
   query: string;
   domains: string[];
 }
 
 export interface ActiveCombination {
   vertical: string;
-  geo: string;
+  geoname_id: number;
+  geo: GeoLabel;
   has_config: boolean;
 }
 
@@ -644,19 +683,19 @@ export async function getActiveCombinations(): Promise<ActiveCombination[]> {
   return (await apiFetch<ActiveCombination[]>("/registry/active-combinations")) ?? [];
 }
 
-export async function getTaxonomy(): Promise<{ verticals: string[]; geos: string[] }> {
-  return (await apiFetch<{ verticals: string[]; geos: string[] }>("/registry/taxonomy")) ?? { verticals: [], geos: [] };
+export async function getTaxonomy(): Promise<{ verticals: string[] }> {
+  return (await apiFetch<{ verticals: string[] }>("/registry/taxonomy")) ?? { verticals: [] };
 }
 
 export async function triggerDiscovery(
   vertical: string,
-  geo: string,
+  geonameId: number,
 ): Promise<{ ok: boolean; status?: string; message?: string; domains?: string[]; error?: string; retryAfter?: number }> {
   try {
     const res = await apiRequest(`${BASE}/api/v1/registry/discover`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ vertical, geo }),
+      body: JSON.stringify({ vertical, geoname_id: geonameId }),
     });
     const body = (await res.json().catch(() => ({}))) as {
       status?: string;
@@ -677,7 +716,7 @@ export async function triggerDiscovery(
 export async function createRegistrySource(payload: {
   name: string;
   vertical: string;
-  geo: string;
+  geoname_id: number;
   url: string;
   scraper_type: ScraperType;
   legal_flag?: boolean;
@@ -722,7 +761,7 @@ export async function importRegistrySources(file: File): Promise<{ result: Regis
 
 export async function createDirectoryConfig(payload: {
   vertical: string;
-  geo: string;
+  geoname_id: number;
   query: string;
   domains: string[];
 }): Promise<{ config: DirectoryConfig | null; error?: string; isDuplicate?: boolean }> {
@@ -910,7 +949,8 @@ export async function triggerEnrichment(): Promise<{ queued: number } | null> {
 
 export interface SourceCoverage {
   vertical: string;
-  geo: string;
+  geoname_id: number;
+  geo: GeoLabel;
   source_count: number;
 }
 
@@ -921,7 +961,7 @@ export async function getSourceCoverage(): Promise<SourceCoverage[]> {
 }
 
 export async function scrapeLeads(params: {
-  combos?: { vertical: string; geo: string }[];
+  combos?: { vertical: string; geoname_id: number }[];
   urls?: string[];
   scraper_type?: "cheerio" | "crawl4ai";
 }): Promise<{ queued: number } | null> {

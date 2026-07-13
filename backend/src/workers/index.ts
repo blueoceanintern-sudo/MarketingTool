@@ -1,6 +1,6 @@
 import cron from "node-cron";
 import { db } from "../db";
-import { followUps, leads, emailEvents, emailDrafts, riskFlags, scrapeJobs, campaigns, replies, companies, promptTemplates, suppressionList } from "../db/schema";
+import { followUps, leads, emailEvents, emailDrafts, riskFlags, scrapeJobs, campaigns, replies, companies, geoPlaces, promptTemplates, suppressionList } from "../db/schema";
 import { logAudit } from "../services/audit/log";
 import { eq, and, isNull, lte, isNotNull, lt, or, inArray, notInArray, asc, gte, sql } from "drizzle-orm";
 import { sendDraft, sendFollowUpEmail, getTotalSent, getWarmupWeek, getDailyCap } from "../services/sender";
@@ -129,12 +129,13 @@ export async function runFollowUpSender() {
         companyName: companies.name,
         companyIndustry: companies.industry,
         companySize: companies.companySize,
-        companyLocation: companies.location,
+        companyLocation: geoPlaces.name,
         originalSubject: emailDrafts.subject,
       })
       .from(followUps)
       .innerJoin(leads, eq(followUps.leadId, leads.id))
       .innerJoin(companies, eq(leads.companyId, companies.id))
+      .leftJoin(geoPlaces, eq(companies.geonameId, geoPlaces.geonameId))
       .leftJoin(emailDrafts, eq(followUps.draftId, emailDrafts.id))
       .where(and(isNull(followUps.sentAt), lte(followUps.scheduledAt, new Date())));
 

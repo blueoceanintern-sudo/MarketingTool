@@ -6,12 +6,17 @@
 
 -- Default Tavily auto-discovery coverage (was the hardcoded DIRECTORY_CONFIGS).
 -- Admins can add/edit these from the registry UI; these are the shipped defaults.
-INSERT INTO directory_configs (vertical, geo, query, domains)
-VALUES
-  ('education', 'SG', 'Singapore school contact principal', ARRAY['moe.edu.sg', 'cpe.gov.sg']),
-  ('education', 'AU', 'school contact principal email', ARRAY['myschool.edu.au', 'acara.edu.au', 'asqa.gov.au', 'teqsa.gov.au']),
-  ('education', 'US', 'school contact email', ARRAY['nces.ed.gov', 'ed.gov'])
-ON CONFLICT (vertical, geo) DO NOTHING;
+-- geoname_id is resolved from geo_places by country code — run
+-- `bun run db:import-geonames` before this seed, or these INSERTs no-op.
+INSERT INTO directory_configs (vertical, geoname_id, query, domains)
+SELECT 'education', gp.geoname_id, v.query, v.domains
+FROM (VALUES
+  ('SG', 'Singapore school contact principal', ARRAY['moe.edu.sg', 'cpe.gov.sg']),
+  ('AU', 'school contact principal email', ARRAY['myschool.edu.au', 'acara.edu.au', 'asqa.gov.au', 'teqsa.gov.au']),
+  ('US', 'school contact email', ARRAY['nces.ed.gov', 'ed.gov'])
+) AS v(country_code, query, domains)
+JOIN geo_places gp ON gp.country_code = v.country_code AND gp.feature_code = 'PCLI'
+ON CONFLICT (vertical, geoname_id) DO NOTHING;
 
 -- ---------------------------------------------------------------------------
 -- Prompt templates — one per sequence step. Idempotent: each INSERT is
