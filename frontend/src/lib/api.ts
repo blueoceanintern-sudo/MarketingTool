@@ -996,7 +996,7 @@ export async function downloadAnalyticsExport(): Promise<void> {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "drafts-export.csv";
+    a.download = "analytics-export.csv";
     a.click();
     URL.revokeObjectURL(url);
   } catch {
