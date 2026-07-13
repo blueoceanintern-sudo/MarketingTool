@@ -3,6 +3,7 @@ import { db } from "../../db";
 import {
   leads,
   companies,
+  geoPlaces,
   riskFlags,
   suppressionList,
   enrichmentRecords,
@@ -111,9 +112,9 @@ export async function enrichLead(leadId: string): Promise<{ record: EnrichmentRe
 
 async function buildInput(leadId: string): Promise<EnrichmentInput> {
   // With lead↔campaign m:n, a lead can belong to many campaigns with
-  // different geos. Market is resolved from company.location only —
-  // company.location is already set by scrape/CSV import from the
-  // originating campaign's geo, so the signal is equivalent.
+  // different geos. Market is resolved from company.geonameId → geo_places
+  // .country_code — company.geonameId is already set by scrape/CSV import
+  // from the originating campaign's geo, so the signal is equivalent.
   const [row] = await db
     .select({
       leadId: leads.id,
@@ -123,11 +124,12 @@ async function buildInput(leadId: string): Promise<EnrichmentInput> {
       companyName: companies.name,
       industry: companies.industry,
       companySize: companies.companySize,
-      location: companies.location,
       companySource: companies.source,
+      countryCode: geoPlaces.countryCode,
     })
     .from(leads)
     .innerJoin(companies, eq(leads.companyId, companies.id))
+    .leftJoin(geoPlaces, eq(companies.geonameId, geoPlaces.geonameId))
     .where(eq(leads.id, leadId))
     .limit(1);
 
@@ -137,7 +139,7 @@ async function buildInput(leadId: string): Promise<EnrichmentInput> {
     throw new Error(`[enrichment] skipping lead ${leadId} — company has no source URL (manual/CSV import)`);
   }
 
-  const market = resolveMarket(null, row.location);
+  const market = resolveMarket(row.countryCode);
 
   return {
     leadId: row.leadId,
@@ -156,14 +158,15 @@ async function buildInput(leadId: string): Promise<EnrichmentInput> {
   };
 }
 
-function resolveMarket(campaignGeography: string | null, location: string): Market {
-  const tokens = [campaignGeography, location]
-    .filter((s): s is string => typeof s === "string")
-    .join(" ")
-    .toUpperCase();
-  if (tokens.includes("SG") || tokens.includes("SINGAPORE")) return "SG";
-  if (tokens.includes("AU") || tokens.includes("AUSTRALIA")) return "AU";
-  return "US";
+// countryCode is null when the company's location hasn't been resolved to a
+// geoname_id yet (legacy free-text row — see backfill-company-geo.ts).
+// Left unmapped as "UNKNOWN" rather than guessed, since market feeds which
+// legal regime (PDPA/Privacy Act/CAN-SPAM) is treated as applicable.
+function resolveMarket(countryCode: string | null): Market {
+  if (countryCode === "SG") return "SG";
+  if (countryCode === "AU") return "AU";
+  if (countryCode === "US") return "US";
+  return "UNKNOWN";
 }
 
 function mergeProviderResult(

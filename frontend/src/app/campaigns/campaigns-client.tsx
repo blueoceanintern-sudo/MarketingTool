@@ -5,9 +5,9 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState, type SubmitEvent } from "react";
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { createCampaign, triggerCampaignFetchLeads, type CampaignStatus } from "@/lib/api";
+import { createCampaign, triggerCampaignFetchLeads, type CampaignStatus, type GeoRef } from "@/lib/api";
 import { campaignsOptions, taxonomyOptions, keys } from "@/lib/queries";
-import { resolveGeo } from "@/lib/geo";
+import { GeoMultiCombobox } from "@/components/geo-combobox";
 import { resolveVertical } from "@/lib/verticals";
 
 const statusConfig: Record<CampaignStatus, { label: string; className: string }> = {
@@ -31,18 +31,17 @@ export default function CampaignsClient() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { data: campaigns = [] } = useQuery(campaignsOptions());
-  const { data: taxonomy = { verticals: [], geos: [] } } = useQuery(taxonomyOptions());
+  const { data: taxonomy = { verticals: [] } } = useQuery(taxonomyOptions());
   const [statusFilter, setStatusFilter] = useState<CampaignStatus | "all">("all");
   const [search, setSearch] = useState("");
   const [showModal, setShowModal] = useState(false);
   const [modalStep, setModalStep] = useState<1 | 2>(1);
   const [formError, setFormError] = useState<string | null>(null);
   const [verticalNote, setVerticalNote] = useState<string | null>(null);
-  const [geoInput, setGeoInput] = useState("");
+  const [geographies, setGeographies] = useState<GeoRef[]>([]);
   const [form, setForm] = useState({
     name: "",
     vertical: "",
-    geography: "SG",
     company_size_target: "medium",
     description: "",
     pain_points: "",
@@ -53,16 +52,15 @@ export default function CampaignsClient() {
     setForm({
       name: "",
       vertical: "",
-      geography: "SG",
       company_size_target: "medium",
       description: "",
       pain_points: "",
       call_to_action: "",
     });
+    setGeographies([]);
     setModalStep(1);
     setFormError(null);
     setVerticalNote(null);
-    setGeoInput("");
   }
 
   function closeModal() {
@@ -72,8 +70,8 @@ export default function CampaignsClient() {
 
   function handleNext(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!form.name.trim() || !form.vertical.trim() || !form.geography.trim()) {
-      setFormError("Name, vertical, and geography are required.");
+    if (!form.name.trim() || !form.vertical.trim() || geographies.length === 0) {
+      setFormError("Name, vertical, and at least one geography are required.");
       return;
     }
     setFormError(null);
@@ -90,39 +88,6 @@ export default function CampaignsClient() {
   }, [campaigns, statusFilter, search]);
 
   const availableVerticals = taxonomy.verticals;
-  const availableGeos = taxonomy.geos;
-  const geoChips = useMemo(
-    () => form.geography.split("|").map((g) => g.trim()).filter(Boolean),
-    [form.geography],
-  );
-
-  function addGeoChip(raw: string) {
-    const resolved = resolveGeo(raw);
-    if (!resolved) return;
-    setForm((f) => {
-      const current = f.geography.split("|").map((g) => g.trim()).filter(Boolean);
-      if (current.includes(resolved)) return f;
-      return { ...f, geography: [...current, resolved].join("|") };
-    });
-    setGeoInput("");
-  }
-
-  function removeGeoChip(geo: string) {
-    setForm((f) => ({
-      ...f,
-      geography: f.geography.split("|").map((g) => g.trim()).filter((g) => g && g !== geo).join("|"),
-    }));
-  }
-
-  function handleGeoKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "Enter" || e.key === ",") {
-      e.preventDefault();
-      if (geoInput.trim()) addGeoChip(geoInput);
-    }
-    if (e.key === "Backspace" && !geoInput && geoChips.length > 0) {
-      removeGeoChip(geoChips[geoChips.length - 1]!);
-    }
-  }
 
   const totalLeads = campaigns.reduce((s, c) => s + c.leads_count, 0);
   const avgOpenRate =
@@ -139,7 +104,7 @@ export default function CampaignsClient() {
       const { campaign, discovery, error } = await createCampaign({
         name: form.name.trim(),
         vertical: form.vertical.trim(),
-        geography: form.geography.split("|").map((g) => g.trim().toUpperCase()).filter(Boolean),
+        geoname_ids: geographies.map((g) => g.geoname_id),
         company_size_target: form.company_size_target,
         status: "draft",
         description: form.description.trim() || null,
@@ -155,7 +120,7 @@ export default function CampaignsClient() {
       setShowModal(false);
       resetForm();
 
-      const geoLabel = `${campaign.vertical} in ${campaign.geography.join(", ")}`;
+      const geoLabel = `${campaign.vertical} in ${campaign.geographies.map((g) => g.name).join(", ")}`;
 
       if (added > 0) {
         toast.success(`${added} lead${added === 1 ? "" : "s"} matched`, { description: geoLabel });
@@ -287,7 +252,7 @@ export default function CampaignsClient() {
                       </Link>
                     </td>
                     <td className="px-4 py-3 text-[13px]">{c.vertical}</td>
-                    <td className="px-4 py-3 text-center text-[12px]">{c.geography.join(", ")}</td>
+                    <td className="px-4 py-3 text-center text-[12px]">{c.geographies.map((g) => g.name).join(", ")}</td>
                     <td className="px-4 py-3 text-center">
                       <span className={`px-2 py-0.5 text-xs font-bold rounded-full ${badge.className}`}>
                         {badge.label}
@@ -351,30 +316,7 @@ export default function CampaignsClient() {
                 </label>
                 <div className="flex flex-col gap-1 text-[13px]">
                   <span className="font-normal">Geography</span>
-                  <div className="border border-grey-200 rounded-lg px-3 py-2 flex flex-wrap gap-1.5 min-h-10 items-center focus-within:border-primary transition-colors">
-                    {geoChips.map((geo) => (
-                      <span key={geo} className="flex items-center gap-0.5 bg-primary/10 text-primary text-[12px] px-2 py-0.5 rounded-full">
-                        {geo}
-                        <button
-                          type="button"
-                          onClick={() => removeGeoChip(geo)}
-                          className="leading-none ml-1 hover:text-danger"
-                        >
-                            x
-                        </button>
-                      </span>
-                    ))}
-                    <input
-                      list="campaign-geos"
-                      value={geoInput}
-                      onChange={(e) => setGeoInput(e.target.value)}
-                      onKeyDown={handleGeoKeyDown}
-                      onBlur={() => { if (geoInput.trim()) addGeoChip(geoInput); }}
-                      placeholder={geoChips.length === 0 ? "e.g. SG" : ""}
-                      className="flex-1 min-w-14 outline-none bg-transparent text-[13px]"
-                    />
-                  </div>
-                  <span className="text-[11px] text-grey-400">Enter to add · Backspace to remove last</span>
+                  <GeoMultiCombobox selected={geographies} onChange={setGeographies} placeholder="Search city, region, or country…" />
                 </div>
                 <label className="flex flex-col gap-1 text-[13px]">
                   Company size
@@ -448,9 +390,6 @@ export default function CampaignsClient() {
             )}
             <datalist id="campaign-verticals">
               {suggest(availableVerticals, form.vertical).map((v) => <option key={v} value={v} />)}
-            </datalist>
-            <datalist id="campaign-geos">
-              {suggest(availableGeos, geoInput).map((g) => <option key={g} value={g} />)}
             </datalist>
           </div>
         </div>

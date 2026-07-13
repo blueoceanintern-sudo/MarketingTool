@@ -1,19 +1,12 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "../../db";
-import { campaigns, campaignLeads, campaignLeadExclusions, companies, leads, scrapeJobs, sourceRegistry, normalizeVertical, normalizeGeo } from "../../db/schema";
+import { campaigns, campaignGeos, campaignLeads, campaignLeadExclusions, companies, geoPlaces, leads, scrapeJobs, sourceRegistry, normalizeVertical } from "../../db/schema";
 import { scrapeWithFallback } from "../scrapers/crawl4aiScraper";
 import { scrapeWebsite } from "../scrapers/cheerioScraper";
 import { isValidLeadEmail } from "../scrapers/emailFilter";
 import { isValidEduEmail } from "../scrapers/eduEmailFilter";
 import { emitJobEvent } from "../events";
 import { enrichLead } from "../enrichment/orchestrator";
-
-function parseGeographies(geography: string): string[] {
-  return geography
-    .split("|")
-    .map(normalizeGeo)
-    .filter(Boolean);
-}
 
 async function scrapeSourceUrl(
   url: string,
@@ -32,6 +25,7 @@ async function persistScrapedLead(
   campaignId: string,
   scraped: { company?: string; email?: string; website: string; name?: string; role?: string },
   campaignGeo: string,
+  campaignGeonameId: number,
   campaignVertical: string,
   scraperUsed: "crawl4ai" | "cheerio"
 ): Promise<string | null> {
@@ -79,6 +73,7 @@ async function persistScrapedLead(
         industry: campaignVertical,
         companySize: "unknown",
         location: campaignGeo,
+        geonameId: campaignGeonameId,
         // source holds the website URL — used by enrichment as the mandatory
         // navigation target for the Cowork browser agent.
         source: scraped.website,
@@ -125,16 +120,22 @@ export async function runScrapeJob(jobId: string, campaignId: string): Promise<v
     .set({ status: "running", startedAt: new Date(), errorMessage: null })
     .where(eq(scrapeJobs.id, jobId));
 
-  const geos = parseGeographies(campaign.geography);
+  const campaignGeoRows = await db
+    .select({ geonameId: campaignGeos.geonameId })
+    .from(campaignGeos)
+    .where(eq(campaignGeos.campaignId, campaignId));
+  const geonameIds = campaignGeoRows.map((r) => r.geonameId);
+
   const sourceConditions = [
     eq(sourceRegistry.active, true),
     eq(sourceRegistry.vertical, normalizeVertical(campaign.vertical)),
   ];
-  if (geos.length > 0) sourceConditions.push(inArray(sourceRegistry.geo, geos));
+  if (geonameIds.length > 0) sourceConditions.push(inArray(sourceRegistry.geonameId, geonameIds));
 
   const sources = await db
-    .select()
+    .select({ source: sourceRegistry, place: geoPlaces })
     .from(sourceRegistry)
+    .innerJoin(geoPlaces, eq(sourceRegistry.geonameId, geoPlaces.geonameId))
     .where(and(...sourceConditions));
 
   if (sources.length === 0) {
@@ -142,7 +143,7 @@ export async function runScrapeJob(jobId: string, campaignId: string): Promise<v
       .update(scrapeJobs)
       .set({
         status: "failed",
-        errorMessage: `No active sources for vertical "${campaign.vertical}" in ${geos.join(", ") || "any geo"}`,
+        errorMessage: `No active sources for vertical "${campaign.vertical}" in ${geonameIds.join(", ") || "any geo"}`,
         completedAt: new Date(),
       })
       .where(eq(scrapeJobs.id, jobId));
@@ -154,12 +155,12 @@ export async function runScrapeJob(jobId: string, campaignId: string): Promise<v
   const errors: string[] = [];
   const newLeadIds: string[] = [];
 
-  for (const source of sources) {
+  for (const { source, place } of sources) {
     try {
       const result = await scrapeSourceUrl(source.url, source.scraperType);
       let savedForSource = 0;
       for (const lead of result.leads) {
-        const newLeadId = await persistScrapedLead(campaignId, lead, source.geo, campaign.vertical, result.scraper);
+        const newLeadId = await persistScrapedLead(campaignId, lead, place.name, place.geonameId, campaign.vertical, result.scraper);
         if (newLeadId !== null) {
           newLeadIds.push(newLeadId);
           savedForSource++;

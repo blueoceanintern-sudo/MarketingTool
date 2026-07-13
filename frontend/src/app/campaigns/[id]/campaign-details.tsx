@@ -2,8 +2,9 @@
 
 import { useState, type SubmitEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { updateCampaign, type Campaign } from "@/lib/api";
+import { updateCampaign, type Campaign, type GeoRef } from "@/lib/api";
 import { keys, taxonomyOptions } from "@/lib/queries";
+import { GeoMultiCombobox } from "@/components/geo-combobox";
 
 function suggest(options: string[], input: string, max = 5): string[] {
   const q = input.trim().toLowerCase();
@@ -24,15 +25,14 @@ const sizeLabel: Record<string, string> = {
 
 export default function CampaignDetails({ campaign }: Props) {
   const queryClient = useQueryClient();
-  const { data: taxonomy = { verticals: [], geos: [] } } = useQuery(taxonomyOptions());
+  const { data: taxonomy = { verticals: [] } } = useQuery(taxonomyOptions());
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-  const [geoInput, setGeoInput] = useState("");
+  const [geographies, setGeographies] = useState<GeoRef[]>(campaign.geographies);
   const [form, setForm] = useState({
     name: campaign.name,
     vertical: campaign.vertical,
-    geography: campaign.geography.join(", "),
     company_size_target: campaign.company_size_target,
     description: campaign.description ?? "",
     pain_points: campaign.pain_points.join("\n"),
@@ -43,12 +43,12 @@ export default function CampaignDetails({ campaign }: Props) {
     setForm({
       name: campaign.name,
       vertical: campaign.vertical,
-      geography: campaign.geography.join(", "),
       company_size_target: campaign.company_size_target,
       description: campaign.description ?? "",
       pain_points: campaign.pain_points.join("\n"),
       call_to_action: campaign.call_to_action ?? "",
     });
+    setGeographies(campaign.geographies);
     setFormError(null);
     setEditing(true);
   }
@@ -62,7 +62,7 @@ export default function CampaignDetails({ campaign }: Props) {
       const { error } = await updateCampaign(campaign.id, {
         name: form.name.trim(),
         vertical: form.vertical.trim(),
-        geography: form.geography.split(",").map((g) => g.trim().toUpperCase()).filter(Boolean),
+        geoname_ids: geographies.map((g) => g.geoname_id),
         company_size_target: form.company_size_target,
         description: form.description.trim() || null,
         pain_points: painPoints,
@@ -106,7 +106,7 @@ export default function CampaignDetails({ campaign }: Props) {
           Campaign Details
           {!expanded && (
             <span className="ml-1 text-[12px] font-normal text-grey-500">
-              · {campaign.vertical} · {campaign.geography.join(", ") || "—"} · {sizeLabel[campaign.company_size_target] ?? campaign.company_size_target}
+              · {campaign.vertical} · {campaign.geographies.map((g) => g.name).join(", ") || "—"} · {sizeLabel[campaign.company_size_target] ?? campaign.company_size_target}
             </span>
           )}
         </button>
@@ -131,7 +131,7 @@ export default function CampaignDetails({ campaign }: Props) {
             </div>
             <div>
               <p className="text-grey-500 mb-1">Geography</p>
-              <p className="text-primary font-medium">{campaign.geography.join(", ") || "—"}</p>
+              <p className="text-primary font-medium">{campaign.geographies.map((g) => g.name).join(", ") || "—"}</p>
             </div>
             <div>
               <p className="text-grey-500 mb-1">Company size</p>
@@ -209,56 +209,7 @@ export default function CampaignDetails({ campaign }: Props) {
               </label>
               <div className="flex flex-col gap-1 text-[13px]">
                 Geography
-                <div className="border border-grey-200 rounded-lg px-3 py-2 flex flex-wrap gap-1 min-h-[38px] items-center focus-within:border-primary transition-colors">
-                  {form.geography.split(",").map((g) => g.trim()).filter(Boolean).map((geo) => (
-                    <span key={geo} className="flex items-center gap-0.5 px-2 py-0.5 bg-ocean-wash text-primary rounded text-[12px] font-medium">
-                      {geo}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const chips = form.geography.split(",").map((g) => g.trim()).filter((g) => g && g !== geo);
-                          setForm((f) => ({ ...f, geography: chips.join(", ") }));
-                        }}
-                        className="text-[14px] leading-none ml-0.5 hover:text-danger"
-                      >×</button>
-                    </span>
-                  ))}
-                  <input
-                    list="edit-campaign-geos"
-                    value={geoInput}
-                    onChange={(e) => setGeoInput(e.target.value.toUpperCase())}
-                    onKeyDown={(e) => {
-                      const geo = geoInput.trim();
-                      if ((e.key === "Enter" || e.key === "," || e.key === " ") && geo) {
-                        e.preventDefault();
-                        const existing = form.geography.split(",").map((g) => g.trim()).filter(Boolean);
-                        if (!existing.includes(geo)) {
-                          setForm((f) => ({ ...f, geography: [...existing, geo].join(", ") }));
-                        }
-                        setGeoInput("");
-                      }
-                      if (e.key === "Backspace" && !geoInput) {
-                        const chips = form.geography.split(",").map((g) => g.trim()).filter(Boolean);
-                        setForm((f) => ({ ...f, geography: chips.slice(0, -1).join(", ") }));
-                      }
-                    }}
-                    onBlur={() => {
-                      const geo = geoInput.trim();
-                      if (geo) {
-                        const existing = form.geography.split(",").map((g) => g.trim()).filter(Boolean);
-                        if (!existing.includes(geo)) {
-                          setForm((f) => ({ ...f, geography: [...existing, geo].join(", ") }));
-                        }
-                        setGeoInput("");
-                      }
-                    }}
-                    placeholder={form.geography ? "" : "Add geo (e.g. SG)"}
-                    className="flex-1 min-w-20 outline-none text-[13px] bg-transparent"
-                  />
-                </div>
-                <datalist id="edit-campaign-geos">
-                  {suggest(taxonomy.geos, geoInput).map((g) => <option key={g} value={g} />)}
-                </datalist>
+                <GeoMultiCombobox selected={geographies} onChange={setGeographies} placeholder="Search city, region, or country…" />
               </div>
               <label className="flex flex-col gap-1 text-[13px]">
                 Company size

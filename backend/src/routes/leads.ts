@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { db } from "../db";
-import { leads, companies, campaigns, campaignLeads, campaignLeadExclusions, suppressionList, enrichmentRecords, emailDrafts, emailEvents, followUps, sourceRegistry, normalizeVertical, normalizeGeo } from "../db/schema";
+import { leads, companies, campaigns, campaignLeads, campaignLeadExclusions, suppressionList, enrichmentRecords, emailDrafts, emailEvents, followUps, sourceRegistry, geoPlaces, normalizeVertical, normalizeGeo } from "../db/schema";
 import { scrapeWebsite } from "../services/scrapers/cheerioScraper";
 import { scrapeWithFallback } from "../services/scrapers/crawl4aiScraper";
 import { count, sql, eq, desc, and, or, ilike, inArray, isNull, isNotNull } from "drizzle-orm";
@@ -9,6 +9,7 @@ import type { AuthUser } from "../middleware/auth";
 import { enrichLead } from "../services/enrichment/orchestrator";
 import { emitJobEvent } from "../services/events";
 import { isValidLeadEmail } from "../services/scrapers/emailFilter";
+import { searchGeoPlaces } from "../services/geoPlaces";
 
 // Priority order for most-advanced status aggregation across campaign_leads rows.
 // Used in the global leads view to surface the highest-value signal per lead.
@@ -45,7 +46,10 @@ interface LeadRow {
   companyName: string;
   companySource: string | null;
   companyIndustry: string | null;
-  companyLocation: string | null;
+  companyGeonameId: number | null;
+  companyGeoName: string | null;
+  companyCountryCode: string | null;
+  companyAdmin1Name: string | null;
   draftStatus?: string | null;
 }
 
@@ -66,7 +70,11 @@ function formatLead(row: LeadRow, campaignsForLead: { id: string; name: string }
     company_name: row.companyName,
     company_source: row.companySource,
     company_industry: row.companyIndustry,
-    company_location: row.companyLocation,
+    // null when the company's location hasn't been resolved to a geoname_id
+    // yet (legacy free-text row — see backfill-company-geo.ts).
+    company_location: row.companyGeonameId
+      ? { geoname_id: row.companyGeonameId, name: row.companyGeoName, country_code: row.companyCountryCode, admin1_name: row.companyAdmin1Name }
+      : null,
     campaigns: campaignsForLead,
     created_at: row.createdAt.toISOString(),
   };
@@ -108,7 +116,10 @@ const LEAD_SELECT = {
   companyName: companies.name,
   companySource: companies.source,
   companyIndustry: companies.industry,
-  companyLocation: companies.location,
+  companyGeonameId: companies.geonameId,
+  companyGeoName: geoPlaces.name,
+  companyCountryCode: geoPlaces.countryCode,
+  companyAdmin1Name: geoPlaces.admin1Name,
 } as const;
 
 const SUMMARY_SELECT = {
@@ -176,6 +187,7 @@ allLeadsRouter.get("/", async (c) => {
       .from(campaignLeads)
       .innerJoin(leads, eq(campaignLeads.leadId, leads.id))
       .innerJoin(companies, eq(leads.companyId, companies.id))
+      .leftJoin(geoPlaces, eq(companies.geonameId, geoPlaces.geonameId))
       .where(where)
       .orderBy(campaignLeads.addedAt)
       .limit(limit)
@@ -199,6 +211,7 @@ allLeadsRouter.get("/", async (c) => {
       .select({ ...LEAD_SELECT, status: MOST_ADVANCED_STATUS })
       .from(leads)
       .innerJoin(companies, eq(leads.companyId, companies.id))
+      .leftJoin(geoPlaces, eq(companies.geonameId, geoPlaces.geonameId))
       .where(where)
       .orderBy(leads.createdAt)
       .limit(limit)
@@ -252,6 +265,7 @@ leadsRouter.get("/:id/leads", async (c) => {
     .from(campaignLeads)
     .innerJoin(leads, eq(campaignLeads.leadId, leads.id))
     .innerJoin(companies, eq(leads.companyId, companies.id))
+    .leftJoin(geoPlaces, eq(companies.geonameId, geoPlaces.geonameId))
     .leftJoin(emailDrafts, and(
       eq(emailDrafts.leadId, leads.id),
       eq(emailDrafts.campaignId, campaignLeads.campaignId),
@@ -379,11 +393,24 @@ leadsRouter.post("/:id/leads/import", async (c) => {
         return "unknown";
       })() as "small" | "medium" | "large" | "enterprise" | "unknown";
 
+      // Best-effort geo resolution — an unmatched/ambiguous "market" value
+      // still leaves the company with its free-text location, it just
+      // doesn't get a geoname_id yet (see backfill-company-geo.ts).
+      let geonameId: number | null = null;
+      const market = row["market"]?.trim() ?? "";
+      if (market) {
+        const geoMatches = await searchGeoPlaces(market, { limit: 2 });
+        if (geoMatches.length === 1 || (geoMatches.length > 0 && geoMatches[0]!.name.toLowerCase() === market.toLowerCase())) {
+          geonameId = geoMatches[0]!.geonameId;
+        }
+      }
+
       const [inserted] = await db.insert(companies).values({
         name: companyName,
         industry: row["industry"] ? normalizeVertical(row["industry"]) : null,
         companySize: size,
         location: row["market"] ? normalizeGeo(row["market"]) : "",
+        geonameId,
         source: row["company_website"] || null,
       }).returning();
       company = inserted!;
@@ -636,12 +663,12 @@ allLeadsRouter.post("/enrich", async (c) => {
 // Returns immediately; scraping + enrichment runs in the background.
 allLeadsRouter.post("/scrape", async (c) => {
   const body = await c.req.json<{
-    combos?: { vertical?: string; geo?: string }[];
+    combos?: { vertical?: string; geoname_id?: number }[];
     urls?: string[];
     scraper_type?: string;
   }>();
 
-  const combos = (body.combos ?? []).filter((x) => x.vertical && x.geo);
+  const combos = (body.combos ?? []).filter((x) => x.vertical && x.geoname_id);
   const customUrls = body.urls ?? [];
   const scraperType = (body.scraper_type ?? "cheerio") as "cheerio" | "crawl4ai";
 
@@ -649,21 +676,22 @@ allLeadsRouter.post("/scrape", async (c) => {
     return c.json({ error: "Provide at least one vertical/geo combo or url" }, 400);
   }
 
-  type ScrapeSource = { url: string; scraperType: "cheerio" | "crawl4ai"; name: string; vertical?: string; geo?: string };
+  type ScrapeSource = { url: string; scraperType: "cheerio" | "crawl4ai"; name: string; vertical?: string; geo?: string; geonameId?: number };
   const sources: ScrapeSource[] = [];
 
   if (combos.length > 0) {
-    // Resolve each (vertical, geo) to its active registry sources server-side,
-    // so the client never needs the full source list.
+    // Resolve each (vertical, geoname_id) to its active registry sources
+    // server-side, so the client never needs the full source list.
     const comboConds = combos.map((x) =>
-      and(eq(sourceRegistry.vertical, normalizeVertical(x.vertical!)), eq(sourceRegistry.geo, normalizeGeo(x.geo!))),
+      and(eq(sourceRegistry.vertical, normalizeVertical(x.vertical!)), eq(sourceRegistry.geonameId, x.geoname_id!)),
     );
     const registrySources = await db
-      .select({ url: sourceRegistry.url, scraperType: sourceRegistry.scraperType, name: sourceRegistry.name, vertical: sourceRegistry.vertical, geo: sourceRegistry.geo })
+      .select({ url: sourceRegistry.url, scraperType: sourceRegistry.scraperType, name: sourceRegistry.name, vertical: sourceRegistry.vertical, geo: geoPlaces.name, geonameId: sourceRegistry.geonameId })
       .from(sourceRegistry)
+      .innerJoin(geoPlaces, eq(sourceRegistry.geonameId, geoPlaces.geonameId))
       .where(and(eq(sourceRegistry.active, true), or(...comboConds)));
     for (const s of registrySources) {
-      sources.push({ url: s.url, scraperType: s.scraperType as "cheerio" | "crawl4ai", name: s.name, vertical: s.vertical, geo: s.geo });
+      sources.push({ url: s.url, scraperType: s.scraperType as "cheerio" | "crawl4ai", name: s.name, vertical: s.vertical, geo: s.geo, geonameId: s.geonameId });
     }
   }
 
@@ -695,6 +723,7 @@ allLeadsRouter.post("/scrape", async (c) => {
               industry: source.vertical ?? "general",
               companySize: "unknown",
               location: source.geo ?? "unknown",
+              geonameId: source.geonameId ?? null,
               source: scraped.website,
             }).returning();
             company = inserted!;
