@@ -8,10 +8,12 @@ const db = drizzle(sql);
 console.log("Starting migration...");
 try {
   await sql`CREATE EXTENSION IF NOT EXISTS vector`;
+  await sql`CREATE EXTENSION IF NOT EXISTS pg_trgm`;
+  console.log("Extensions ready.");
   await migrate(db, { migrationsFolder: "./src/db/migrations" });
   console.log("Migration successful!");
-  
-  const applied = await sql`SELECT * FROM drizzle.__drizzle_migrations ORDER BY created_at`;
+
+  const applied = await sql`SELECT hash, created_at FROM drizzle.__drizzle_migrations ORDER BY created_at`;
   console.log("Applied migrations:", JSON.stringify(applied, null, 2));
 } catch (err) {
   console.error("Migration failed:", err);
