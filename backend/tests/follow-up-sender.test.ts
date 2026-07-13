@@ -21,7 +21,7 @@ async function seedBase() {
   }).returning();
 
   const [campaign] = await db.insert(campaigns).values({
-    name: "AU Outreach", vertical: "edtech", geography: "AU", companySizeTarget: "small",
+    name: "AU Outreach", vertical: "edtech", companySizeTarget: "small",
     status: "active", description: "Reach AU schools",
     painPoints: ["manual admin"], callToAction: "Book a demo",
   }).returning();

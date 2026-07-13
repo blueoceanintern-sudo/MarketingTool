@@ -35,13 +35,6 @@ export async function isSafeUrl(url: string): Promise<boolean> {
   }
 }
 
-function parseGeographies(geography: string): string[] {
-  return geography
-    .split("|")
-    .map(normalizeGeo)
-    .filter(Boolean);
-}
-
 async function scrapeSourceUrl(
   url: string,
   scraperType: string,
