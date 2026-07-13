@@ -1,7 +1,7 @@
 import { lookup } from "node:dns/promises";
 import { inArray, eq, and } from "drizzle-orm";
 import { db } from "../../db";
-import { sourceRegistry, directoryConfigs, normalizeVertical, normalizeGeo } from "../../db/schema";
+import { sourceRegistry, directoryConfigs, geoPlaces, normalizeVertical } from "../../db/schema";
 
 export interface DirectoryConfig {
   id: string;
@@ -9,42 +9,33 @@ export interface DirectoryConfig {
   domains: string[];
 }
 
-export async function getAllDirectoryConfigs(): Promise<Array<DirectoryConfig & { vertical: string; geo: string }>> {
-  const rows = await db.select().from(directoryConfigs).orderBy(directoryConfigs.vertical, directoryConfigs.geo);
-  return rows.map((r) => ({
+export async function getAllDirectoryConfigs(): Promise<
+  Array<DirectoryConfig & { vertical: string; geonameId: number; geoName: string; countryCode: string }>
+> {
+  const rows = await db
+    .select({ config: directoryConfigs, place: geoPlaces })
+    .from(directoryConfigs)
+    .innerJoin(geoPlaces, eq(directoryConfigs.geonameId, geoPlaces.geonameId))
+    .orderBy(directoryConfigs.vertical, geoPlaces.name);
+  return rows.map(({ config: r, place }) => ({
     id: r.id,
     vertical: r.vertical,
-    geo: r.geo,
+    geonameId: r.geonameId,
+    geoName: place.name,
+    countryCode: place.countryCode,
     query: r.query,
     domains: r.domains,
   }));
 }
 
-const GEO_ALIASES: Record<string, string> = {
-  "AUSTRALIA": "AU",
-  "AUS": "AU",
-  "SINGAPORE": "SG",
-  "SIN": "SG",
-  "USA": "US",
-  "UNITED STATES": "US",
-  "UNITED STATES OF AMERICA": "US",
-  "VIETNAM": "VN", 
-  "VIET": "VN",
-};
-
-export function resolveGeo(geo: string): string {
-  const upper = normalizeGeo(geo);
-  return GEO_ALIASES[upper] ?? upper;
-}
-
-export async function getDirectoryConfig(vertical: string, geo: string): Promise<DirectoryConfig | null> {
+export async function getDirectoryConfig(vertical: string, geonameId: number): Promise<DirectoryConfig | null> {
   const [row] = await db
     .select()
     .from(directoryConfigs)
     .where(
       and(
         eq(directoryConfigs.vertical, normalizeVertical(vertical)),
-        eq(directoryConfigs.geo, resolveGeo(geo)),
+        eq(directoryConfigs.geonameId, geonameId),
       ),
     )
     .limit(1);
@@ -52,8 +43,8 @@ export async function getDirectoryConfig(vertical: string, geo: string): Promise
   return { id: row.id, query: row.query, domains: row.domains };
 }
 
-export async function hasDirectoryConfig(vertical: string, geo: string): Promise<boolean> {
-  const config = await getDirectoryConfig(vertical, geo);
+export async function hasDirectoryConfig(vertical: string, geonameId: number): Promise<boolean> {
+  const config = await getDirectoryConfig(vertical, geonameId);
   return config !== null;
 }
 
@@ -116,11 +107,11 @@ async function tavilySearch(query: string, domains: string[]): Promise<{ url: st
 
 export async function discoverSources(
   vertical: string,
-  geo: string,
+  geonameId: number,
   campaignId: string | null,
 ): Promise<{ inserted: number; sourceIds: string[] }> {
-  const key = `${normalizeVertical(vertical)}:${resolveGeo(geo)}`;
-  const config = await getDirectoryConfig(vertical, geo);
+  const key = `${normalizeVertical(vertical)}:${geonameId}`;
+  const config = await getDirectoryConfig(vertical, geonameId);
 
   if (!config) {
     console.warn(`[source-registry] no directory config for ${key} — skipping discovery`);
@@ -155,7 +146,7 @@ export async function discoverSources(
         .values({
           name,
           vertical: normalizeVertical(vertical),
-          geo: normalizeGeo(geo),
+          geonameId,
           url,
           scraperType: "cheerio",
           legalFlag: false,

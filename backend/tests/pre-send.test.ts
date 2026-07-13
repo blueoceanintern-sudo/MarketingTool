@@ -21,7 +21,7 @@ async function seedBase() {
   }).returning();
 
   const [campaign] = await db.insert(campaigns).values({
-    name: "Cold Outreach SG", vertical: "saas", geography: "SG",
+    name: "Cold Outreach SG", vertical: "saas",
     companySizeTarget: "medium", status: "active",
   }).returning();
 
@@ -60,7 +60,7 @@ describe("Pre-send gates", () => {
   });
 
   it("suppression for a different campaign does NOT block send", async () => {
-    const [other] = await db.insert(campaigns).values({ name: "Other", vertical: "saas", geography: "AU", companySizeTarget: "medium", status: "active" }).returning();
+    const [other] = await db.insert(campaigns).values({ name: "Other", vertical: "saas", companySizeTarget: "medium", status: "active" }).returning();
     await db.insert(suppressionList).values({ email: ctx.lead.email, campaignId: other.id, reason: "manual" });
     const result = await sendDraft({ draftId: ctx.draft.id, toEmail: ctx.lead.email, leadId: ctx.lead.id, campaignId: ctx.campaign.id, isVerified: true, hasRiskFlags: false });
     expect(result.status).toBe("sent");
@@ -106,7 +106,7 @@ describe("Pre-send gates", () => {
 
     const [fillerCo] = await db.insert(companies).values({ name: "Filler Co", industry: "technology", companySize: "small", location: "SG" }).returning();
     const [fillerLead] = await db.insert(leads).values({ companyId: fillerCo.id, email: "filler@filler.com", isVerified: true }).returning();
-    const [fillerCampaign] = await db.insert(campaigns).values({ name: "Filler", vertical: "saas", geography: "SG", companySizeTarget: "small", status: "active" }).returning();
+    const [fillerCampaign] = await db.insert(campaigns).values({ name: "Filler", vertical: "saas", companySizeTarget: "small", status: "active" }).returning();
     await db.insert(campaignLeads).values({ leadId: fillerLead.id, campaignId: fillerCampaign.id });
     const [fillerTemplate] = await db.insert(promptTemplates).values({ name: "Filler Tmpl", systemPrompt: ".", templateType: "initial", active: true, createdBy: "user" }).returning();
     const [fillerDraft] = await db.insert(emailDrafts).values({ leadId: fillerLead.id, campaignId: fillerCampaign.id, templateId: fillerTemplate.id, subject: ".", body: ".", confidenceScore: 70, status: "sent" }).returning();

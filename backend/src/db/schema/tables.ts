@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { pgTable, uuid, text, boolean, integer, real, timestamp, json, jsonb, vector, index, unique, primaryKey, type PgTableExtraConfigValue } from "drizzle-orm/pg-core";
 import {
   companySizeEnum,
@@ -19,23 +20,50 @@ import {
 export const normalizeVertical = (s: string): string => s.trim().toLowerCase();
 export const normalizeGeo = (s: string): string => s.trim().toUpperCase();
 
+// Reference table imported from the GeoNames static dump (see
+// backend/src/scripts/import-geonames.ts). geonameId is GeoNames' own
+// identifier, used directly as the primary key so re-imports are pure
+// upserts. featureCode distinguishes granularity: PCLI = country,
+// ADM1 = state/region, PPL* = populated place/city.
+export const geoPlaces = pgTable("geo_places", {
+  geonameId: integer("geoname_id").primaryKey(),
+  name: text("name").notNull(),
+  asciiName: text("ascii_name").notNull(),
+  countryCode: text("country_code").notNull(),
+  admin1Code: text("admin1_code"),
+  admin1Name: text("admin1_name"),
+  featureCode: text("feature_code").notNull(),
+  population: integer("population"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t): PgTableExtraConfigValue[] => [
+  index("geo_places_country_code_idx").on(t.countryCode),
+  index("geo_places_name_trgm_idx").using("gin", sql`${t.name} gin_trgm_ops`),
+]);
+
 export const companies = pgTable("companies", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
   industry: text("industry"),
   companySize: companySizeEnum("company_size").notNull(),
   location: text("location").notNull(),
+  // Nullable unlike campaigns/sourceRegistry/directoryConfigs' geonameId FKs —
+  // real location data already exists in 3+ free-text shapes and won't all
+  // backfill confidently (see backend/src/scripts/backfill-company-geo.ts).
+  // location stays as the legacy free-text fallback until backfill coverage
+  // is verified.
+  geonameId: integer("geoname_id").references(() => geoPlaces.geonameId),
   source: text("source"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (t): PgTableExtraConfigValue[] => [
+  index("companies_geoname_id_idx").on(t.geonameId),
+]);
 
 // campaigns defined before leads so leads can FK to it
 export const campaigns = pgTable("campaigns", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
   vertical: text("vertical").notNull(),
-  geography: text("geography").notNull(),
   companySizeTarget: companySizeEnum("company_size_target").notNull(),
   status: campaignStatusEnum("status").default("draft").notNull(),
   // Optional drafting context — surfaced to the Haiku prompt so emails feel
@@ -78,6 +106,17 @@ export const campaignLeads = pgTable("campaign_leads", {
 }, (t): PgTableExtraConfigValue[] => [
   primaryKey({ columns: [t.leadId, t.campaignId] }),
   index("campaign_leads_campaign_id_idx").on(t.campaignId),
+]);
+
+// Junction: a campaign targets one or more GeoNames places (city, region, or
+// country granularity). Replaces the old campaigns.geography pipe-delimited
+// text column.
+export const campaignGeos = pgTable("campaign_geos", {
+  campaignId: uuid("campaign_id").references(() => campaigns.id, { onDelete: "cascade" }).notNull(),
+  geonameId: integer("geoname_id").references(() => geoPlaces.geonameId, { onDelete: "cascade" }).notNull(),
+}, (t): PgTableExtraConfigValue[] => [
+  primaryKey({ columns: [t.campaignId, t.geonameId] }),
+  index("campaign_geos_geoname_id_idx").on(t.geonameId),
 ]);
 
 // A prompt-style variant the drafting service can use. Each generated draft
@@ -160,7 +199,7 @@ export const sourceRegistry = pgTable("source_registry", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
   vertical: text("vertical").notNull(),
-  geo: text("geo").notNull(),
+  geonameId: integer("geoname_id").references(() => geoPlaces.geonameId).notNull(),
   url: text("url").unique().notNull(),
   scraperType: scraperTypeEnum("scraper_type").notNull(),
   legalFlag: boolean("legal_flag").default(false).notNull(),
@@ -305,11 +344,11 @@ export const enrichmentRecords = pgTable("enrichment_records", {
 export const directoryConfigs = pgTable("directory_configs", {
   id: uuid("id").primaryKey().defaultRandom(),
   vertical: text("vertical").notNull(),
-  geo: text("geo").notNull(),
+  geonameId: integer("geoname_id").references(() => geoPlaces.geonameId).notNull(),
   query: text("query").notNull(),
   domains: text("domains").array().notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (t): PgTableExtraConfigValue[] => [
-  unique("directory_configs_vertical_geo_unique").on(t.vertical, t.geo),
+  unique("directory_configs_vertical_geoname_id_unique").on(t.vertical, t.geonameId),
 ]);

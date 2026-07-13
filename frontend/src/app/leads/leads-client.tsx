@@ -383,10 +383,10 @@ export default function LeadsClient({
   );
 }
 
-// A control char that won't occur in a vertical/geo, used to key a
-// (vertical, geo) combo inside a Set without a delimiter collision.
+// A control char that won't occur in a vertical name, used to key a
+// (vertical, geoname_id) combo inside a Set without a delimiter collision.
 const COMBO_SEP = String.fromCharCode(1);
-const comboKey = (vertical: string, geo: string) => `${vertical}${COMBO_SEP}${geo}`;
+const comboKey = (vertical: string, geonameId: number) => `${vertical}${COMBO_SEP}${geonameId}`;
 
 function ScrapeModal({
   isPending,
@@ -395,7 +395,7 @@ function ScrapeModal({
 }: {
   isPending: boolean;
   onClose: () => void;
-  onSubmit: (args: { combos: { vertical: string; geo: string }[] }) => void;
+  onSubmit: (args: { combos: { vertical: string; geoname_id: number }[] }) => void;
 }) {
   const { data: coverage = [], isLoading } = useQuery(sourceCoverageOptions());
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -404,10 +404,10 @@ function ScrapeModal({
 
   // Group the flat coverage rows by vertical, each with its geos + counts.
   const groups = useMemo(() => {
-    const m = new Map<string, { geo: string; source_count: number }[]>();
+    const m = new Map<string, { geoname_id: number; name: string; source_count: number }[]>();
     for (const c of coverage) {
       const arr = m.get(c.vertical) ?? [];
-      arr.push({ geo: c.geo, source_count: c.source_count });
+      arr.push({ geoname_id: c.geoname_id, name: c.geo.name, source_count: c.source_count });
       m.set(c.vertical, arr);
     }
     return Array.from(m.entries()).map(([vertical, geos]) => ({
@@ -417,21 +417,21 @@ function ScrapeModal({
     }));
   }, [coverage]);
 
-  function toggleGeo(vertical: string, geo: string) {
+  function toggleGeo(vertical: string, geonameId: number) {
     setSelected((prev) => {
       const next = new Set(prev);
-      const k = comboKey(vertical, geo);
+      const k = comboKey(vertical, geonameId);
       if (next.has(k)) next.delete(k); else next.add(k);
       return next;
     });
   }
 
-  function toggleVertical(vertical: string, geos: { geo: string }[]) {
+  function toggleVertical(vertical: string, geos: { geoname_id: number }[]) {
     setSelected((prev) => {
       const next = new Set(prev);
-      const allSel = geos.every((g) => next.has(comboKey(vertical, g.geo)));
+      const allSel = geos.every((g) => next.has(comboKey(vertical, g.geoname_id)));
       for (const g of geos) {
-        const k = comboKey(vertical, g.geo);
+        const k = comboKey(vertical, g.geoname_id);
         if (allSel) next.delete(k); else next.add(k);
       }
       return next;
@@ -449,8 +449,8 @@ function ScrapeModal({
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const combos = Array.from(selected).map((k) => {
-      const [vertical, geo] = k.split(COMBO_SEP);
-      return { vertical: vertical!, geo: geo! };
+      const [vertical, geonameId] = k.split(COMBO_SEP);
+      return { vertical: vertical!, geoname_id: Number(geonameId) };
     });
     if (combos.length === 0) return;
     onSubmit({ combos });
@@ -479,8 +479,8 @@ function ScrapeModal({
           ) : (
             <div className="border border-grey-100 rounded-lg divide-y divide-grey-100 max-h-80 overflow-y-auto">
               {groups.map(({ vertical, geos, total }) => {
-                const allSel = geos.every((g) => selected.has(comboKey(vertical, g.geo)));
-                const someSel = geos.some((g) => selected.has(comboKey(vertical, g.geo)));
+                const allSel = geos.every((g) => selected.has(comboKey(vertical, g.geoname_id)));
+                const someSel = geos.some((g) => selected.has(comboKey(vertical, g.geoname_id)));
                 const isOpen = !collapsed.has(vertical);
                 return (
                   <div key={vertical}>
@@ -508,15 +508,15 @@ function ScrapeModal({
                     </div>
                     {isOpen && (
                       <div className="pb-2.5 pl-9 pr-3 flex flex-col gap-y-2">
-                        {geos.map(({ geo, source_count }) => (
-                          <label key={geo} className="flex items-center gap-2 text-[13px] cursor-pointer">
+                        {geos.map(({ geoname_id, name, source_count }) => (
+                          <label key={geoname_id} className="flex items-center gap-2 text-[13px] cursor-pointer">
                             <input
                               type="checkbox"
-                              checked={selected.has(comboKey(vertical, geo))}
-                              onChange={() => toggleGeo(vertical, geo)}
+                              checked={selected.has(comboKey(vertical, geoname_id))}
+                              onChange={() => toggleGeo(vertical, geoname_id)}
                               className="accent-primary"
                             />
-                            <span>{geo}</span>
+                            <span>{name}</span>
                             <span className="text-[11px] text-grey-400">({source_count})</span>
                           </label>
                         ))}

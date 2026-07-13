@@ -8,6 +8,27 @@
       "when": 1781677254779,
       "tag": "0000_fuzzy_drax",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1783686037478,
+      "tag": "0001_tidy_baron_zemo",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783686058875,
+      "tag": "0002_secret_valeria_richards",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1783915482072,
+      "tag": "0003_wakeful_phil_sheldon",
+      "breakpoints": true
     }
   ]
 }

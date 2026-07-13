@@ -2,12 +2,17 @@
 -- Test: ACME Corp (fictional, SG / education) + 12 test leads
 -- ---------------------------------------------------------------------------
 
+-- Standalone-runnable: bootstrap the Singapore geo_places row (ON CONFLICT-safe)
+-- in case this script runs without seed.sql/db:import-geonames first.
+INSERT INTO geo_places (geoname_id, name, ascii_name, country_code, feature_code)
+VALUES (1880251, 'Singapore', 'Singapore', 'SG', 'PCLI')
+ON CONFLICT (geoname_id) DO NOTHING;
+
 -- Campaign: SG Education
-INSERT INTO campaigns (name, vertical, geography, company_size_target, status, description, pain_points, call_to_action)
+INSERT INTO campaigns (name, vertical, company_size_target, status, description, pain_points, call_to_action)
 SELECT
   'SG Education — Staff & Student Knowledge Base',
   'education',
-  'SG',
   'medium',
   'active',
   'CompanyBrain sits on top of a school or institution''s internal knowledge — curriculum guides, enrolment procedures, policy FAQs, timetabling, exam schedules — and answers routine staff and student enquiries instantly, without routing every question through admin.',
@@ -20,6 +25,10 @@ SELECT
 WHERE NOT EXISTS (
   SELECT 1 FROM campaigns WHERE name = 'SG Education — Staff & Student Knowledge Base'
 );
+
+INSERT INTO campaign_geos (campaign_id, geoname_id)
+SELECT id, 1880251 FROM campaigns WHERE name = 'SG Education — Staff & Student Knowledge Base'
+ON CONFLICT DO NOTHING;
 
 -- Company: ACME (fictional, SG, education)
 WITH co AS (

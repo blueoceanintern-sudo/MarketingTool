@@ -7,6 +7,7 @@ import { demosRouter } from "./routes/demos";
 import { analyticsRouter } from "./routes/analytics";
 import { adminRouter } from "./routes/admin";
 import { eventsRouter } from "./routes/events";
+import { geoRouter } from "./routes/geo";
 import { startJobEventListener } from "./services/events";
 import "./workers";
 
@@ -49,6 +50,7 @@ api.route("/demos", demosRouter);
 api.route("/analytics", analyticsRouter);
 api.route("", adminRouter);
 api.route("", eventsRouter);
+api.route("", geoRouter);
 
 // Webhook is called by AWS SNS (no JWT) — rate limit by IP before auth runs.
 app.use("/api/v1/webhooks/*", rateLimitByIp(50));

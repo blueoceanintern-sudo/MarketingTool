@@ -111,7 +111,7 @@ async function seedBase() {
   }).returning();
 
   const [campaign] = await db.insert(campaigns).values({
-    name: "SG Campaign", vertical: "edtech", geography: "SG", companySizeTarget: "small",
+    name: "SG Campaign", vertical: "edtech", companySizeTarget: "small",
     status: "active", description: "SG schools", painPoints: ["admin overhead"], callToAction: "Book demo",
   }).returning();
 
@@ -342,7 +342,7 @@ describe("Multi-campaign suppression scoping", () => {
     await seedFollowUps(ctx.lead.id, ctx.campaign.id, ctx.draft.id, 1);
 
     const [campB] = await db.insert(campaigns).values({
-      name: "Campaign B", vertical: "saas", geography: "AU", companySizeTarget: "small",
+      name: "Campaign B", vertical: "saas", companySizeTarget: "small",
       status: "active", description: "AU", painPoints: ["inefficiency"], callToAction: "Demo",
     }).returning();
     campaignBId = campB.id;

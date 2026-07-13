@@ -96,7 +96,7 @@ async function seedLineage() {
 // Seed enough email_events to push totalSent above the threshold.
 async function seedTotalSent(n: number) {
   const [company] = await db.insert(companies).values({ name: "Vol Co", industry: "technology", companySize: "medium", location: "Singapore" }).returning();
-  const [campaign] = await db.insert(campaigns).values({ name: "Vol", vertical: "saas", geography: "SG", companySizeTarget: "medium", status: "active" }).returning();
+  const [campaign] = await db.insert(campaigns).values({ name: "Vol", vertical: "saas", companySizeTarget: "medium", status: "active" }).returning();
   const [template] = await db.insert(promptTemplates).values({ name: "Vol Tmpl", systemPrompt: ".", templateType: "initial", active: true, createdBy: "user" }).returning();
   const [lead] = await db.insert(leads).values({ companyId: company.id, email: "vol@test.com", isVerified: true }).returning();
   await db.insert(campaignLeads).values({ leadId: lead.id, campaignId: campaign.id });
