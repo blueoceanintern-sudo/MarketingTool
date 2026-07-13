@@ -79,7 +79,7 @@ export const templateEngagementOptions = () =>
 export type RegistrySourcesParams = {
   page: number;
   limit?: number;
-  geo?: string;
+  geoname_id?: number;
   vertical?: string;
   active?: boolean;
 };

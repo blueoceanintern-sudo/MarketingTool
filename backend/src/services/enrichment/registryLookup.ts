@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { db } from "../../db";
-import { sourceRegistry } from "../../db/schema";
+import { sourceRegistry, geoPlaces } from "../../db/schema";
 import type { EnrichmentInput, EnrichmentProvider, ProviderResult } from "./types";
 
 // Public registry lookup: hits source_registry rows where scraper_type='api'
@@ -13,16 +13,20 @@ export const registryProvider: EnrichmentProvider = {
   name: "registry",
 
   async enrich(input: EnrichmentInput): Promise<ProviderResult | null> {
-    const sources = await db
-      .select()
+    // market is country-level (SG/AU/US); a source's geoname_id may be a
+    // country, region, or city, so match on the resolved country code.
+    const rows = await db
+      .select({ source: sourceRegistry })
       .from(sourceRegistry)
+      .innerJoin(geoPlaces, eq(sourceRegistry.geonameId, geoPlaces.geonameId))
       .where(
         and(
           eq(sourceRegistry.active, true),
           eq(sourceRegistry.scraperType, "api"),
-          eq(sourceRegistry.geo, input.market),
+          eq(geoPlaces.countryCode, input.market),
         ),
       );
+    const sources = rows.map((r) => r.source);
 
     for (const source of sources) {
       const result = await tryRegistry(source.url, source.selectors ?? {}, input);

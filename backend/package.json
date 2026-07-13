@@ -10,6 +10,8 @@
     "db:migrate": "drizzle-kit migrate",
     "db:seed": "bun run src/db/seed.ts",
     "db:seed-test": "bun run src/db/seed-emails.ts",
+    "db:import-geonames": "bun run src/scripts/import-geonames.ts",
+    "db:backfill-company-geo": "bun run src/scripts/backfill-company-geo.ts",
     "db:studio": "drizzle-kit studio",
     "workers": "bun run src/workers/index.ts"
   },

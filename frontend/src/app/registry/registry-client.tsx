@@ -2,7 +2,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { resolveGeo } from "@/lib/geo";
+import { GeoCombobox } from "@/components/geo-combobox";
 import { toast } from "sonner";
 import {
   createRegistrySource,
@@ -15,6 +15,7 @@ import {
   type DirectoryConfig,
   type RegistryImportResult,
   type ScraperType,
+  type GeoRef,
 } from "@/lib/api";
 import {
   registrySourcesOptions,
@@ -45,7 +46,7 @@ function suggest(options: string[], input: string, max = 5): string[] {
 const CSV_COLUMNS = [
   { name: "name",         description: "Display name for the source",                       example: "MOE Schools Directory" },
   { name: "vertical",     description: "Industry vertical (e.g. education, childcare, ihl)", example: "education" },
-  { name: "geo",          description: "Geography — must be SG, AU, or US",                 example: "SG" },
+  { name: "geo",          description: "Geography — a city, region, or country name; resolved to a GeoNames place server-side", example: "Singapore" },
   { name: "url",          description: "Full URL to scrape (must be unique)",                example: "https://moe.gov.sg/schools" },
   { name: "scraper_type", description: "Engine — crawl4ai (JS pages), cheerio (static HTML), or api", example: "cheerio" },
   { name: "legal_flag",   description: "Legal sign-off obtained — true or false",           example: "true" },
@@ -53,13 +54,13 @@ const CSV_COLUMNS = [
 ];
 
 const SAMPLE_CSV = `name,vertical,geo,url,scraper_type,legal_flag,active
-MOE Schools Directory,education,SG,https://moe.gov.sg/schools,cheerio,true,true
-ACECQA Provider List,childcare,AU,https://www.acecqa.gov.au/providers,crawl4ai,false,true
-US Daycare Registry,childcare,US,https://childcare.gov/index/registry,cheerio,false,false`;
+MOE Schools Directory,education,Singapore,https://moe.gov.sg/schools,cheerio,true,true
+ACECQA Provider List,childcare,Australia,https://www.acecqa.gov.au/providers,crawl4ai,false,true
+US Daycare Registry,childcare,United States,https://childcare.gov/index/registry,cheerio,false,false`;
 
 const SOURCES_PAGE_SIZE = 25;
-const BLANK_COVERAGE_FORM = { vertical: "", geo: "", query: "", domains: "" };
-const BLANK_SOURCE_FORM = { name: "", vertical: "", geo: "", url: "", scraper_type: "cheerio" as ScraperType, legal_flag: false, active: true };
+const BLANK_COVERAGE_FORM = { vertical: "", query: "", domains: "" };
+const BLANK_SOURCE_FORM = { name: "", vertical: "", url: "", scraper_type: "cheerio" as ScraperType, legal_flag: false, active: true };
 
 const EMPTY_SOURCES_RESULT = {
   data: [],
@@ -68,14 +69,14 @@ const EMPTY_SOURCES_RESULT = {
   limit: SOURCES_PAGE_SIZE,
   total_pages: 0,
   summary: { total: 0, active: 0 },
-  facets: { geos: [] as string[], verticals: [] as string[] },
+  facets: { geos: [] as { geoname_id: number; name: string; country_code: string }[], verticals: [] as string[] },
 };
 
 export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
   const queryClient = useQueryClient();
   const { data: directoryConfigs = [] } = useQuery(directoryConfigsOptions());
   const { data: activeCombinations = [] } = useQuery(activeCombinationsOptions());
-  const { data: taxonomy = { verticals: [], geos: [] } } = useQuery(taxonomyOptions());
+  const { data: taxonomy = { verticals: [] } } = useQuery(taxonomyOptions());
   const [refreshing, setRefreshing] = useState<string | null>(null);
   const [scrapingSource, setScrapingSource] = useState<string | null>(null);
   const [coverageOpen, setCoverageOpen] = useState(true);
@@ -89,7 +90,7 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
     registrySourcesOptions({
       page: sourcesPage,
       limit: SOURCES_PAGE_SIZE,
-      geo: geoFilter !== "all" ? geoFilter : undefined,
+      geoname_id: geoFilter !== "all" ? Number(geoFilter) : undefined,
       vertical: verticalFilter !== "all" ? verticalFilter : undefined,
       active: activeOnly || undefined,
     }),
@@ -103,11 +104,13 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
   const [importError, setImportError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [form, setForm] = useState(BLANK_SOURCE_FORM);
+  const [sourceGeo, setSourceGeo] = useState<GeoRef | null>(null);
 
   // Coverage config modals (admin only)
   const [showAddCoverageModal, setShowAddCoverageModal] = useState(false);
   const [editingConfig, setEditingConfig] = useState<DirectoryConfig | null>(null);
   const [coverageForm, setCoverageForm] = useState(BLANK_COVERAGE_FORM);
+  const [coverageGeo, setCoverageGeo] = useState<GeoRef | null>(null);
   const [coverageError, setCoverageError] = useState<string | null>(null);
   const [coverageDuplicate, setCoverageDuplicate] = useState<DirectoryConfig | null>(null);
   const [deletingConfig, setDeletingConfig] = useState<DirectoryConfig | null>(null);
@@ -117,10 +120,11 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
 
   const createMutation = useMutation({
     mutationFn: async () => {
+      if (!sourceGeo) throw new Error("Geography is required");
       const { source, error } = await createRegistrySource({
         name: form.name.trim(),
         vertical: form.vertical.trim(),
-        geo: form.geo.trim().toUpperCase(),
+        geoname_id: sourceGeo.geoname_id,
         url: form.url.trim(),
         scraper_type: form.scraper_type,
         legal_flag: form.legal_flag,
@@ -132,6 +136,7 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
       queryClient.invalidateQueries({ queryKey: keys.registry });
       setShowAddModal(false);
       setForm(BLANK_SOURCE_FORM);
+      setSourceGeo(null);
     },
     onError: (err) => setFormError(err instanceof Error ? err.message : "Failed to add source"),
   });
@@ -151,10 +156,11 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
 
   const createConfigMutation = useMutation({
     mutationFn: async () => {
+      if (!coverageGeo) throw new Error("Geography is required");
       const domains = coverageForm.domains.split(",").map((d) => d.trim()).filter(Boolean);
       return createDirectoryConfig({
         vertical: coverageForm.vertical.trim().toLowerCase(),
-        geo: resolveGeo(coverageForm.geo),
+        geoname_id: coverageGeo.geoname_id,
         query: coverageForm.query.trim(),
         domains,
       });
@@ -162,8 +168,7 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
     onSuccess: (result) => {
       if (result.isDuplicate) {
         const vertical = coverageForm.vertical.trim().toLowerCase();
-        const geo = resolveGeo(coverageForm.geo);
-        const existing = directoryConfigs.find((c) => c.vertical === vertical && c.geo === geo) ?? null;
+        const existing = directoryConfigs.find((c) => c.vertical === vertical && c.geoname_id === coverageGeo?.geoname_id) ?? null;
         setCoverageDuplicate(existing);
         return;
       }
@@ -174,9 +179,10 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
       invalidateConfigs();
       setShowAddCoverageModal(false);
       setCoverageForm(BLANK_COVERAGE_FORM);
+      setCoverageGeo(null);
       setCoverageError(null);
       setCoverageDuplicate(null);
-      void handleRefresh(result.config.vertical, result.config.geo);
+      void handleRefresh(result.config.vertical, result.config.geoname_id);
     },
   });
 
@@ -213,17 +219,21 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
     onError: (err) => toast.error(err instanceof Error ? err.message : "Failed to delete config"),
   });
 
-  // Canonical taxonomy from the server — already deduped and normalized across
-  // source_registry, directory_configs, and companies. Used for autocomplete
-  // and filter dropdowns. activeCombinations is kept separately for gap detection.
+  // Canonical vertical taxonomy from the server. Geo filter options come from
+  // sourcesResult.facets.geos instead — the GeoNames reference table is too
+  // large for a "fetch everything" taxonomy endpoint.
   const verticals = taxonomy.verticals;
-  const geos = taxonomy.geos;
+  const geoFacets = sourcesResult.facets.geos;
 
   const sourcesTotalPages = Math.max(1, sourcesResult.total_pages);
   const sourcesPageClamped = Math.min(sourcesPage, sourcesTotalPages);
 
   function handleCreate(e: React.FormEvent) {
     e.preventDefault();
+    if (!sourceGeo) {
+      setFormError("Geography is required");
+      return;
+    }
     setFormError(null);
     createMutation.mutate();
   }
@@ -281,10 +291,10 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
     }
   }
 
-  async function handleRefresh(vertical: string, geo: string) {
-    const key = `${vertical}:${geo}`;
+  async function handleRefresh(vertical: string, geonameId: number) {
+    const key = `${vertical}:${geonameId}`;
     setRefreshing(key);
-    const result = await triggerDiscovery(vertical, geo);
+    const result = await triggerDiscovery(vertical, geonameId);
 
     if (!result.ok) {
       setRefreshing(null);
@@ -304,10 +314,10 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
     setEditingConfig(cfg);
     setCoverageForm({
       vertical: cfg.vertical,
-      geo: cfg.geo,
       query: cfg.query,
       domains: cfg.domains.join(", "),
     });
+    setCoverageGeo({ geoname_id: cfg.geoname_id, name: cfg.geo.name, country_code: cfg.geo.country_code, admin1_name: cfg.geo.admin1_name ?? null });
     setCoverageError(null);
   }
 
@@ -318,6 +328,10 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
     if (editingConfig) {
       updateConfigMutation.mutate();
     } else {
+      if (!coverageGeo) {
+        setCoverageError("Geography is required");
+        return;
+      }
       createConfigMutation.mutate();
     }
   }
@@ -326,14 +340,15 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
   const coverageRows = useMemo(() => {
     const configured = directoryConfigs.map((c) => ({
       vertical: c.vertical,
+      geoname_id: c.geoname_id,
       geo: c.geo,
       has_config: true,
       domains: c.domains,
       config: c,
     }));
-    const configuredKeys = new Set(configured.map((c) => `${c.vertical}:${c.geo}`));
+    const configuredKeys = new Set(configured.map((c) => `${c.vertical}:${c.geoname_id}`));
     const gaps = activeCombinations
-      .filter((c) => !configuredKeys.has(`${c.vertical}:${c.geo}`))
+      .filter((c) => !configuredKeys.has(`${c.vertical}:${c.geoname_id}`))
       .map((c) => ({ ...c, domains: [] as string[], config: null }));
     return [...configured, ...gaps];
   }, [directoryConfigs, activeCombinations]);
@@ -423,7 +438,7 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
         </div>
         <div className="bg-white p-5 rounded-lg border border-grey-100">
           <p className="text-[13px] text-grey-500">Geographies</p>
-          <h3 className="text-[24px] font-bold font-mono mt-2">{geos.length}</h3>
+          <h3 className="text-[24px] font-bold font-mono mt-2">{geoFacets.length}</h3>
         </div>
         <div className="bg-white p-5 rounded-lg border border-grey-100">
           <p className="text-[13px] text-grey-500">Verticals</p>
@@ -480,11 +495,11 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
               </thead>
               <tbody className="divide-y divide-grey-100">
                 {coverageRows.map((row) => {
-                  const key = `${row.vertical}:${row.geo}`;
+                  const key = `${row.vertical}:${row.geoname_id}`;
                   return (
                     <tr key={key} className="hover:bg-ocean-wash/40">
                       <td className="px-5 py-3 text-[13px] font-medium capitalize">{row.vertical}</td>
-                      <td className="px-4 py-3 text-center text-[12px]">{row.geo}</td>
+                      <td className="px-4 py-3 text-center text-[12px]">{row.geo.name}</td>
                       <td className="px-4 py-3">
                         {row.has_config ? (
                           <div className="flex flex-wrap gap-1">
@@ -519,7 +534,7 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
                           {row.has_config && (
                             <button
                               type="button"
-                              onClick={() => handleRefresh(row.vertical, row.geo)}
+                              onClick={() => handleRefresh(row.vertical, row.geoname_id)}
                               disabled={refreshing === key}
                               className="flex items-center gap-1.5 px-3 py-1.5 border border-grey-200 rounded-lg text-[12px] font-medium text-grey-700 hover:bg-grey-50 disabled:opacity-60"
                             >
@@ -531,7 +546,8 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
                             <button
                               type="button"
                               onClick={() => {
-                                setCoverageForm({ vertical: row.vertical, geo: row.geo, query: "", domains: "" });
+                                setCoverageForm({ vertical: row.vertical, query: "", domains: "" });
+                                setCoverageGeo({ geoname_id: row.geoname_id, name: row.geo.name, country_code: row.geo.country_code, admin1_name: row.geo.admin1_name ?? null });
                                 setCoverageError(null);
                                 setCoverageDuplicate(null);
                                 setShowAddCoverageModal(true);
@@ -574,7 +590,7 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
               className="px-3 py-1.5 border border-grey-100 rounded text-[13px] bg-white"
             >
               <option value="all">All Geographies</option>
-              {geos.map((g) => <option key={g} value={g}>{g}</option>)}
+              {geoFacets.map((g) => <option key={g.geoname_id} value={g.geoname_id}>{g.name}</option>)}
             </select>
             <select
               value={verticalFilter}
@@ -627,7 +643,7 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
                 <tr key={s.id} className="hover:bg-ocean-wash">
                   <td className="px-6 py-3 text-[14px] font-medium">{s.name}</td>
                   <td className="px-4 py-3 text-[13px]">{s.vertical}</td>
-                  <td className="px-4 py-3 text-center text-[12px]">{s.geo}</td>
+                  <td className="px-4 py-3 text-center text-[12px]">{s.geo.name}</td>
                   <td className="px-4 py-3 text-[12px] font-mono text-ocean-light truncate max-w-75">
                     <a href={s.url} target="_blank" rel="noreferrer" className="hover:underline">{s.url}</a>
                   </td>
@@ -765,19 +781,7 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
               </label>
               <label className="flex flex-col gap-1 text-[13px]">
                 Geography
-                <input
-                  required
-                  list="source-geos"
-                  value={form.geo}
-                  onChange={(e) => setForm((f) => ({ ...f, geo: e.target.value }))}
-                  onBlur={(e) => setForm((f) => ({ ...f, geo: resolveGeo(e.target.value) }))}
-                  onKeyDown={(e) => { if (e.key === "Enter") setForm((f) => ({ ...f, geo: resolveGeo(f.geo) })); }}
-                  placeholder="e.g. SG"
-                  className="border border-grey-200 rounded-lg px-3 py-2"
-                />
-                <datalist id="source-geos">
-                  {suggest(geos, form.geo).map((g) => <option key={g} value={g} />)}
-                </datalist>
+                <GeoCombobox selected={sourceGeo} onSelect={setSourceGeo} placeholder="e.g. Sydney, or Singapore" />
               </label>
               <label className="flex flex-col gap-1 text-[13px]">
                 URL
@@ -839,7 +843,7 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
           <div className="bg-white rounded-lg w-full max-w-md p-6">
             <h3 className="text-[18px] font-bold mb-4">
-              {editingConfig ? `Edit coverage — ${editingConfig.vertical} in ${editingConfig.geo}` : "Add coverage config"}
+              {editingConfig ? `Edit coverage — ${editingConfig.vertical} in ${editingConfig.geo.name}` : "Add coverage config"}
             </h3>
             <form onSubmit={handleCoverageSubmit} className="flex flex-col gap-4">
               {!editingConfig && (
@@ -860,19 +864,7 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
                   </label>
                   <label className="flex flex-col gap-1 text-[13px]">
                     Geography
-                    <input
-                      required
-                      list="coverage-geos"
-                      value={coverageForm.geo}
-                      onChange={(e) => setCoverageForm((f) => ({ ...f, geo: e.target.value }))}
-                      onBlur={(e) => setCoverageForm((f) => ({ ...f, geo: resolveGeo(e.target.value) }))}
-                      onKeyDown={(e) => { if (e.key === "Enter") setCoverageForm((f) => ({ ...f, geo: resolveGeo(f.geo) })); }}
-                      placeholder="e.g. SG"
-                      className="border border-grey-200 rounded-lg px-3 py-2"
-                    />
-                    <datalist id="coverage-geos">
-                      {suggest(geos, coverageForm.geo).map((g) => <option key={g} value={g} />)}
-                    </datalist>
+                    <GeoCombobox selected={coverageGeo} onSelect={setCoverageGeo} placeholder="e.g. Sydney, or Singapore" />
                   </label>
                 </>
               )}
@@ -899,7 +891,7 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
               </label>
               {coverageDuplicate && !editingConfig && (
                 <div className="flex items-center justify-between gap-2 rounded-lg bg-warning/10 border border-warning/30 px-3 py-2 text-[13px]">
-                  <span>A config for <span className="font-mono font-semibold">{coverageDuplicate.vertical} in {coverageDuplicate.geo}</span> already exists.</span>
+                  <span>A config for <span className="font-mono font-semibold">{coverageDuplicate.vertical} in {coverageDuplicate.geo.name}</span> already exists.</span>
                   <button
                     type="button"
                     onClick={() => { setShowAddCoverageModal(false); setCoverageDuplicate(null); openEditConfig(coverageDuplicate); }}
@@ -953,7 +945,7 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
               <div>
                 <h3 className="text-[18px] font-bold text-primary">Delete coverage config</h3>
                 <p className="text-[13px] text-grey-500 mt-1">
-                  <span className="font-mono font-semibold text-primary">{deletingConfig.vertical} in {deletingConfig.geo}</span>
+                  <span className="font-mono font-semibold text-primary">{deletingConfig.vertical} in {deletingConfig.geo.name}</span>
                 </p>
               </div>
               <button
@@ -968,7 +960,7 @@ export default function RegistryClient({ isAdmin }: { isAdmin: boolean }) {
             <div className="rounded-lg border border-warning/40 bg-warning/5 px-4 py-3 flex flex-col gap-2">
               <p className="text-[13px] font-semibold text-warning">What this does</p>
               <ul className="text-[13px] text-grey-700 space-y-1 list-disc pl-4">
-                <li>Tavily auto-discovery will <strong>stop running</strong> for <span className="font-mono">{deletingConfig.vertical} in {deletingConfig.geo}</span>. No new sources will be found automatically.</li>
+                <li>Tavily auto-discovery will <strong>stop running</strong> for <span className="font-mono">{deletingConfig.vertical} in {deletingConfig.geo.name}</span>. No new sources will be found automatically.</li>
                 <li>All <strong>existing sources</strong> already in the registry for this vertical and geography are unaffected — they remain and can still be scraped.</li>
                 <li>The next campaign run for this vertical/geo will show a &quot;no directory config&quot; gap in the coverage table.</li>
                 <li>You can re-add coverage at any time via <strong>Add coverage</strong>.</li>

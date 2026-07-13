@@ -1,12 +1,13 @@
 import { Hono } from "hono";
 import { db } from "../db";
-import { sourceRegistry, suppressionList, promptTemplates, emailDrafts, emailEvents, campaigns, directoryConfigs, leads, companies, normalizeVertical, normalizeGeo } from "../db/schema";
+import { sourceRegistry, suppressionList, promptTemplates, emailDrafts, emailEvents, campaigns, campaignGeos, directoryConfigs, geoPlaces, leads, companies, normalizeVertical } from "../db/schema";
 import { eq, and, inArray, count, sql } from "drizzle-orm";
 import { scrapeWebsite } from "../services/scrapers/cheerioScraper";
 import { scrapeWithFallback } from "../services/scrapers/crawl4aiScraper";
 import { isValidLeadEmail } from "../services/scrapers/emailFilter";
 import { logAudit } from "../services/audit/log";
-import { discoverSources, getDirectoryConfig, getAllDirectoryConfigs, resolveGeo } from "../services/sourceRegistry";
+import { discoverSources, getDirectoryConfig, getAllDirectoryConfigs } from "../services/sourceRegistry";
+import { searchGeoPlaces, getGeoPlace } from "../services/geoPlaces";
 import { emitJobEvent } from "../services/events";
 import { requireAdmin, type AuthUser } from "../middleware/auth";
 import { runFollowUpSender } from "../workers";
@@ -50,12 +51,13 @@ adminRouter.get("/registry/sources", async (c) => {
   const limit = Math.min(200, Math.max(1, parseInt(c.req.query("limit") ?? "25", 10) || 25));
   const offset = (page - 1) * limit;
 
-  const geoParam = c.req.query("geo");
+  const geonameIdParam = c.req.query("geoname_id");
+  const geonameId = geonameIdParam ? Number(geonameIdParam) : undefined;
   const verticalParam = c.req.query("vertical");
   const activeParam = c.req.query("active");
 
   const where = and(
-    geoParam ? eq(sourceRegistry.geo, geoParam) : undefined,
+    geonameId ? eq(sourceRegistry.geonameId, geonameId) : undefined,
     verticalParam ? eq(sourceRegistry.vertical, verticalParam) : undefined,
     activeParam === "true" ? eq(sourceRegistry.active, true) : undefined,
   );
@@ -64,8 +66,9 @@ adminRouter.get("/registry/sources", async (c) => {
   const total = Number(filteredCount?.total ?? 0);
 
   const rows = await db
-    .select()
+    .select({ source: sourceRegistry, place: geoPlaces })
     .from(sourceRegistry)
+    .innerJoin(geoPlaces, eq(sourceRegistry.geonameId, geoPlaces.geonameId))
     .where(where)
     .orderBy(sourceRegistry.createdAt)
     .limit(limit)
@@ -80,18 +83,23 @@ adminRouter.get("/registry/sources", async (c) => {
     })
     .from(sourceRegistry);
 
-  const geoRows = await db.selectDistinct({ geo: sourceRegistry.geo }).from(sourceRegistry).orderBy(sourceRegistry.geo);
+  const geoRows = await db
+    .selectDistinct({ geonameId: geoPlaces.geonameId, name: geoPlaces.name, countryCode: geoPlaces.countryCode })
+    .from(sourceRegistry)
+    .innerJoin(geoPlaces, eq(sourceRegistry.geonameId, geoPlaces.geonameId))
+    .orderBy(geoPlaces.name);
   const verticalRows = await db
     .selectDistinct({ vertical: sourceRegistry.vertical })
     .from(sourceRegistry)
     .orderBy(sourceRegistry.vertical);
 
   return c.json({
-    data: rows.map((r) => ({
+    data: rows.map(({ source: r, place }) => ({
       id: r.id,
       name: r.name,
       vertical: r.vertical,
-      geo: r.geo,
+      geoname_id: r.geonameId,
+      geo: { name: place.name, country_code: place.countryCode, admin1_name: place.admin1Name },
       url: r.url,
       scraper_type: r.scraperType,
       legal_flag: r.legalFlag,
@@ -109,7 +117,7 @@ adminRouter.get("/registry/sources", async (c) => {
       active: Number(globalRow?.active ?? 0),
     },
     facets: {
-      geos: geoRows.map((r) => r.geo),
+      geos: geoRows.map((r) => ({ geoname_id: r.geonameId, name: r.name, country_code: r.countryCode })),
       verticals: verticalRows.map((r) => r.vertical),
     },
   });
@@ -119,7 +127,7 @@ adminRouter.post("/registry/sources", requireAdmin, async (c) => {
   const body = await c.req.json<{
     name?: string;
     vertical?: string;
-    geo?: string;
+    geoname_id?: number;
     url?: string;
     scraper_type?: string;
     legal_flag?: boolean;
@@ -127,9 +135,12 @@ adminRouter.post("/registry/sources", requireAdmin, async (c) => {
     active?: boolean;
   }>();
 
-  if (!body.name || !body.vertical || !body.geo || !body.url || !body.scraper_type) {
-    return c.json({ error: "name, vertical, geo, url, scraper_type are required" }, 400);
+  if (!body.name || !body.vertical || !body.geoname_id || !body.url || !body.scraper_type) {
+    return c.json({ error: "name, vertical, geoname_id, url, scraper_type are required" }, 400);
   }
+
+  const place = await getGeoPlace(body.geoname_id);
+  if (!place) return c.json({ error: `Unknown geoname_id: ${body.geoname_id}` }, 400);
 
   const scraperType = body.scraper_type as "crawl4ai" | "cheerio" | "api";
 
@@ -138,7 +149,7 @@ adminRouter.post("/registry/sources", requireAdmin, async (c) => {
     .values({
       name: body.name,
       vertical: normalizeVertical(body.vertical),
-      geo: normalizeGeo(body.geo),
+      geonameId: body.geoname_id,
       url: body.url,
       scraperType,
       legalFlag: body.legal_flag ?? false,
@@ -198,13 +209,23 @@ adminRouter.post("/registry/sources/import", requireAdmin, async (c) => {
       continue;
     }
 
+    const geoMatches = await searchGeoPlaces(geo, { limit: 2 });
+    if (geoMatches.length === 0) {
+      errors.push({ row: rowNum, reason: `No place found matching geo "${geo}"` });
+      continue;
+    }
+    if (geoMatches.length > 1 && geoMatches[0]!.name.toLowerCase() !== geo.trim().toLowerCase()) {
+      errors.push({ row: rowNum, reason: `Ambiguous geo "${geo}" — matched ${geoMatches.length}+ places, be more specific (e.g. "Sydney, AU")` });
+      continue;
+    }
+
     try {
       const [result] = await db
         .insert(sourceRegistry)
         .values({
           name,
           vertical: normalizeVertical(vertical),
-          geo: normalizeGeo(geo),
+          geonameId: geoMatches[0]!.geonameId,
           url,
           scraperType: scraper_type as "crawl4ai" | "cheerio" | "api",
           legalFlag: parseBool(record.legal_flag, false),
@@ -235,36 +256,46 @@ adminRouter.post("/registry/sources/import", requireAdmin, async (c) => {
 // Exposes DB-backed directory configs so the registry UI can render coverage.
 adminRouter.get("/registry/directory-configs", async (c) => {
   const items = await getAllDirectoryConfigs();
-  return c.json(items);
+  return c.json(items.map((i) => ({
+    id: i.id,
+    vertical: i.vertical,
+    geoname_id: i.geonameId,
+    geo: { name: i.geoName, country_code: i.countryCode },
+    query: i.query,
+    domains: i.domains,
+  })));
 });
 
 adminRouter.post("/registry/directory-configs", requireAdmin, async (c) => {
   const body = await c.req.json<{
     vertical?: string;
-    geo?: string;
+    geoname_id?: number;
     query?: string;
     domains?: string[];
   }>();
 
-  if (!body.vertical || !body.geo || !body.query || !Array.isArray(body.domains) || body.domains.length === 0) {
-    return c.json({ error: "vertical, geo, query, and at least one domain are required" }, 400);
+  if (!body.vertical || !body.geoname_id || !body.query || !Array.isArray(body.domains) || body.domains.length === 0) {
+    return c.json({ error: "vertical, geoname_id, query, and at least one domain are required" }, 400);
   }
 
   const vertical = normalizeVertical(body.vertical);
-  const geo = resolveGeo(body.geo);
+  const geonameId = body.geoname_id;
+
+  const place = await getGeoPlace(geonameId);
+  if (!place) return c.json({ error: `Unknown geoname_id: ${geonameId}` }, 400);
 
   const [existing] = await db
     .select({ id: directoryConfigs.id })
     .from(directoryConfigs)
-    .where(and(eq(directoryConfigs.vertical, vertical), eq(directoryConfigs.geo, geo)))
+    .where(and(eq(directoryConfigs.vertical, vertical), eq(directoryConfigs.geonameId, geonameId)))
     .limit(1);
   if (existing) {
-    return c.json({ error: `A config for ${vertical}:${geo} already exists — use PATCH to update it` }, 409);
+    return c.json({ error: `A config for ${vertical}:${geonameId} already exists — use PATCH to update it` }, 409);
   }
 
   const [row] = await db
     .insert(directoryConfigs)
-    .values({ vertical, geo, query: body.query, domains: body.domains })
+    .values({ vertical, geonameId, query: body.query, domains: body.domains })
     .returning();
 
   await logAudit({
@@ -272,10 +303,10 @@ adminRouter.post("/registry/directory-configs", requireAdmin, async (c) => {
     action: "directory_config.create",
     targetId: row!.id,
     targetType: "directory_config",
-    metadata: { vertical, geo, domains: body.domains },
+    metadata: { vertical, geonameId, domains: body.domains },
   });
 
-  return c.json({ id: row!.id, vertical: row!.vertical, geo: row!.geo, query: row!.query, domains: row!.domains }, 201);
+  return c.json({ id: row!.id, vertical: row!.vertical, geoname_id: row!.geonameId, query: row!.query, domains: row!.domains }, 201);
 });
 
 adminRouter.patch("/registry/directory-configs/:id", requireAdmin, async (c) => {
@@ -307,7 +338,7 @@ adminRouter.patch("/registry/directory-configs/:id", requireAdmin, async (c) => 
     metadata: { changed: Object.keys(updates).filter((k) => k !== "updatedAt") },
   });
 
-  return c.json({ id: updated!.id, vertical: updated!.vertical, geo: updated!.geo, query: updated!.query, domains: updated!.domains });
+  return c.json({ id: updated!.id, vertical: updated!.vertical, geoname_id: updated!.geonameId, query: updated!.query, domains: updated!.domains });
 });
 
 adminRouter.delete("/registry/directory-configs/:id", requireAdmin, async (c) => {
@@ -322,7 +353,7 @@ adminRouter.delete("/registry/directory-configs/:id", requireAdmin, async (c) =>
     action: "directory_config.delete",
     targetId: id,
     targetType: "directory_config",
-    metadata: { vertical: existing.vertical, geo: existing.geo },
+    metadata: { vertical: existing.vertical, geoname_id: existing.geonameId },
   });
 
   return c.json({ ok: true });
@@ -335,16 +366,19 @@ const refreshLastTriggered = new Map<string, number>();
 const REFRESH_COOLDOWN_MS = 60_000;
 
 adminRouter.post("/registry/discover", async (c) => {
-  const body = await c.req.json<{ vertical?: string; geo?: string }>();
-  if (!body.vertical || !body.geo) {
-    return c.json({ error: "vertical and geo are required" }, 400);
+  const body = await c.req.json<{ vertical?: string; geoname_id?: number }>();
+  if (!body.vertical || !body.geoname_id) {
+    return c.json({ error: "vertical and geoname_id are required" }, 400);
   }
 
   const vertical = normalizeVertical(body.vertical);
-  const geo = normalizeGeo(body.geo);
-  const key = `${vertical}:${geo}`;
+  const geonameId = body.geoname_id;
+  const place = await getGeoPlace(geonameId);
+  if (!place) return c.json({ error: `Unknown geoname_id: ${geonameId}` }, 400);
+  const geo = place.name;
+  const key = `${vertical}:${geonameId}`;
 
-  const config = await getDirectoryConfig(vertical, geo);
+  const config = await getDirectoryConfig(vertical, geonameId);
   if (!config) {
     return c.json(
       {
@@ -377,7 +411,7 @@ adminRouter.post("/registry/discover", async (c) => {
     .where(and(eq(campaigns.vertical, vertical), eq(campaigns.status, "active")))
     .limit(1);
 
-  void discoverSources(vertical, geo, anyCampaign?.id ?? null)
+  void discoverSources(vertical, geonameId, anyCampaign?.id ?? null)
     .then(async ({ inserted, sourceIds }) => {
       await emitJobEvent({ kind: "discovery", vertical, geo, inserted });
       if (sourceIds.length > 0) {
@@ -423,30 +457,35 @@ adminRouter.get("/registry/source-coverage", async (c) => {
   const rows = await db
     .select({
       vertical: sourceRegistry.vertical,
-      geo: sourceRegistry.geo,
+      geonameId: sourceRegistry.geonameId,
+      name: geoPlaces.name,
+      countryCode: geoPlaces.countryCode,
       source_count: count(),
     })
     .from(sourceRegistry)
+    .innerJoin(geoPlaces, eq(sourceRegistry.geonameId, geoPlaces.geonameId))
     .where(eq(sourceRegistry.active, true))
-    .groupBy(sourceRegistry.vertical, sourceRegistry.geo)
-    .orderBy(sourceRegistry.vertical, sourceRegistry.geo);
+    .groupBy(sourceRegistry.vertical, sourceRegistry.geonameId, geoPlaces.name, geoPlaces.countryCode)
+    .orderBy(sourceRegistry.vertical, geoPlaces.name);
 
-  return c.json(rows.map((r) => ({ vertical: r.vertical, geo: r.geo, source_count: Number(r.source_count) })));
+  return c.json(rows.map((r) => ({
+    vertical: r.vertical,
+    geoname_id: r.geonameId,
+    geo: { name: r.name, country_code: r.countryCode },
+    source_count: Number(r.source_count),
+  })));
 });
 
-// Canonical taxonomy: distinct normalized verticals + geos from all authoritative
-// tables (source_registry, directory_configs, companies). Used to populate
-// autocomplete datalists so every modal suggests only consistent canonical values.
+// Canonical vertical taxonomy: distinct normalized verticals from all authoritative
+// tables (source_registry, directory_configs, companies). Used to populate the
+// vertical autocomplete. Geo suggestions now come from GET /geo/search instead —
+// a GeoNames-backed reference table is too large for "fetch all, filter client-side".
 adminRouter.get("/registry/taxonomy", async (c) => {
-  const [srVerticals, dcVerticals, coVerticals, srGeos, dcGeos, coGeos] = await Promise.all([
+  const [srVerticals, dcVerticals, coVerticals] = await Promise.all([
     db.selectDistinct({ v: sourceRegistry.vertical }).from(sourceRegistry),
     db.selectDistinct({ v: directoryConfigs.vertical }).from(directoryConfigs),
     db.selectDistinct({ v: companies.industry }).from(companies)
       .where(sql`${companies.industry} IS NOT NULL AND ${companies.industry} NOT IN ('general', '')`),
-    db.selectDistinct({ g: sourceRegistry.geo }).from(sourceRegistry),
-    db.selectDistinct({ g: directoryConfigs.geo }).from(directoryConfigs),
-    db.selectDistinct({ g: companies.location }).from(companies)
-      .where(sql`${companies.location} IS NOT NULL AND ${companies.location} NOT IN ('unknown', '')`),
   ]);
 
   const verticals = Array.from(
@@ -457,15 +496,7 @@ adminRouter.get("/registry/taxonomy", async (c) => {
     ].filter(Boolean)),
   ).sort();
 
-  const geos = Array.from(
-    new Set([
-      ...srGeos.map((r) => normalizeGeo(r.g)),
-      ...dcGeos.map((r) => normalizeGeo(r.g)),
-      ...coGeos.map((r) => normalizeGeo(r.g ?? "")),
-    ].filter(Boolean)),
-  ).sort();
-
-  return c.json({ verticals, geos });
+  return c.json({ verticals });
 });
 
 // Convenience: returns (vertical, geo) tuples currently used by any active
@@ -473,29 +504,18 @@ adminRouter.get("/registry/taxonomy", async (c) => {
 // combination, regardless of whether DIRECTORY_CONFIGS has them.
 adminRouter.get("/registry/active-combinations", async (c) => {
   const rows = await db
-    .selectDistinct({ vertical: campaigns.vertical, geography: campaigns.geography })
+    .selectDistinct({ vertical: campaigns.vertical, geonameId: campaignGeos.geonameId, name: geoPlaces.name, countryCode: geoPlaces.countryCode })
     .from(campaigns)
+    .innerJoin(campaignGeos, eq(campaignGeos.campaignId, campaigns.id))
+    .innerJoin(geoPlaces, eq(geoPlaces.geonameId, campaignGeos.geonameId))
     .where(inArray(campaigns.status, ["active", "paused"]));
 
-  // geography is pipe-separated → expand to (vertical, geo) pairs
-  const pairs = new Set<string>();
-  for (const row of rows) {
-    for (const g of row.geography.split("|")) {
-      const geo = g.trim();
-      if (geo) pairs.add(`${row.vertical}:${geo}`);
-    }
-  }
-
-  const pairArray = Array.from(pairs).map((p) => {
-    const [vertical, geo] = p.split(":") as [string, string];
-    return { vertical, geo };
-  });
-
   const withConfig = await Promise.all(
-    pairArray.map(async ({ vertical, geo }) => ({
-      vertical,
-      geo,
-      has_config: !!(await getDirectoryConfig(vertical, geo)),
+    rows.map(async (row) => ({
+      vertical: row.vertical,
+      geoname_id: row.geonameId,
+      geo: { name: row.name, country_code: row.countryCode },
+      has_config: !!(await getDirectoryConfig(row.vertical, row.geonameId)),
     })),
   );
 
@@ -507,6 +527,9 @@ async function scrapeSourceRecord(source: typeof sourceRegistry.$inferSelect): P
   const result = source.scraperType === "crawl4ai"
     ? await scrapeWithFallback(source.url)
     : { leads: await scrapeWebsite(source.url), scraper: "cheerio" as const };
+
+  const place = await getGeoPlace(source.geonameId);
+  const locationLabel = place?.name ?? "unknown";
 
   let saved = 0;
   for (const scraped of result.leads) {
@@ -524,7 +547,8 @@ async function scrapeSourceRecord(source: typeof sourceRegistry.$inferSelect): P
         name: companyName,
         industry: source.vertical,
         companySize: "unknown",
-        location: source.geo,
+        location: locationLabel,
+        geonameId: source.geonameId,
         source: scraped.website,
       }).returning();
       company = inserted!;
