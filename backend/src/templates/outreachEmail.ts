@@ -1,4 +1,4 @@
-export function buildEmailHtml(body: string, unsubscribeUrl: string): string {
+export function buildEmailHtml(body: string, unsubscribeUrl: string, trackingPixelUrl?: string): string {
   const bodyHtml = body.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>");
 
   return `<!DOCTYPE html>
@@ -70,6 +70,7 @@ export function buildEmailHtml(body: string, unsubscribeUrl: string): string {
       </td>
     </tr>
   </table>
+${trackingPixelUrl ? `  <img src="${trackingPixelUrl}" width="1" height="1" alt="" style="display:none;" />` : ""}
 </body>
 </html>`;
 }

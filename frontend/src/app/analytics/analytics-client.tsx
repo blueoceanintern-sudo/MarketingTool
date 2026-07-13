@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { getAnalyticsOverview, getDailySends } from "@/lib/api";
+import { getAnalyticsOverview, getDailySends, downloadAnalyticsExport } from "@/lib/api";
 
 export default function AnalyticsClient() {
   const { data: overview } = useQuery({
@@ -72,13 +72,13 @@ export default function AnalyticsClient() {
             Real-time performance across all automated outreach channels.
           </p>
         </div>
-        <a
-          href="/api/v1/analytics/export"
+        <button
+          onClick={downloadAnalyticsExport}
           className="flex items-center gap-2 px-4 py-2 border border-primary text-primary text-[14px] font-semibold rounded-lg hover:bg-ocean-wash active:opacity-80 transition-all duration-150"
         >
           <span className="material-symbols-outlined text-[18px]">download</span>
           Export CSV
-        </a>
+        </button>
       </div>
 
       {/* 5-column KPI tiles */}

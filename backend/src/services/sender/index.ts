@@ -87,11 +87,13 @@ export async function getTotalSent(): Promise<number> {
 }
 
 function buildUnsubscribeUrl(leadId: string, campaignId: string): string {
-  // Route through the frontend (port 80, publicly open) rather than the
-  // backend directly (port 3001 is firewalled). The frontend /api/unsubscribe
-  // route proxies to localhost:3001 internally.
   const base = process.env.FRONTEND_URL ?? "http://localhost:3000";
   return `${base}/api/unsubscribe?id=${leadId}&campaign=${campaignId}`;
+}
+
+function buildTrackingPixelUrl(eventId: string): string {
+  const base = process.env.FRONTEND_URL ?? "http://localhost:3000";
+  return `${base}/api/track-open/${eventId}`;
 }
 
 function wrapBase64(b64: string): string {
@@ -200,13 +202,19 @@ export async function sendDraft(payload: SendPayload): Promise<SendResult> {
     return { draftId, status: "blocked", reason: `campaign_status_${campaign.status}` };
   }
 
+  const unsubscribeUrl = buildUnsubscribeUrl(leadId, campaignId);
+  const eventId = crypto.randomUUID();
+  const trackingPixelUrl = buildTrackingPixelUrl(eventId);
+  const textBody = `${draft.body}\n\nTo unsubscribe: ${unsubscribeUrl}`;
+  const htmlBody = buildEmailHtml(draft.body, unsubscribeUrl, trackingPixelUrl);
+
   // SES_DRY_RUN=true skips the actual SES call — use this to test the full
   // pipeline locally without AWS credentials.
   if (process.env.SES_DRY_RUN === "true") {
     const fakeMessageId = `dry-run-${Date.now()}`;
     const now = new Date();
     await Promise.all([
-      db.insert(emailEvents).values({ draftId, leadId, sesMessageId: `<${fakeMessageId}@dry-run.local>`, sentAt: now }),
+      db.insert(emailEvents).values({ id: eventId, draftId, leadId, sesMessageId: `<${fakeMessageId}@dry-run.local>`, sentAt: now }),
       db.update(emailDrafts).set({ status: "sent" }).where(eq(emailDrafts.id, draftId)),
       db.update(leads).set({ lastContactedAt: now, lastDeliveredTemplateId: draft.templateId }).where(eq(leads.id, leadId)),
       db.update(promptTemplates).set({ sendCount: sql`${promptTemplates.sendCount} + 1` }).where(eq(promptTemplates.id, draft.templateId)),
@@ -218,10 +226,6 @@ export async function sendDraft(payload: SendPayload): Promise<SendResult> {
 
   const fromAddress = process.env.AWS_SES_FROM_ADDRESS;
   if (!fromAddress) return { draftId, status: "blocked", reason: "ses_not_configured" };
-
-  const unsubscribeUrl = buildUnsubscribeUrl(leadId, campaignId);
-  const textBody = `${draft.body}\n\nTo unsubscribe: ${unsubscribeUrl}`;
-  const htmlBody = buildEmailHtml(draft.body, unsubscribeUrl);
 
   const command = new SendRawEmailCommand({
     RawMessage: {
@@ -242,7 +246,7 @@ export async function sendDraft(payload: SendPayload): Promise<SendResult> {
 
   const now = new Date();
   await Promise.all([
-    db.insert(emailEvents).values({ draftId, leadId, sesMessageId, sentAt: now }),
+    db.insert(emailEvents).values({ id: eventId, draftId, leadId, sesMessageId, sentAt: now }),
     db.update(emailDrafts).set({ status: "sent" }).where(eq(emailDrafts.id, draftId)),
     db.update(leads).set({ lastContactedAt: now, lastDeliveredTemplateId: draft.templateId }).where(eq(leads.id, leadId)),
     db.update(promptTemplates).set({ sendCount: sql`${promptTemplates.sendCount} + 1` }).where(eq(promptTemplates.id, draft.templateId)),
@@ -305,6 +309,12 @@ export async function sendFollowUpEmail(payload: FollowUpPayload): Promise<SendR
     return { draftId: originalDraftId, status: "blocked", reason: `campaign_status_${campaign.status}` };
   }
 
+  const unsubscribeUrl = buildUnsubscribeUrl(leadId, campaignId);
+  const eventId = crypto.randomUUID();
+  const trackingPixelUrl = buildTrackingPixelUrl(eventId);
+  const textBody = `${body}\n\nTo unsubscribe: ${unsubscribeUrl}`;
+  const htmlBody = buildEmailHtml(body, unsubscribeUrl, trackingPixelUrl);
+
   if (process.env.SES_DRY_RUN === "true") {
     const fakeMessageId = `dry-run-${Date.now()}`;
     const now = new Date();
@@ -312,7 +322,7 @@ export async function sendFollowUpEmail(payload: FollowUpPayload): Promise<SendR
       ? { lastContactedAt: now, lastDeliveredTemplateId: templateId }
       : { lastContactedAt: now };
     const updates: Promise<unknown>[] = [
-      db.insert(emailEvents).values({ draftId: originalDraftId, leadId, sesMessageId: `<${fakeMessageId}@dry-run.local>`, sentAt: now }),
+      db.insert(emailEvents).values({ id: eventId, draftId: originalDraftId, leadId, sesMessageId: `<${fakeMessageId}@dry-run.local>`, sentAt: now }),
       db.update(leads).set(leadSet).where(eq(leads.id, leadId)),
       db.update(campaignLeads).set({ status: "contacted" }).where(and(eq(campaignLeads.leadId, leadId), eq(campaignLeads.campaignId, campaignId))),
     ];
@@ -326,10 +336,6 @@ export async function sendFollowUpEmail(payload: FollowUpPayload): Promise<SendR
 
   const fromAddress = process.env.AWS_SES_FROM_ADDRESS;
   if (!fromAddress) return { draftId: originalDraftId, status: "blocked", reason: "ses_not_configured" };
-
-  const unsubscribeUrl = buildUnsubscribeUrl(leadId, campaignId);
-  const textBody = `${body}\n\nTo unsubscribe: ${unsubscribeUrl}`;
-  const htmlBody = buildEmailHtml(body, unsubscribeUrl);
 
   const command = new SendRawEmailCommand({
     RawMessage: {
@@ -353,7 +359,7 @@ export async function sendFollowUpEmail(payload: FollowUpPayload): Promise<SendR
     ? { lastContactedAt: now, lastDeliveredTemplateId: templateId }
     : { lastContactedAt: now };
   const updates: Promise<unknown>[] = [
-    db.insert(emailEvents).values({ draftId: originalDraftId, leadId, sesMessageId, sentAt: now }),
+    db.insert(emailEvents).values({ id: eventId, draftId: originalDraftId, leadId, sesMessageId, sentAt: now }),
     db.update(leads).set(leadSet).where(eq(leads.id, leadId)),
     db.update(campaignLeads).set({ status: "contacted" }).where(and(eq(campaignLeads.leadId, leadId), eq(campaignLeads.campaignId, campaignId))),
   ];

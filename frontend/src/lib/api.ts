@@ -987,3 +987,19 @@ export async function scrapeRegistrySource(sourceId: string): Promise<{ status: 
     return null;
   }
 }
+
+export async function downloadAnalyticsExport(): Promise<void> {
+  try {
+    const res = await apiRequest(`${BASE}/api/v1/analytics/export`);
+    if (!res.ok) return;
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "drafts-export.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch {
+    // user will notice nothing downloaded
+  }
+}

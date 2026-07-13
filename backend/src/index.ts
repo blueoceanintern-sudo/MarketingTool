@@ -14,8 +14,8 @@ import "./workers";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { db } from "./db";
-import { leads, suppressionList, campaignLeadExclusions } from "./db/schema";
-import { eq } from "drizzle-orm";
+import { leads, suppressionList, campaignLeadExclusions, emailEvents } from "./db/schema";
+import { eq, isNull, and } from "drizzle-orm";
 import { requireAuth } from "./middleware/auth";
 import { rateLimitByUser, rateLimitByIp } from "./middleware/rateLimit";
 
@@ -76,6 +76,31 @@ app.get("/scrape", async (c) => {
   } catch (error) {
     return c.json({ error: error instanceof Error ? error.message : "Unknown error" }, 500);
   }
+});
+
+const TRANSPARENT_GIF = Buffer.from(
+  "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
+  "base64"
+);
+
+// Tracking pixel — loaded by email clients when they render HTML emails.
+// Sets openedAt on the email event (first open only) and returns a 1x1 GIF.
+// No auth required; rate-limited by the global IP limiter on webhooks.
+app.get("/track/open/:eventId", async (c) => {
+  const eventId = c.req.param("eventId");
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(eventId)) {
+    await db
+      .update(emailEvents)
+      .set({ openedAt: new Date() })
+      .where(and(eq(emailEvents.id, eventId), isNull(emailEvents.openedAt)));
+  }
+  return new Response(TRANSPARENT_GIF, {
+    headers: {
+      "Content-Type": "image/gif",
+      "Cache-Control": "no-store, no-cache, must-revalidate",
+      "Pragma": "no-cache",
+    },
+  });
 });
 
 // One-click unsubscribe — SES links here with lead + campaign context.
