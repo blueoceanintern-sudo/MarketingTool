@@ -6,6 +6,7 @@ import { campaignOptions } from "@/lib/queries";
 import CampaignActions from "./campaign-actions";
 import CampaignDetails from "./campaign-details";
 import CampaignLeadsClient from "./campaign-leads-client";
+import CampaignSuppressionClient from "./campaign-suppression-client";
 
 interface Props {
   campaignId: string;
@@ -89,6 +90,9 @@ export default function CampaignDetailClient({ campaignId, leadsPage }: Props) {
 
       {/* Leads — KPI tile + paginated table */}
       <CampaignLeadsClient campaignId={campaignId} initialPage={leadsPage} />
+
+      {/* Suppression list for this campaign */}
+      <CampaignSuppressionClient campaignId={campaignId} />
     </div>
   );
 }

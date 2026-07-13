@@ -813,6 +813,18 @@ export async function deleteDirectoryConfig(id: string): Promise<{ ok: boolean; 
   }
 }
 
+export interface SuppressionEntry {
+  id: string;
+  email: string;
+  campaign_id: string;
+  reason: "unsubscribed" | "manual";
+  added_at: string;
+}
+
+export async function getCampaignSuppressions(campaignId: string): Promise<SuppressionEntry[]> {
+  return (await apiFetch<SuppressionEntry[]>(`/suppression?campaign_id=${campaignId}`)) ?? [];
+}
+
 export async function getAnalyticsOverview(): Promise<AnalyticsOverview | null> {
   return apiFetch<AnalyticsOverview>("/analytics/overview");
 }
@@ -904,6 +916,16 @@ export async function getLeadsSummary(): Promise<LeadsSummaryGlobal> {
     { total: 0, auto_queue: 0, rep_review: 0, pending: 0 }
   );
 }
+
+export async function sendDraftNow(draftId: string): Promise<{ status: string; messageId: string | null } | { error: string }> {
+  try {
+    const res = await apiRequest(`${BASE}/api/v1/drafts/${draftId}/send`, { method: "POST" });
+    return await res.json() as { status: string; messageId: string | null } | { error: string };
+  } catch {
+    return { error: "Could not reach the API." };
+  }
+}
+
 
 export async function triggerSendNow(): Promise<{ ok: boolean; sent: number; blocked: number } | null> {
   try {

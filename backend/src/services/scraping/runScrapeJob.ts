@@ -1,3 +1,4 @@
+import { lookup } from "node:dns/promises";
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "../../db";
 import { campaigns, campaignGeos, campaignLeads, campaignLeadExclusions, companies, geoPlaces, leads, scrapeJobs, sourceRegistry, normalizeVertical } from "../../db/schema";
@@ -7,6 +8,39 @@ import { isValidLeadEmail } from "../scrapers/emailFilter";
 import { isValidEduEmail } from "../scrapers/eduEmailFilter";
 import { emitJobEvent } from "../events";
 import { enrichLead } from "../enrichment/orchestrator";
+
+function isPrivateIp(ip: string): boolean {
+  if (ip === "::1" || ip === "localhost") return true;
+  const parts = ip.split(".").map(Number);
+  if (parts.length !== 4 || parts.some(isNaN)) return false;
+  const [a, b] = parts as [number, number, number, number];
+  return (
+    a === 127 ||                              // 127.0.0.0/8 loopback
+    a === 10 ||                               // 10.0.0.0/8 private
+    a === 0 ||                                // 0.0.0.0/8
+    (a === 172 && b >= 16 && b <= 31) ||     // 172.16.0.0/12 private
+    (a === 192 && b === 168) ||              // 192.168.0.0/16 private
+    (a === 169 && b === 254)                 // 169.254.0.0/16 link-local / AWS metadata
+  );
+}
+
+export async function isSafeUrl(url: string): Promise<boolean> {
+  try {
+    const hostname = new URL(url).hostname;
+    if (isPrivateIp(hostname)) return false;
+    const { address } = await lookup(hostname);
+    return !isPrivateIp(address);
+  } catch {
+    return false;
+  }
+}
+
+function parseGeographies(geography: string): string[] {
+  return geography
+    .split("|")
+    .map(normalizeGeo)
+    .filter(Boolean);
+}
 
 async function scrapeSourceUrl(
   url: string,
@@ -157,6 +191,12 @@ export async function runScrapeJob(jobId: string, campaignId: string): Promise<v
 
   for (const { source, place } of sources) {
     try {
+      if (!await isSafeUrl(source.url)) {
+        const msg = `SSRF blocked: ${source.url} resolves to a private or internal IP`;
+        errors.push(`${source.name}: ${msg}`);
+        console.warn(`[scrape] ${msg}`);
+        continue;
+      }
       const result = await scrapeSourceUrl(source.url, source.scraperType);
       let savedForSource = 0;
       for (const lead of result.leads) {
