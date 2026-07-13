@@ -9,9 +9,9 @@ export const proxy = auth((req) => {
 
 export const config = {
   // Skip auth for: login, NextAuth internals, Next.js build assets,
-  // and any public static file (images, fonts, SVGs, HTML).
-  // unsubscribe.html must be open because it is linked from outbound emails.
+  // public static files (images, fonts, SVGs, HTML), and the unsubscribe
+  // API route (linked from outbound emails — recipients have no session).
   matcher: [
-    "/((?!login|api/auth|_next/static|_next/image|[^?]*\\.(?:html?|svg|png|jpe?g|gif|webp|ico|woff2?|ttf|css|js(?!on))).*)",
+    "/((?!login|api/auth|api/unsubscribe|_next/static|_next/image|[^?]*\\.(?:html?|svg|png|jpe?g|gif|webp|ico|woff2?|ttf|css|js(?!on))).*)",
   ],
 };
