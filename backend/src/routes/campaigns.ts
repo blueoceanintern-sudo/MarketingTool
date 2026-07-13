@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { db } from "../db";
 import { campaigns, campaignGeos, campaignLeads, campaignLeadExclusions, geoPlaces, leads, companies, emailDrafts, emailEvents, scrapeJobs, sourceRegistry, normalizeVertical } from "../db/schema";
-import { eq, and, isNotNull, count, inArray, sql } from "drizzle-orm";
+import { eq, and, or, isNotNull, count, inArray, sql } from "drizzle-orm";
 import { runScrapeJob } from "../services/scraping/runScrapeJob";
 import { generateDraftsForCampaign } from "../services/drafting/orchestrator";
 import { enrichLead } from "../services/enrichment/orchestrator";
@@ -387,17 +387,29 @@ campaignsRouter.post("/:id/fetch-leads", async (c) => {
     return c.json({ error: "Cannot fetch leads for a completed campaign" }, 400);
   }
 
-  // Resolve this campaign's targeted places down to their country codes,
-  // then match via companies.geonameId → geo_places.country_code. Companies
-  // whose location was never resolved to a geoname_id (legacy free-text
-  // rows — see backfill-company-geo.ts) are excluded by the inner join
-  // rather than guessed at.
-  const countryRows = await db
-    .selectDistinct({ countryCode: geoPlaces.countryCode })
+  // Resolve this campaign's targeted places, then match a company's place
+  // against each target at the target's own granularity — a country target
+  // matches any company in that country, a region target matches only
+  // companies in that region, a city target matches only that exact city.
+  // Matching everything down to country code alone (the previous approach)
+  // meant a region-level target like "New York, US" pulled in every US
+  // company regardless of state. Companies whose location was never
+  // resolved to a geoname_id (legacy free-text rows — see
+  // backfill-company-geo.ts) are excluded by the inner join rather than
+  // guessed at.
+  const targetPlaces = await db
+    .select({ geonameId: geoPlaces.geonameId, countryCode: geoPlaces.countryCode, admin1Code: geoPlaces.admin1Code, featureCode: geoPlaces.featureCode })
     .from(campaignGeos)
     .innerJoin(geoPlaces, eq(campaignGeos.geonameId, geoPlaces.geonameId))
     .where(eq(campaignGeos.campaignId, campaignId));
-  const countryCodes = countryRows.map((r) => r.countryCode);
+
+  const geoConds = targetPlaces.map((t) =>
+    t.featureCode === "PCLI"
+      ? eq(geoPlaces.countryCode, t.countryCode)
+      : t.featureCode === "ADM1"
+        ? and(eq(geoPlaces.countryCode, t.countryCode), eq(geoPlaces.admin1Code, t.admin1Code!))
+        : eq(geoPlaces.geonameId, t.geonameId),
+  );
   const vertical = normalizeVertical(campaign.vertical);
 
   // Match leads whose company was seeded with this campaign's vertical + geo
@@ -410,7 +422,7 @@ campaignsRouter.post("/:id/fetch-leads", async (c) => {
     .where(
       and(
         eq(companies.industry, vertical),
-        countryCodes.length > 0 ? inArray(geoPlaces.countryCode, countryCodes) : undefined,
+        geoConds.length > 0 ? or(...geoConds) : undefined,
         eq(leads.routing, "auto_queue"),
         sql`NOT EXISTS (
           SELECT 1 FROM campaign_leads cl_sup
