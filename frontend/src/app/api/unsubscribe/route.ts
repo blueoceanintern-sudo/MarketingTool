@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const BACKEND = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
 // Public route — linked from outbound emails. Proxies to the backend on
 // localhost (port 3001 is firewalled externally) then redirects to the
@@ -36,7 +37,7 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const res = await handleUnsubscribe(searchParams.get("id"), searchParams.get("campaign"));
   if (!res.ok) return res;
-  return NextResponse.redirect(new URL("/unsubscribe.html", req.url));
+  return NextResponse.redirect(new URL("/unsubscribe.html", APP_URL));
 }
 
 export async function POST(req: NextRequest) {
