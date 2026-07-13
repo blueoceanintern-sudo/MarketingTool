@@ -99,7 +99,9 @@ function parseAdmin1Codes(raw: string, filter: CountryFilter): { rows: GeoPlaceR
       asciiName: asciiName || name,
       countryCode,
       admin1Code,
-      admin1Name: name,
+      // null, not `name` — a region isn't "inside" itself. (Cities below do
+      // get their containing region's name via the nameByCode map built here.)
+      admin1Name: null,
       featureCode: "ADM1",
       population: null,
     });
