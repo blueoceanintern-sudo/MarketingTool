@@ -199,7 +199,7 @@ export const sourceRegistry = pgTable("source_registry", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
   vertical: text("vertical").notNull(),
-  geonameId: integer("geoname_id").references(() => geoPlaces.geonameId).notNull(),
+  geonameId: integer("geoname_id").references(() => geoPlaces.geonameId),
   url: text("url").unique().notNull(),
   scraperType: scraperTypeEnum("scraper_type").notNull(),
   legalFlag: boolean("legal_flag").default(false).notNull(),
@@ -344,7 +344,7 @@ export const enrichmentRecords = pgTable("enrichment_records", {
 export const directoryConfigs = pgTable("directory_configs", {
   id: uuid("id").primaryKey().defaultRandom(),
   vertical: text("vertical").notNull(),
-  geonameId: integer("geoname_id").references(() => geoPlaces.geonameId).notNull(),
+  geonameId: integer("geoname_id").references(() => geoPlaces.geonameId),
   query: text("query").notNull(),
   domains: text("domains").array().notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),

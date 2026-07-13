@@ -20,13 +20,9 @@ try {
     ) AS exists
   `;
   if (!exists) {
-    console.log("geo_places table missing — clearing stale migration records to force re-apply...");
+    console.log("geo_places table missing — clearing all stale migration records to force re-apply...");
     try {
-      // Keep only the very first migration entry; re-apply everything after it.
-      await sql`
-        DELETE FROM drizzle.__drizzle_migrations
-        WHERE created_at > (SELECT MIN(created_at) FROM drizzle.__drizzle_migrations)
-      `;
+      await sql`DELETE FROM drizzle.__drizzle_migrations`;
     } catch {
       // Tracking table may not exist yet — fine, migrate() will create it.
     }
