@@ -52,17 +52,19 @@ are implemented. Details in `docs/roadmap.md`.
 ## Tech Stack
 
 Bun · Hono · Next.js 15+ (RSC by default) · shadcn/ui + Tailwind v4 · PostgreSQL + pgvector ·
-Drizzle (close to raw SQL) · Crawl4AI (Cheerio fallback) · AWS SES · Claude Haiku 4.5
-(parallel `messages.create` for drafting/scoring, Batch API for follow-ups, plain
-`messages.create` for classification) · node-cron · AWS Lightsail (2GB / 2 vCPU, single
-instance).
+Drizzle (close to raw SQL) · Crawl4AI (Cheerio fallback) · AWS SES · Claude Haiku 4.5 via
+**Mastra agents** (`@mastra/core` + zod structured output; parallel `agent.generate` for
+drafting/scoring/classification; raw `@anthropic-ai/sdk` Batch API for follow-ups only) ·
+node-cron · AWS Lightsail (2GB / 2 vCPU, single instance).
 
 ## Coding Conventions
 
 - **TypeScript only** — no plain JS; no `any` (use `unknown` + guards).
 - **`async`/`await` only** — no `.then()` chains.
 - **Drizzle** with explicit queries — never the raw `pg` client; no magic finders.
-- **AI calls only via** `services/drafting` + `services/reply-classifier` — never in route handlers.
+- **AI calls only via Mastra agents** defined in `backend/src/mastra/` (agents/, tools/, schemas/)
+  and consumed through the services layer — never in route handlers or workers directly.
+  Sole exception: the follow-up Batch API call in `services/drafting` (see AI Usage Rules).
 - **Background work only in `workers/`** — no inline async jobs in HTTP handlers.
 - **Secrets in `.env` only** — never log or interpolate them; `.env*` is gitignored.
 - **Errors** — log with context; never swallow silently.
@@ -87,9 +89,21 @@ Full security spec (SSRF, CSV sanitization, retention, encryption, right-to-dele
 
 ## AI Usage Rules
 
-- **Initial drafts:** Claude Haiku 4.5 via parallel `messages.create` (prompt caching on system prompt) — 1 draft per (lead, campaign); template selected by Thompson Sampling; max **125 words**. Scoring is a **separate** second round of parallel API calls.
-- **Follow-up content:** Claude Haiku 4.5 via **Batch API** (`messages.batches`) — generated lazily in bulk by the daily `follow-up-sender` worker.
-- **Classification:** Claude Haiku 4.5 — plain `messages.create`, no prompt caching.
+- **Model:** Claude Haiku 4.5 everywhere, referenced via Mastra model-router strings
+  (`anthropic/claude-haiku-4-5`, pinned variant where needed) in `backend/src/mastra/model.ts`.
+- **Structured output:** all agent responses are zod-validated via Mastra `structuredOutput`
+  (schemas in `backend/src/mastra/schemas/`) — no regex JSON extraction.
+- **Initial drafts:** `email-drafter` agent via parallel `agent.generate` (Anthropic
+  `cacheControl` on the template system prompt) — 1 draft per (lead, campaign); template
+  selected by Thompson Sampling; max **125 words**. Scoring is a **separate** second round of
+  parallel calls through the `email-scorer` agent.
+- **Follow-up content:** **hybrid exception** — raw `@anthropic-ai/sdk` **Batch API**
+  (`messages.batches`, 50% pricing; Mastra has no batch wrapper), generated lazily in bulk by
+  the daily `follow-up-sender` worker. Its scoring pass uses the Mastra scorer agent.
+- **Classification:** `reply-classifier` agent — single `agent.generate`, no prompt caching.
+- **Enrichment browsing:** `enrichment-browser` agent with `createTool()` browser tools
+  (navigate/read_page/click_text/finish), `maxSteps: 12`, and a page-read eviction input
+  processor to keep stale page dumps out of context.
 - **Campaign assignment:** Claude Haiku 4.5 assigns each enriched lead to one or more
   campaigns with an `assignment_reason` (service not yet built).
 - **Anti-hallucination:** approved campaign templates + lead fields only; no free-form
