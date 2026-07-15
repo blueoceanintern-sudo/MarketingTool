@@ -1,12 +1,14 @@
 import { Hono } from "hono";
 import { db } from "../db";
-import { campaigns, campaignGeos, campaignLeads, campaignLeadExclusions, geoPlaces, leads, companies, emailDrafts, emailEvents, scrapeJobs, sourceRegistry, normalizeVertical } from "../db/schema";
+import { campaigns, campaignGeos, campaignLeads, campaignLeadExclusions, geoPlaces, leads, companies, emailDrafts, emailEvents, scrapeJobs, normalizeVertical } from "../db/schema";
 import { eq, and, or, isNotNull, count, inArray, sql } from "drizzle-orm";
 import { runScrapeJob } from "../services/scraping/runScrapeJob";
 import { generateDraftsForCampaign } from "../services/drafting/orchestrator";
 import { enrichLead } from "../services/enrichment/orchestrator";
-import { discoverSources, getDirectoryConfig } from "../services/sourceRegistry";
 import { getGeoPlaces, type GeoPlace } from "../services/geoPlaces";
+import { runAgentDiscovery } from "../services/discovery";
+import { campaignPlannerAgent } from "../mastra/agents/campaign-planner.agent";
+import { planSchema } from "../mastra/schemas/plan";
 import { emitJobEvent } from "../services/events";
 
 type CampaignStatus = "draft" | "active" | "paused" | "complete";
@@ -148,95 +150,96 @@ campaignsRouter.post("/", async (c) => {
 
   await db.insert(campaignGeos).values(geonameIds.map((geonameId) => ({ campaignId: row!.id, geonameId })));
 
-  const discovery = await maybeAutoDiscover(row!.id, row!.vertical, geonameIds);
+  const geoEntries = places.map((p) => ({ geonameId: p.geonameId, geoLabel: p.name }));
+  maybeAutoDiscover(row!.id, row!.vertical, geoEntries);
 
-  return c.json({ ...formatCampaign(row!, await computeStats(row!.id), places), discovery }, 201);
+  return c.json(
+    { ...formatCampaign(row!, await computeStats(row!.id), places), discovery: { status: "triggered" } },
+    201,
+  );
 });
 
-// Auto-discovery contract returned to the client on campaign create. The UI
-// uses `status` to decide which toast (or none) to show.
-type DiscoveryStatus =
-  | { status: "already_seeded"; message: string }
-  | { status: "triggered"; message: string; domains: string[] }
-  | { status: "skipped_no_config"; message: string };
-
-async function maybeAutoDiscover(
+// Triggers AI-driven source discovery for all geo targets of a campaign.
+// Fire-and-forget: the agent runs in the background so campaign creation
+// returns immediately. Discovery status is surfaced via job events.
+function maybeAutoDiscover(
   campaignId: string,
   verticalNormalized: string,
-  geonameIds: number[],
-): Promise<DiscoveryStatus> {
-  if (geonameIds.length === 0) {
-    return { status: "skipped_no_config", message: "Campaign has no geography to discover sources for." };
-  }
-
-  const places = await getGeoPlaces(geonameIds);
-  const nameById = new Map(places.map((p) => [p.geonameId, p.name]));
-
-  type PerGeoOutcome = {
-    geo: string;
-    status: "triggered" | "already_seeded" | "skipped_no_config";
-    domains: string[];
-  };
-  const outcomes: PerGeoOutcome[] = [];
-
-  // Trigger discovery for every geo independently so an SG+AU campaign
-  // auto-fills both pools.
-  for (const geonameId of geonameIds) {
-    const geo = nameById.get(geonameId) ?? String(geonameId);
-    const [existing] = await db
-      .select({ id: sourceRegistry.id })
-      .from(sourceRegistry)
-      .where(and(eq(sourceRegistry.vertical, verticalNormalized), eq(sourceRegistry.geonameId, geonameId)))
-      .limit(1);
-    if (existing) {
-      outcomes.push({ geo, status: "already_seeded", domains: [] });
-      continue;
-    }
-
-    const config = await getDirectoryConfig(verticalNormalized, geonameId);
-    if (!config) {
-      outcomes.push({ geo, status: "skipped_no_config", domains: [] });
-      continue;
-    }
-
-    // Fire-and-forget — Tavily + HEAD checks take ~10–30s per geo, run
-    // independently so one slow domain doesn't block the others.
-    void discoverSources(verticalNormalized, geonameId, campaignId).catch((err) => {
-      console.error(`[discovery] ${verticalNormalized}:${geo} failed:`, err);
-    });
-    outcomes.push({ geo, status: "triggered", domains: config.domains });
-
-  }
-
-  // Aggregate to a single DiscoveryStatus. Priority: triggered > skipped > seeded.
-  // The toast reads this; we mention skipped geos inside the triggered message
-  // so the rep sees partial coverage without two competing toasts.
-  const triggered = outcomes.filter((o) => o.status === "triggered");
-  const skipped = outcomes.filter((o) => o.status === "skipped_no_config");
-
-  if (triggered.length > 0) {
-    const triggeredGeos = triggered.map((o) => o.geo).join(", ");
-    const allDomains = Array.from(new Set(triggered.flatMap((o) => o.domains)));
-    let message = `Discovering sources for ${verticalNormalized} in ${triggeredGeos}. New leads available shortly.`;
-    if (skipped.length > 0) {
-      message += ` Skipped ${skipped.map((o) => o.geo).join(", ")} (no directory config).`;
-    }
-    return { status: "triggered", message, domains: allDomains };
-  }
-
-  if (skipped.length > 0) {
-    const skippedGeos = skipped.map((o) => o.geo).join(", ");
-    return {
-      status: "skipped_no_config",
-      message: `No directory config for ${verticalNormalized} in ${skippedGeos}. Add sources manually from Source Registry.`,
-    };
-  }
-
-  return {
-    status: "already_seeded",
-    message: `Source pool already exists for ${verticalNormalized} in ${outcomes.map((o) => o.geo).join(", ")}.`,
-  };
+  geoEntries: Array<{ geonameId: number; geoLabel: string }>,
+): void {
+  if (geoEntries.length === 0) return;
+  void runAgentDiscovery(campaignId, verticalNormalized, geoEntries).catch((err) => {
+    console.error(`[discovery] campaign ${campaignId} auto-discover failed:`, err);
+  });
 }
+
+// Natural language campaign creation. Accepts a free-text brief, uses the
+// campaign-planner Mastra agent to extract structured parameters, creates the
+// campaign, and immediately kicks off AI source discovery in the background.
+campaignsRouter.post("/plan", async (c) => {
+  const body = await c.req.json<{ brief?: string }>();
+  if (!body.brief?.trim()) {
+    return c.json({ error: "brief is required" }, 400);
+  }
+
+  let planResult: Awaited<ReturnType<typeof campaignPlannerAgent.generate>>;
+  try {
+    planResult = await campaignPlannerAgent.generate(body.brief.trim(), {
+      output: planSchema,
+      maxSteps: 10,
+    });
+  } catch (err) {
+    console.error("[plan] planner agent error:", err);
+    return c.json({ error: "Failed to parse campaign brief" }, 422);
+  }
+
+  const plan = planResult.object;
+  if (!plan) {
+    return c.json({ error: "Could not parse campaign brief" }, 422);
+  }
+
+  if (plan.clarificationNeeded?.length) {
+    return c.json({ clarification_needed: true, questions: plan.clarificationNeeded }, 422);
+  }
+
+  if (!plan.geonameIds.length) {
+    return c.json({ error: "Could not resolve any geographic targets from the brief" }, 422);
+  }
+
+  const places = await getGeoPlaces(plan.geonameIds);
+  if (places.length === 0) {
+    return c.json({ error: "None of the resolved geonameIds exist in the database" }, 422);
+  }
+
+  const validGeonameIds = places.map((p) => p.geonameId);
+  const vertical = normalizeVertical(plan.vertical);
+
+  const [row] = await db
+    .insert(campaigns)
+    .values({
+      name: plan.name,
+      vertical,
+      companySizeTarget: plan.companySizeTarget,
+      status: "active",
+      description: plan.description || null,
+      painPoints: plan.painPoints.length > 0 ? plan.painPoints : null,
+      callToAction: plan.callToAction || null,
+    })
+    .returning();
+
+  await db.insert(campaignGeos).values(validGeonameIds.map((geonameId) => ({ campaignId: row!.id, geonameId })));
+
+  const geoEntries = places.map((p) => ({ geonameId: p.geonameId, geoLabel: p.name }));
+  maybeAutoDiscover(row!.id, vertical, geoEntries);
+
+  return c.json(
+    {
+      ...formatCampaign(row!, await computeStats(row!.id), places),
+      discovery: { status: "triggered", message: "AI source discovery running in background." },
+    },
+    201,
+  );
+});
 
 campaignsRouter.patch("/:id", async (c) => {
   const [row] = await db

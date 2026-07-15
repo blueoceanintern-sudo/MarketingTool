@@ -2,6 +2,10 @@ import Anthropic from "@anthropic-ai/sdk";
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "../../db";
 import { promptTemplates } from "../../db/schema";
+import { emailDrafterAgent } from "../../mastra/agents/email-drafter.agent";
+import { emailScorerAgent, scorerCachedInstructions } from "../../mastra/agents/email-scorer.agent";
+import { draftSchema } from "../../mastra/schemas/draft";
+import { scoreSchema } from "../../mastra/schemas/score";
 
 type TemplateType = "initial" | "followup_1" | "followup_2" | "breakup";
 
@@ -142,40 +146,9 @@ export function thompsonSample<T extends { sendCount: number; positiveIntentCoun
 }
 
 // ---------------------------------------------------------------------------
-// Scoring — separate adversarial call, starts from 0
+// Scoring — separate adversarial call, starts from 0.
+// The scoring system prompt lives on the email-scorer Mastra agent.
 // ---------------------------------------------------------------------------
-
-const SCORING_SYSTEM_PROMPT = `You are a critical B2B email quality reviewer. Score a cold outreach email honestly and harshly against three criteria.
-
-Start from 0 for each criterion — award points only when clearly earned. Be a strict critic: if in doubt, score low.
-
-## Scoring criteria
-
-painPointFit (0–25)
-Score 22–25: the opening pain point is a specific, realistic daily frustration for someone in this exact role at this type of company — not just thematically relevant to the campaign.
-Score 15–21: relevant pain point but broad enough to apply to a range of similar roles or industries.
-Score 5–14: pain point is thematic to the campaign but generic — it could apply to almost anyone in business.
-Score 0–4: pain point is absent, irrelevant to this role, or not grounded in the lead data provided.
-
-campaignAlignment (0–25)
-Score 22–25: email clearly advances the campaign's specific objective, every claim is grounded in the product description, no generic filler.
-Score 15–21: broadly on-brief but uses generic language or slightly overstates the product.
-Score 5–14: email drifts from the campaign objective, or makes claims not clearly supported by the product description.
-Score 0–4: email is off-brief, contradicts the campaign objective, or fabricates product capabilities.
-
-personalisationQuality (0–25)
-Score 22–25: the email is clearly written for this specific lead — role, industry, and company context are used meaningfully. It would not work for a different lead without significant edits.
-Score 15–21: some role-specific language but could be sent to a range of similar roles with minor tweaks.
-Score 5–14: personalisation is surface-level — only the name or company name appears.
-Score 0–4: no meaningful personalisation — could be sent to anyone.
-
-## Output format
-Return only valid JSON — no explanation, no preamble:
-{
-  "painPointFit": <integer 0-25>,
-  "campaignAlignment": <integer 0-25>,
-  "personalisationQuality": <integer 0-25>
-}`;
 
 function buildScoringUserPrompt(
   email: { subject: string; body: string },
@@ -203,16 +176,14 @@ ${email.body}`;
 
 async function scoreEmailsBatch(
   items: { key: string; email: { subject: string; body: string }; lead: LeadContext; campaign?: CampaignContext }[],
-  client: Anthropic,
 ): Promise<Map<string, { painPointFit: number; campaignAlignment: number; personalisationQuality: number }>> {
   const settled = await Promise.allSettled(
     items.map(({ key, email, lead, campaign }) =>
-      client.messages.create({
-        model: "claude-haiku-4-5",
-        max_tokens: 120,
-        system: [{ type: "text" as const, text: SCORING_SYSTEM_PROMPT, cache_control: { type: "ephemeral" as const } }],
-        messages: [{ role: "user" as const, content: buildScoringUserPrompt(email, lead, campaign) }],
-      }).then((msg) => ({ key, msg }))
+      emailScorerAgent.generate(buildScoringUserPrompt(email, lead, campaign), {
+        instructions: scorerCachedInstructions,
+        structuredOutput: { schema: scoreSchema, errorStrategy: "strict" },
+        modelSettings: { maxOutputTokens: 120 },
+      }).then((response) => ({ key, response }))
     ),
   );
 
@@ -222,21 +193,17 @@ async function scoreEmailsBatch(
       console.error(`[scoring] API call failed:`, outcome.reason);
       continue;
     }
-    const { key, msg } = outcome.value;
-    const text = msg.content.find((b) => b.type === "text");
-    if (!text || text.type !== "text") continue;
-    try {
-      const match = text.text.match(/\{[\s\S]*\}/);
-      if (!match) throw new Error("No JSON in scoring response");
-      const parsed = JSON.parse(match[0]) as { painPointFit?: number; campaignAlignment?: number; personalisationQuality?: number };
-      scores.set(key, {
-        painPointFit: Math.min(25, Math.max(0, Math.round(parsed.painPointFit ?? 0))),
-        campaignAlignment: Math.min(25, Math.max(0, Math.round(parsed.campaignAlignment ?? 0))),
-        personalisationQuality: Math.min(25, Math.max(0, Math.round(parsed.personalisationQuality ?? 0))),
-      });
-    } catch (err) {
-      console.error(`[scoring] failed to parse score for ${key}:`, err);
+    const { key, response } = outcome.value;
+    const parsed = response.object;
+    if (!parsed) {
+      console.error(`[scoring] no structured score for ${key}`);
+      continue;
     }
+    scores.set(key, {
+      painPointFit: Math.min(25, Math.max(0, Math.round(parsed.painPointFit ?? 0))),
+      campaignAlignment: Math.min(25, Math.max(0, Math.round(parsed.campaignAlignment ?? 0))),
+      personalisationQuality: Math.min(25, Math.max(0, Math.round(parsed.personalisationQuality ?? 0))),
+    });
   }
   return scores;
 }
@@ -311,6 +278,10 @@ function parseResponse(raw: string): { subject: string; body: string; angleTag?:
 // Public API
 // ---------------------------------------------------------------------------
 
+// NOTE (hybrid exception): follow-up generation intentionally stays on the raw
+// @anthropic-ai/sdk Batch API (messages.batches) — batch processing is billed at
+// 50% of standard token pricing and Mastra has no Batch API wrapper. Everything
+// else in this service (initial drafts, scoring) goes through Mastra agents.
 export async function generateFollowUpBatch(requests: FollowUpRequest[]): Promise<FollowUpResult[]> {
   if (requests.length === 0) return [];
 
@@ -408,7 +379,6 @@ export async function generateFollowUpBatch(requests: FollowUpRequest[]): Promis
       const req = requests.find((r) => `followup-${r.followUpId}` === customId)!;
       return { key: customId, email: { subject, body }, lead: req.lead, campaign: req.campaign };
     }),
-    client,
   );
 
   const results: FollowUpResult[] = [];
@@ -452,21 +422,24 @@ export async function generateDraftsBatch(requests: DraftRequest[]): Promise<Dra
     throw new Error("No active initial prompt template — run db:seed to insert templates");
   }
 
-  const client = new Anthropic({ apiKey });
-
   console.log(`[drafting] generating ${requests.length} draft(s)`);
 
-  // Call 1: generate emails — each request independently samples a template
+  // Call 1: generate emails — each request independently samples a template.
+  // The sampled template's system prompt carries Anthropic cacheControl so
+  // repeated templates across the parallel calls hit the prompt cache.
   const genSettled = await Promise.allSettled(
     requests.map((req) => {
       const template = thompsonSample(allTemplates);
       if (!template) throw new Error("Thompson sampling returned no template");
-      return client.messages.create({
-        model: "claude-haiku-4-5",
-        max_tokens: 400,
-        system: [{ type: "text" as const, text: template.systemPrompt, cache_control: { type: "ephemeral" as const } }],
-        messages: [{ role: "user" as const, content: buildUserPrompt(req.lead, req.campaign) }],
-      }).then((msg) => ({ req, msg, template }));
+      return emailDrafterAgent.generate(buildUserPrompt(req.lead, req.campaign), {
+        instructions: {
+          role: "system",
+          content: template.systemPrompt,
+          providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+        },
+        structuredOutput: { schema: draftSchema, errorStrategy: "strict" },
+        modelSettings: { maxOutputTokens: 400 },
+      }).then((response) => ({ req, response, template }));
     }),
   );
 
@@ -476,15 +449,13 @@ export async function generateDraftsBatch(requests: DraftRequest[]): Promise<Dra
       console.error(`[drafting] generation failed:`, outcome.reason);
       continue;
     }
-    const { req, msg, template } = outcome.value;
-    const text = msg.content.find((b) => b.type === "text");
-    if (!text || text.type !== "text") continue;
-    try {
-      const { subject, body } = parseResponse(text.text);
-      generated.push({ req, subject, body, template });
-    } catch (err) {
-      console.error(`[drafting] failed to parse draft for lead ${outcome.value.req.leadId}:`, err);
+    const { req, response, template } = outcome.value;
+    const parsed = response.object;
+    if (!parsed?.subject || !parsed.body) {
+      console.error(`[drafting] missing subject or body in draft for lead ${req.leadId}`);
+      continue;
     }
+    generated.push({ req, subject: parsed.subject, body: parsed.body, template });
   }
 
   // Call 2: score all generated emails
@@ -495,7 +466,6 @@ export async function generateDraftsBatch(requests: DraftRequest[]): Promise<Dra
       lead: req.lead,
       campaign: req.campaign,
     })),
-    client,
   );
 
   const results: DraftResult[] = [];

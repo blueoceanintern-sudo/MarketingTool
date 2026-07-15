@@ -6,13 +6,13 @@ All outbound/inbound email behavior. Enforced in `services/sender` and `services
 
 One draft is generated per (lead, campaign) pair. A lead in N campaigns gets N drafts, each tailored to that campaign's goal. This is enforced by the `UNIQUE (lead_id, campaign_id)` constraint on `email_drafts`.
 
-Generation uses **parallel direct API calls** (`messages.create` via `Promise.allSettled`), not the Batch API — the function is named `generateDraftsBatch` but runs concurrent synchronous requests. Each request selects a `prompt_templates` row via Thompson Sampling and records `template_id` on the draft. Prompt caching (`cache_control: ephemeral`) is applied to the system prompt to reduce cost across the parallel calls.
+Generation uses **parallel Mastra agent calls** (`emailDrafterAgent.generate` via `Promise.allSettled`), not the Batch API — the function is named `generateDraftsBatch` but runs concurrent synchronous requests. Each request selects a `prompt_templates` row via Thompson Sampling, passes its system prompt as the per-call instructions (with Anthropic `cacheControl: ephemeral` to reduce cost across the parallel calls), and records `template_id` on the draft. Output is zod-validated structured output (`draftSchema`) rather than regex JSON extraction.
 
-Scoring is a **separate second set of API calls** (`scoreEmailsBatch`) — also parallel direct calls with prompt caching on the scoring system prompt. It is not part of the generation call.
+Scoring is a **separate second set of API calls** (`scoreEmailsBatch`, via the `email-scorer` Mastra agent) — also parallel calls with prompt caching on the scoring system prompt. It is not part of the generation call.
 
 The `drafting-runner` worker skips leads missing `name` or `role` — they are logged and excluded rather than drafted with blanks.
 
-> **Follow-up content generation** (`generateFollowUpBatch`) does use the true Batch API (`messages.batches`) since follow-ups are generated lazily in bulk once per day rather than on demand.
+> **Follow-up content generation** (`generateFollowUpBatch`) does use the true Batch API (`messages.batches`) since follow-ups are generated lazily in bulk once per day rather than on demand. This path intentionally stays on the raw `@anthropic-ai/sdk` (batch processing is billed at 50% of standard pricing; Mastra has no Batch API wrapper) — it is the one deliberate exception to the Mastra-agents rule. Its scoring pass does go through the Mastra scorer agent.
 
 ## Campaign Assignment Logic
 
@@ -155,7 +155,7 @@ Rules:
 
 ## Reply Handling (decision tree)
 
-`POST /webhooks/ses/reply` → `services/reply-classifier` (Haiku classification, plain `messages.create`, no prompt caching):
+`POST /webhooks/ses/reply` → `services/reply-classifier` (Haiku classification via the `reply-classifier` Mastra agent, zod structured output, no prompt caching):
 
 | Classification | Action |
 |---|---|

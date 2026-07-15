@@ -10,7 +10,7 @@ export interface DirectoryConfig {
 }
 
 export async function getAllDirectoryConfigs(): Promise<
-  Array<DirectoryConfig & { vertical: string; geonameId: number; geoName: string; countryCode: string }>
+  Array<DirectoryConfig & { vertical: string; geonameId: number | null; geoName: string; countryCode: string }>
 > {
   const rows = await db
     .select({ config: directoryConfigs, place: geoPlaces })

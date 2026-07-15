@@ -14,6 +14,8 @@ wipe DB → seed minimal data → call function → assert DB state
 
 The tests call **real service functions** against a real database, not mocks. This catches actual bugs: wrong SQL, missing joins, foreign key violations, incorrect row counts.
 
+AI calls inside those services go through **Mastra agents** (`backend/src/mastra/`); the mocking boundary is unchanged — suites that mock AI do so at the exported service functions (`mock.module` / `spyOn`), so they run without an API key. Live suites (`reply-classifier`, `drafting`, `mutation`) exercise the real agents against the Claude API.
+
 ## Setup
 
 1. Create a test database (separate from your dev DB):
