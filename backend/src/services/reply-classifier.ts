@@ -1,6 +1,5 @@
-import Anthropic from "@anthropic-ai/sdk";
-
-const anthropic = new Anthropic();
+import { replyClassifierAgent } from "../mastra/agents/reply-classifier.agent";
+import { classificationSchema } from "../mastra/schemas/classification";
 
 export async function classifyReply(body: string): Promise<{ category: string; return_date: string | null; risk_flag: boolean }> {
   const currentDate = new Date().toISOString().split("T")[0];
@@ -65,21 +64,20 @@ Return only valid JSON. No explanation, no preamble, no markdown fences.
 }`;
 
   try {
-    const response = await anthropic.messages.create({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 128,
-      system: systemPrompt,
-      messages: [{ role: "user", content: `<reply>\n${body}\n</reply>` }],
+    const response = await replyClassifierAgent.generate(`<reply>\n${body}\n</reply>`, {
+      instructions: systemPrompt,
+      structuredOutput: {
+        schema: classificationSchema,
+        errorStrategy: "fallback",
+        fallbackValue: { category: "neutral" as const, return_date: null, risk_flag: false },
+      },
+      modelSettings: { maxOutputTokens: 128 },
     });
-    const first = response.content[0];
-    const raw = first?.type === "text" ? first.text : "";
-    // Haiku sometimes wraps output in ```json ... ``` despite instructions — strip fences.
-    const text = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
-    const parsed = JSON.parse(text) as { category?: string; return_date?: string | null; risk_flag?: boolean };
+    const parsed = response.object;
     return {
-      category: parsed.category ?? "neutral",
-      return_date: parsed.return_date ?? null,
-      risk_flag: parsed.risk_flag ?? false,
+      category: parsed?.category ?? "neutral",
+      return_date: parsed?.return_date ?? null,
+      risk_flag: parsed?.risk_flag ?? false,
     };
   } catch {
     return { category: "neutral", return_date: null, risk_flag: false };

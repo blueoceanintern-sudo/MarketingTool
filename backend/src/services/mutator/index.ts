@@ -1,9 +1,8 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { db } from "../../db";
 import { promptTemplates, emailDrafts, leads, companies } from "../../db/schema";
 import { eq, sql } from "drizzle-orm";
-
-const client = new Anthropic();
+import { mutatorAgent } from "../../mastra/agents/mutator.agent";
+import { mutationResponseSchema } from "../../mastra/schemas/mutation";
 
 export interface MutationResult {
   name: string;
@@ -29,13 +28,6 @@ interface Template {
 // --- Utilities ---
 
 const sanitizeForPrompt = (text: string): string => text;
-
-const parseJsonResponse = (raw: string): Record<string, unknown> => {
-  const cleaned = raw.replace(/^```json\s*/i, "").replace(/```\s*$/i, "").trim();
-  const match = cleaned.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error("No JSON object found in mutation response");
-  return JSON.parse(match[0]);
-};
 
 const formatRate = (count: number, total: number): string => {
   if (total === 0) return "0.0%";
@@ -350,36 +342,26 @@ export async function generateMutation(
   }
 
   try {
-    const response = await client.messages.create({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 4096,
-      messages: [{ role: "user", content: prompt }],
+    const response = await mutatorAgent.generate(prompt, {
+      structuredOutput: { schema: mutationResponseSchema, errorStrategy: "strict" },
+      modelSettings: { maxOutputTokens: 4096 },
     });
 
-    const text = response.content.find((b) => b.type === "text");
-    if (!text || text.type !== "text") return null;
-
-    const parsed = parseJsonResponse(text.text);
-
-    const name = parsed.name as string | undefined;
-    const description = parsed.description as string | undefined;
-    const systemPrompt = parsed.system_prompt as string | undefined;
-    const metadata = parsed.mutation_metadata as Record<string, unknown> | undefined;
-    const hypothesisTested = parsed.hypothesis_tested as string | undefined;
-
-    if (!name || !systemPrompt || !metadata) return null;
+    const parsed = response.object;
+    if (!parsed || !parsed.name || !parsed.system_prompt) return null;
+    const metadata = parsed.mutation_metadata;
 
     return {
-      name,
-      description: description ?? "",
-      systemPrompt,
-      mutationMode: (metadata.mutation_mode as "refine" | "replace") ?? "replace",
-      parentPersuasionStrategy: (metadata.parent_persuasion_strategy as string) ?? "",
-      childPersuasionStrategy: (metadata.child_persuasion_strategy as string) ?? "",
-      dimensionsChanged: (metadata.dimensions_changed as string[]) ?? [],
-      mutationDistance: (metadata.mutation_distance as string) ?? "",
-      mutationReason: (metadata.mutation_reason as string) ?? "",
-      hypothesisTested: hypothesisTested ?? "",
+      name: parsed.name,
+      description: parsed.description ?? "",
+      systemPrompt: parsed.system_prompt,
+      mutationMode: metadata.mutation_mode ?? "replace",
+      parentPersuasionStrategy: metadata.parent_persuasion_strategy ?? "",
+      childPersuasionStrategy: metadata.child_persuasion_strategy ?? "",
+      dimensionsChanged: metadata.dimensions_changed ?? [],
+      mutationDistance: metadata.mutation_distance ?? "",
+      mutationReason: metadata.mutation_reason ?? "",
+      hypothesisTested: parsed.hypothesis_tested ?? "",
     };
   } catch (err) {
     console.error("[mutator] generation failed:", err);

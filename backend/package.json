@@ -27,6 +27,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.96.0",
     "@aws-sdk/client-ses": "^3.1047.0",
+    "@mastra/core": "^1.50.1",
     "cheerio": "^1.2.0",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.12.18",
@@ -36,6 +37,7 @@
     "playwright": "^1.60.0",
     "postal-mime": "^2.7.4",
     "postgres": "^3.4.9",
-    "tldts": "^7.4.2"
+    "tldts": "^7.4.2",
+    "zod": "^4.4.3"
   }
 }

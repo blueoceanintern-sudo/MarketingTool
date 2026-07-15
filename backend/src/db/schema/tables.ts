@@ -206,6 +206,9 @@ export const sourceRegistry = pgTable("source_registry", {
   selectors: json("selectors").$type<Record<string, string>>(),
   active: boolean("active").default(true).notNull(),
   generatedBy: uuid("generated_by").references(() => campaigns.id),
+  // Populated by the discovery service after scrape jobs complete.
+  // Computed as a rolling score from leadsScraped across recent jobs.
+  qualityScore: real("quality_score"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -341,6 +344,21 @@ export const enrichmentRecords = pgTable("enrichment_records", {
 
 // Stores Tavily auto-discovery configs per (vertical, geo). Replaces the static
 // DIRECTORY_CONFIGS constant so admins can add/edit coverage without a deploy.
+// Tracks every AI-generated search query sent to Tavily per campaign.
+// The discovery agent reads this before each run to avoid repeating queries
+// and to measure which search angles have already been exhausted.
+export const discoveryRuns = pgTable("discovery_runs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  campaignId: uuid("campaign_id").references(() => campaigns.id, { onDelete: "cascade" }).notNull(),
+  geonameId: integer("geoname_id").references(() => geoPlaces.geonameId),
+  query: text("query").notNull(),
+  resultsCount: integer("results_count").default(0).notNull(),
+  insertedCount: integer("inserted_count").default(0).notNull(),
+  ranAt: timestamp("ran_at").defaultNow().notNull(),
+}, (t): PgTableExtraConfigValue[] => [
+  index("discovery_runs_campaign_id_idx").on(t.campaignId),
+]);
+
 export const directoryConfigs = pgTable("directory_configs", {
   id: uuid("id").primaryKey().defaultRandom(),
   vertical: text("vertical").notNull(),
