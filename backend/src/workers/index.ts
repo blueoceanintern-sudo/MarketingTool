@@ -9,6 +9,7 @@ import { enrichLead } from "../services/enrichment/orchestrator";
 import { generateDraftsForCampaign } from "../services/drafting/orchestrator";
 import { generateFollowUpBatch, thompsonSample, type FollowUpRequest } from "../services/drafting";
 import { generateMutation } from "../services/mutator";
+import { runAgentDiscovery, getStarvedGeos, refreshSourceQualityScores } from "../services/discovery";
 
 const MAX_FOLLOW_UP_ATTEMPTS = 3;
 
@@ -637,5 +638,60 @@ export async function runMutationRunner() {
 }
 
 cron.schedule("0 6 * * 1", runMutationRunner);
+
+// ---------------------------------------------------------------------------
+// discovery-runner  — 01:00 daily
+//
+// Autonomous lead source discovery. For every active campaign, checks each
+// geo target for source starvation (< 8 active sources). When a gap is found:
+//   1. Refreshes quality scores from recent scrape job outcomes
+//   2. Calls the lead-discovery Mastra agent (Tavily search + URL evaluation)
+//   3. Inserts valid new sources into source_registry
+//   4. Immediately queues and runs a scrape job for the campaign
+//
+// The agent receives past discovery queries (from discovery_runs) so it never
+// repeats the same search angles. Runs before enrichment-retry (03:00) so
+// newly discovered leads can be enriched in the same nightly window.
+// ---------------------------------------------------------------------------
+cron.schedule("0 1 * * *", async () => {
+  console.log("[discovery-runner] running");
+
+  const activeCampaigns = await db
+    .select({ id: campaigns.id, name: campaigns.name, vertical: campaigns.vertical })
+    .from(campaigns)
+    .where(eq(campaigns.status, "active"));
+
+  let totalInserted = 0;
+  let campaignsProcessed = 0;
+
+  for (const campaign of activeCampaigns) {
+    try {
+      // Refresh quality scores so the agent's context reflects current performance.
+      await refreshSourceQualityScores(campaign.id);
+
+      const starved = await getStarvedGeos(campaign.id);
+      if (starved.length === 0) continue;
+
+      console.log(
+        `[discovery-runner] ${campaign.name}: ${starved.length} starved geo(s) — ${starved.map((g) => `${g.geoLabel}(${g.sourceCount})`).join(", ")}`,
+      );
+
+      const { inserted } = await runAgentDiscovery(
+        campaign.id,
+        campaign.vertical,
+        starved.map((g) => ({ geonameId: g.geonameId, geoLabel: g.geoLabel })),
+      );
+
+      totalInserted += inserted;
+      if (inserted > 0) campaignsProcessed++;
+    } catch (err) {
+      console.error(`[discovery-runner] campaign ${campaign.id} failed:`, err);
+    }
+  }
+
+  console.log(
+    `[discovery-runner] done: campaigns_with_new_sources=${campaignsProcessed}, total_inserted=${totalInserted}`,
+  );
+});
 
 console.log("[workers] all cron jobs registered");
