@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState, type SubmitEvent } from "react";
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { createCampaign, triggerCampaignFetchLeads, type CampaignStatus, type GeoRef } from "@/lib/api";
+import { createCampaign, planCampaign, triggerCampaignFetchLeads, type CampaignStatus, type GeoRef } from "@/lib/api";
 import { campaignsOptions, taxonomyOptions, keys } from "@/lib/queries";
 import { GeoMultiCombobox } from "@/components/geo-combobox";
 import { resolveVertical } from "@/lib/verticals";
@@ -35,8 +35,11 @@ export default function CampaignsClient() {
   const [statusFilter, setStatusFilter] = useState<CampaignStatus | "all">("all");
   const [search, setSearch] = useState("");
   const [showModal, setShowModal] = useState(false);
+  const [modalMode, setModalMode] = useState<"ai" | "manual">("ai");
   const [modalStep, setModalStep] = useState<1 | 2>(1);
   const [formError, setFormError] = useState<string | null>(null);
+  const [brief, setBrief] = useState("");
+  const [clarifyQuestions, setClarifyQuestions] = useState<string[]>([]);
   const [verticalNote, setVerticalNote] = useState<string | null>(null);
   const [geographies, setGeographies] = useState<GeoRef[]>([]);
   const [form, setForm] = useState({
@@ -61,6 +64,8 @@ export default function CampaignsClient() {
     setModalStep(1);
     setFormError(null);
     setVerticalNote(null);
+    setBrief("");
+    setClarifyQuestions([]);
   }
 
   function closeModal() {
@@ -94,6 +99,38 @@ export default function CampaignsClient() {
     campaigns.length ? Math.round((campaigns.reduce((s, c) => s + c.open_rate, 0) / campaigns.length) * 10) / 10 : 0;
   const totalSent = campaigns.reduce((s, c) => s + c.sent, 0);
   const totalPending = campaigns.reduce((s, c) => s + c.drafts_pending, 0);
+
+  const planMutation = useMutation({
+    mutationFn: () => planCampaign(brief.trim()),
+    onSuccess: (result) => {
+      if (result.clarification_needed && result.questions?.length) {
+        setClarifyQuestions(result.questions);
+        setFormError(null);
+        return;
+      }
+      if (result.error || !result.campaign) {
+        setFormError(result.error ?? "Failed to create campaign");
+        return;
+      }
+      queryClient.invalidateQueries({ queryKey: keys.campaigns });
+      setShowModal(false);
+      resetForm();
+      const campaign = result.campaign;
+      const geoLabel = `${campaign.vertical} in ${campaign.geographies.map((g) => g.name).join(", ")}`;
+      if (result.discovery?.status === "triggered") {
+        toast.info("Campaign created — discovery started", {
+          description: `Sources for ${geoLabel} are being scraped.`,
+          duration: 8000,
+        });
+      } else {
+        toast.success("Campaign created", { description: geoLabel });
+      }
+      router.push(`/campaigns/${campaign.id}`);
+    },
+    onError: (err) => {
+      setFormError(err instanceof Error ? err.message : "Failed to create campaign");
+    },
+  });
 
   const createMutation = useMutation({
     mutationFn: async () => {
@@ -272,10 +309,82 @@ export default function CampaignsClient() {
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
           <div className="bg-white rounded-lg w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center justify-between mb-4">
               <h3 className="text-[18px] font-bold">New Campaign</h3>
-              <span className="text-[12px] text-grey-400">Step {modalStep} of 2</span>
+              {modalMode === "manual" && (
+                <span className="text-[12px] text-grey-400">Step {modalStep} of 2</span>
+              )}
             </div>
+
+            {/* Mode toggle */}
+            <div className="flex gap-1 p-1 bg-grey-100 rounded-lg mb-4">
+              <button
+                type="button"
+                onClick={() => { setModalMode("ai"); setFormError(null); setClarifyQuestions([]); }}
+                className={[
+                  "flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded text-[13px] font-medium transition-colors",
+                  modalMode === "ai" ? "bg-white shadow-sm text-primary" : "text-grey-500",
+                ].join(" ")}
+              >
+                <span className="material-symbols-outlined text-[16px]">auto_awesome</span>
+                AI Plan
+              </button>
+              <button
+                type="button"
+                onClick={() => { setModalMode("manual"); setFormError(null); setClarifyQuestions([]); }}
+                className={[
+                  "flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded text-[13px] font-medium transition-colors",
+                  modalMode === "manual" ? "bg-white shadow-sm text-primary" : "text-grey-500",
+                ].join(" ")}
+              >
+                <span className="material-symbols-outlined text-[16px]">edit_note</span>
+                Manual
+              </button>
+            </div>
+
+            {modalMode === "ai" ? (
+              <form
+                onSubmit={(e) => { e.preventDefault(); setFormError(null); setClarifyQuestions([]); planMutation.mutate(); }}
+                className="flex flex-col gap-4"
+              >
+                <label className="flex flex-col gap-1 text-[13px]">
+                  Describe your campaign
+                  <textarea
+                    rows={5}
+                    required
+                    value={brief}
+                    onChange={(e) => { setBrief(e.target.value); setClarifyQuestions([]); }}
+                    placeholder={"e.g. Target mid-size Singapore logistics companies struggling with last-mile delivery coordination — book a 15-min demo call"}
+                    className="border border-grey-200 rounded-lg px-3 py-2 resize-none"
+                  />
+                  <span className="text-[11px] text-grey-400">
+                    Include industry, target market, pain point, and goal. AI will extract the rest.
+                  </span>
+                </label>
+                {clarifyQuestions.length > 0 && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex flex-col gap-1.5">
+                    <p className="text-[12px] font-semibold text-amber-800">A bit more detail needed:</p>
+                    <ul className="list-disc list-inside text-[12px] text-amber-700 space-y-0.5">
+                      {clarifyQuestions.map((q, i) => <li key={i}>{q}</li>)}
+                    </ul>
+                  </div>
+                )}
+                {formError && <p className="text-danger text-[13px]">{formError}</p>}
+                <div className="flex gap-3 justify-end">
+                  <button type="button" onClick={closeModal} className="px-4 py-2 border rounded-lg text-[13px]">
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={planMutation.isPending || !brief.trim()}
+                    className="px-6 py-2 bg-primary text-white rounded-lg text-[13px] font-semibold disabled:opacity-50"
+                  >
+                    {planMutation.isPending ? "Planning…" : clarifyQuestions.length ? "Try again" : "Create"}
+                  </button>
+                </div>
+              </form>
+            ) : (
+            <>
             <p className="text-[12px] text-grey-500 mb-4">
               {modalStep === 1
                 ? "Required details"
@@ -391,6 +500,8 @@ export default function CampaignsClient() {
             <datalist id="campaign-verticals">
               {suggest(availableVerticals, form.vertical).map((v) => <option key={v} value={v} />)}
             </datalist>
+            </>
+            )}
           </div>
         </div>
       )}

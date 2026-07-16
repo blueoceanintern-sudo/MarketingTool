@@ -378,6 +378,46 @@ campaignsRouter.post("/:id/scrape", async (c) => {
   return c.json({ scrape_job_id: jobId, status: "queued" }, 201);
 });
 
+campaignsRouter.post("/:id/discover", async (c) => {
+  const campaignId = c.req.param("id");
+  const [campaign] = await db
+    .select()
+    .from(campaigns)
+    .where(eq(campaigns.id, campaignId))
+    .limit(1);
+  if (!campaign) return c.json({ error: "Campaign not found" }, 404);
+  if (campaign.status === "complete") {
+    return c.json({ error: "Cannot run discovery on a completed campaign" }, 400);
+  }
+
+  const geoRows = await db
+    .select({ geonameId: campaignGeos.geonameId, name: geoPlaces.name })
+    .from(campaignGeos)
+    .innerJoin(geoPlaces, eq(campaignGeos.geonameId, geoPlaces.geonameId))
+    .where(eq(campaignGeos.campaignId, campaignId));
+
+  if (geoRows.length === 0) {
+    return c.json({ error: "Campaign has no geo targets" }, 400);
+  }
+
+  const vertical = normalizeVertical(campaign.vertical);
+
+  void runAgentDiscovery(
+    campaignId,
+    vertical,
+    geoRows.map((g) => ({ geonameId: g.geonameId, geoLabel: g.name })),
+  )
+    .then(({ inserted }) => {
+      void emitJobEvent({ kind: "campaign_discovery", campaignId, inserted, leadsAdded: 0 });
+    })
+    .catch((err) => {
+      console.error(`[discover] campaign ${campaignId} failed:`, err);
+      void emitJobEvent({ kind: "campaign_discovery", campaignId, inserted: 0, leadsAdded: 0 });
+    });
+
+  return c.json({ status: "started" }, 202);
+});
+
 campaignsRouter.post("/:id/fetch-leads", async (c) => {
   const campaignId = c.req.param("id");
   const [campaign] = await db

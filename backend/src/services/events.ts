@@ -10,7 +10,8 @@ export type JobEvent =
   | { kind: "drafts"; campaignId: string; generated: number }
   | { kind: "discovery"; vertical: string; geo: string; inserted: number }
   | { kind: "discovery_scrape_complete"; vertical: string; geo: string; leadsAdded: number }
-  | { kind: "enrichment_complete"; campaignId: string; count: number };
+  | { kind: "enrichment_complete"; campaignId: string; count: number }
+  | { kind: "campaign_discovery"; campaignId: string; inserted: number; leadsAdded: number };
 
 const CHANNEL = "job_events";
 

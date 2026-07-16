@@ -6,6 +6,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   triggerCampaignFetchLeads,
   triggerCampaignDraftGeneration,
+  triggerCampaignDiscover,
   updateCampaignStatus,
   type CampaignStatus,
 } from "@/lib/api";
@@ -19,7 +20,7 @@ interface Props {
 
 export default function CampaignActions({ campaignId, status }: Props) {
   const queryClient = useQueryClient();
-  const [running, setRunning] = useState<"drafts" | null>(null);
+  const [running, setRunning] = useState<"drafts" | "discovery" | null>(null);
   const [busyStatus, setBusyStatus] = useState<CampaignStatus | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [showManage, setShowManage] = useState(false);
@@ -44,6 +45,27 @@ export default function CampaignActions({ campaignId, status }: Props) {
           : "No new drafts generated.",
       );
     }
+    if (event.kind === "campaign_discovery" && event.campaignId === campaignId && running === "discovery") {
+      setRunning(null);
+      queryClient.invalidateQueries({ queryKey: keys.campaign(campaignId) });
+      if (event.inserted > 0) {
+        setMessage(`Discovery complete — ${event.inserted} new source${event.inserted !== 1 ? "s" : ""} found. Scraping leads now.`);
+      } else {
+        setMessage("Discovery complete — no new sources found for this campaign.");
+      }
+    }
+  });
+
+  const discoverMutation = useMutation({
+    mutationFn: () => triggerCampaignDiscover(campaignId),
+    onSuccess: ({ ok, error }) => {
+      if (!ok) {
+        setMessage(error ?? "Discovery failed to start.");
+        return;
+      }
+      setMessage("AI discovery agent running — searching for new lead sources…");
+      setRunning("discovery");
+    },
   });
 
   const fetchLeadsMutation = useMutation({
@@ -90,8 +112,14 @@ export default function CampaignActions({ campaignId, status }: Props) {
     },
   });
 
+  const discovering = discoverMutation.isPending || running === "discovery";
   const fetching = fetchLeadsMutation.isPending;
   const drafting = draftMutation.isPending || running === "drafts";
+
+  function handleDiscover() {
+    setMessage(null);
+    discoverMutation.mutate();
+  }
 
   function handleFetchLeads() {
     setMessage(null);
@@ -115,6 +143,17 @@ export default function CampaignActions({ campaignId, status }: Props) {
   return (
     <div className="flex flex-col items-end gap-2">
       <div className="flex items-center gap-2 flex-wrap justify-end">
+        <button
+          type="button"
+          onClick={handleDiscover}
+          disabled={discovering || fetching || drafting || status === "complete"}
+          title="Run the AI agent to find new lead source directories for this campaign"
+          className="flex items-center gap-2 px-3 py-2 border border-grey-200 text-grey-700 rounded-lg text-[13px] font-semibold disabled:opacity-60 hover:bg-grey-50"
+        >
+          <span className="material-symbols-outlined text-[18px]">travel_explore</span>
+          {discovering ? "Discovering…" : "Discover Sources"}
+        </button>
+
         <button
           type="button"
           onClick={handleFetchLeads}

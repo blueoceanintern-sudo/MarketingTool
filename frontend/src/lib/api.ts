@@ -927,6 +927,53 @@ export async function sendDraftNow(draftId: string): Promise<{ status: string; m
 }
 
 
+export async function triggerCampaignDiscover(campaignId: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await apiRequest(`${BASE}/api/v1/campaigns/${campaignId}/discover`, { method: "POST" });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return { ok: false, error: body.error ?? `Request failed (${res.status})` };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "Could not reach the API." };
+  }
+}
+
+export async function planCampaign(brief: string): Promise<{
+  campaign: Campaign | null;
+  discovery?: DiscoveryStatus;
+  clarification_needed?: boolean;
+  questions?: string[];
+  error?: string;
+}> {
+  try {
+    const res = await apiRequest(`${BASE}/api/v1/campaigns/plan`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ brief }),
+    });
+    const body = (await res.json().catch(() => ({}))) as Campaign & {
+      discovery?: DiscoveryStatus;
+      clarification_needed?: boolean;
+      questions?: string[];
+      error?: string;
+    };
+    if (!res.ok) {
+      return {
+        campaign: null,
+        clarification_needed: body.clarification_needed,
+        questions: body.questions,
+        error: body.error ?? `Request failed (${res.status})`,
+      };
+    }
+    const { discovery, clarification_needed, questions, error: _e, ...campaign } = body;
+    return { campaign: campaign as Campaign, discovery };
+  } catch {
+    return { campaign: null, error: "Could not reach the API." };
+  }
+}
+
 export async function triggerSendNow(): Promise<{ ok: boolean; sent: number; blocked: number } | null> {
   try {
     const res = await apiRequest(`${BASE}/api/v1/workers/send-now`, { method: "POST" });

@@ -52,7 +52,12 @@ async function fetchCitiesFile(tmpDir: string): Promise<string> {
   if (!res.ok) throw new Error(`failed to fetch cities15000.zip: ${res.status}`);
   const zipPath = join(tmpDir, "cities15000.zip");
   await Bun.write(zipPath, await res.arrayBuffer());
-  await $`unzip -o -q ${zipPath} -d ${tmpDir}`;
+  // unzip is not available on Windows; fall back to tar (ships with Windows 10+)
+  try {
+    await $`unzip -o -q ${zipPath} -d ${tmpDir}`;
+  } catch {
+    await $`tar -xf ${zipPath} -C ${tmpDir}`;
+  }
   return readFile(join(tmpDir, "cities15000.txt"), "utf8");
 }
 
