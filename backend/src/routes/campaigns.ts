@@ -185,7 +185,7 @@ campaignsRouter.post("/plan", async (c) => {
   let planResult: Awaited<ReturnType<typeof campaignPlannerAgent.generate>>;
   try {
     planResult = await campaignPlannerAgent.generate(body.brief.trim(), {
-      output: planSchema,
+      structuredOutput: { schema: planSchema, errorStrategy: "strict" },
       maxSteps: 10,
     });
   } catch (err) {
@@ -193,7 +193,7 @@ campaignsRouter.post("/plan", async (c) => {
     return c.json({ error: "Failed to parse campaign brief" }, 422);
   }
 
-  const plan = planResult.object;
+  const plan = planResult.object as import("../mastra/schemas/plan").CampaignPlan | undefined;
   if (!plan) {
     return c.json({ error: "Could not parse campaign brief" }, 422);
   }

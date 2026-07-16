@@ -83,7 +83,7 @@ Search for public directories and membership lists where ${vertical} organisatio
   let result: Awaited<ReturnType<typeof leadDiscoveryAgent.generate>>;
   try {
     result = await leadDiscoveryAgent.generate(contextMessage, {
-      output: discoverySchema,
+      structuredOutput: { schema: discoverySchema, errorStrategy: "strict" },
       maxSteps: 20,
     });
   } catch (err) {
