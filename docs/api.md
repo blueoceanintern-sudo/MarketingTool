@@ -44,7 +44,11 @@ GET  /events            # SSE stream — pushes job progress events to the UI in
 ## Campaigns (live)
 
 ```
-POST   /campaigns
+POST   /campaigns                          # create campaign manually
+POST   /campaigns/plan                     # create campaign from a natural-language brief via
+                                           # campaignPlannerAgent; resolves location names to
+                                           # geonameIds via lookup_geo tool; returns structured
+                                           # campaign params (or clarificationNeeded if brief is ambiguous)
 GET    /campaigns
 GET    /campaigns/:id
 PATCH  /campaigns/:id                      # update campaign fields (name, description, pain_points, CTA, etc.)

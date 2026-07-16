@@ -9,7 +9,7 @@ Tests `runFollowUpSender()` (Phase A: initial send + follow_ups creation; Phase 
 - `TEST_DATABASE_URL` pointing to a separate test database with migrations applied
 - `SES_DRY_RUN=true`
 - `runFollowUpSender` is already exported from `src/workers/index.ts`
-- Run with: `TEST_DATABASE_URL=... SES_DRY_RUN=true bun test test/follow-up-sender.test.ts`
+- Run with: `TEST_DATABASE_URL=... SES_DRY_RUN=true bun test tests/follow-up-sender.test.ts`
 
 ---
 
@@ -52,13 +52,13 @@ async function seedBase() {
   const [campaign] = await db.insert(campaigns).values({
     name: "AU Outreach",
     vertical: "edtech",
-    geography: "AU",
     companySizeTarget: "small",
     status: "active",
     description: "Reach AU schools",
     painPoints: ["manual admin", "low engagement"],
     callToAction: "Book a 15-min demo",
   }).returning();
+  // Note: campaign geography is managed via campaign_geos (m:n with geo_places), not a column on campaigns.
 
   const [template] = await db.insert(promptTemplates).values({
     name: "Initial Template",

@@ -128,12 +128,13 @@ Outcomes (sends, positive intent, negative replies, spam complaints) are tracked
 
 ## Template Mutation (mutation-runner)
 
-The `mutation-runner` worker (Monday 06:00) automatically evolves the template pool once enough data exists. It activates only after **300+ total sends** and processes all 4 template types. For each type it generates two mutations:
+The `mutation-runner` worker (Monday 06:00) automatically evolves the template pool once enough data exists. It activates only after **300+ total sends** and processes all 4 template types. For each type it generates up to two mutations:
 
-- **Refine** — improves a top-25% performer (picked via Thompson Sampling among winners).
-- **Replace** — overwrites the worst bottom-25% performer.
+- **Refine** — improves a performer in the top 25% (Thompson-sampled so the best single template doesn't monopolise the lineage). Top-5% performers get a 1-dimension conservative change; 5–25% tier gets 2-dimension changes (with a 20% random chance of a replace mutation instead, to add diversity).
+- **Replace** — the single worst bottom-25% performer gets a fully new persuasion strategy (≥4 dimension changes, genuinely different angle).
+- Middle 50% templates are skipped.
 
-Eligibility: template must be `active`, have `send_count ≥ 50`, and `generation_depth < 5`. Mutations are inserted with `active: true` and a `generation_depth` one higher than their parent, so the sampling pool stays fresh automatically. A webhook notification is sent to `MUTATION_NOTIFY_WEBHOOK_URL` if set.
+Eligibility: template must be `active`, have `send_count ≥ 50`, and `generation_depth < 5` (both human-authored and AI-generated templates are eligible). Mutations are inserted with **`active: true`** and a `generation_depth` one higher than their parent — they enter the Thompson Sampling pool immediately without manual activation. A webhook notification is sent to `MUTATION_NOTIFY_WEBHOOK_URL` if set.
 
 ## Follow-up Behavior (no reply)
 

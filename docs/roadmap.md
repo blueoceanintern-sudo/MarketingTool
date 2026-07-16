@@ -71,6 +71,7 @@ decision tree: follow-up | demo booking | suppress | human flag
 - **Email domain hardening** — SPF/DKIM/DMARC (DNS/SES console, not code).
 - **Monorepo migration** — still `backend/` + `frontend/`.
 - **DB migrations** — schema changes have not generated/applied migration files via `drizzle-kit generate` + `drizzle-kit migrate`.
+- **Worker process separation** — workers run in-process with the API; see `workers.md` § Production Note for the intended split.
 
 ## Deferred Cleanup (after feature-complete)
 

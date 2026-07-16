@@ -1,10 +1,10 @@
 # Workers
 
-All background processing runs through **node-cron** (no Redis, no Bull, no external queue). Seven workers are defined in `backend/src/workers/index.ts`.
+All background processing runs through **node-cron** (no Redis, no Bull, no external queue). Eight workers are defined in `backend/src/workers/index.ts`.
 
 Workers are currently imported in-process (`import "./workers"` in `backend/src/index.ts`) for dev convenience. See the Production Note below for the intended separation.
 
-There are **7 workers**.
+There are **8 workers**.
 
 | Worker | Schedule | What it does |
 |---|---|---|
@@ -15,6 +15,7 @@ There are **7 workers**.
 | `warmup-tracker` | Daily midnight | Logs current warm-up week and daily send cap (counts only successful SES sends) |
 | `purge-old-records` | Weekly, Sunday 2am | Hard-deletes old records per the retention policy; writes purge counts to `audit_log` via `logAudit()` |
 | `mutation-runner` | Weekly, Monday 6am | Auto-generates new template variants via Claude once 300+ total sends exist; see below |
+| `discovery-runner` | Daily 1am | For each active campaign: refreshes source quality scores, identifies starved geos (< 8 sources), calls `runAgentDiscovery()` for each, then queues scrape jobs for newly discovered sources. Runs before `enrichment-retry` so new leads can be enriched the same night. |
 
 ## Retry Behavior
 
@@ -46,10 +47,11 @@ The two-phase logic of `follow-up-sender` (initial send + lazy follow-up content
 
 1. Queries all active templates with `send_count ≥ 50` and `generation_depth < 5`.
 2. Skips if fewer than 2 eligible templates exist for that type.
-3. Generates two mutations via `generateMutation()` (Claude):
-   - **Refine** — Thompson-sampled from top-25% by positive intent rate (improves what works).
+3. Generates up to two mutations via `generateMutation()` (Claude):
+   - **Refine** — Thompson-sampled from top-25% by positive intent rate (improves what works). Top-5% performers get a conservative 1-dimension change; 5–25% tier gets 2-dimension changes (with a 20% chance of replace instead to prevent lineage convergence).
    - **Replace** — the single worst bottom-25% performer (replaces what doesn't).
-4. Inserts the new template as `active: true` with `generation_depth = parent + 1`.
+   - Middle 50% templates are skipped entirely.
+4. Inserts the new template as **`active: true`** with `generation_depth = parent + 1` — new variants enter the Thompson Sampling pool immediately without manual activation.
 5. Posts a JSON webhook to `MUTATION_NOTIFY_WEBHOOK_URL` if set (useful for Slack alerts).
 
 Mutations include rich metadata: `mutation_mode`, persuasion strategy shift, `dimensions_changed`, `mutation_distance`, and `hypothesis_tested` — all stored on `prompt_templates` for auditability. See `email-system.md` § Template Mutation for the full description.

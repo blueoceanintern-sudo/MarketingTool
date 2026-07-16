@@ -8,7 +8,7 @@ Tests `sendDraft()` and `shouldQueueForReview()` directly — no cron, no webhoo
 
 - `TEST_DATABASE_URL` pointing to a separate test database with migrations already applied
 - `SES_DRY_RUN=true` so `sendDraft()` writes DB rows without hitting real SES
-- Run with: `TEST_DATABASE_URL=... SES_DRY_RUN=true bun test test/pre-send.test.ts`
+- Run with: `TEST_DATABASE_URL=... SES_DRY_RUN=true bun test tests/pre-send.test.ts`
 
 ---
 
@@ -51,10 +51,10 @@ async function seedBase() {
   const [campaign] = await db.insert(campaigns).values({
     name: "Cold Outreach SG",
     vertical: "saas",
-    geography: "SG",
     companySizeTarget: "medium",
     status: "active",
   }).returning();
+  // Note: campaign geography is managed via campaign_geos (m:n with geo_places), not a column on campaigns.
 
   const [template] = await db.insert(promptTemplates).values({
     name: "Base Template",
@@ -123,7 +123,6 @@ describe("Pre-send gates", () => {
     const [otherCampaign] = await db.insert(campaigns).values({
       name: "Other Campaign",
       vertical: "saas",
-      geography: "AU",
       companySizeTarget: "medium",
       status: "active",
     }).returning();

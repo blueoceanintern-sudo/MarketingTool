@@ -27,22 +27,26 @@ target monorepo. Do not treat `apps/`, `services/`, `shared/`, or `db/` as real 
 they are target layout only (see `docs/roadmap.md`). Extend the existing `backend/` +
 `frontend/` paths until a deliberate migration.
 
-**Built:** all `/api/v1/*` routes; full Drizzle schema incl. `audit_log` +
-`enrichment_records`; scrapers (Crawl4AI + Cheerio) + `runScrapeJob` with SSRF protection;
-enrichment chain (registry → Cowork → Snov.io) persisting `enrichment_records`; drafting
-(Haiku 4.5 parallel `messages.create`, one draft per lead/campaign, separate scoring pass) +
-orchestrator with auto-schedule threshold (≥50 sends + confidence ≥70); sender (SES via
-`SendRawEmailCommand`, warm-up cap, hard gates, follow-up send, `List-Unsubscribe` +
-`List-Unsubscribe-Post` headers for Gmail/Yahoo compliance); all 7 cron workers (incl.
-`mutation-runner` — auto-generates template variants via Thompson Sampling once 300+ sends,
-`purge-old-records` — purges risk_flags for suppressed leads + writes to audit_log);
-SNS/SES webhook signature verification; per-draft manual send (`POST /drafts/:id/send`);
-suppression list view per campaign in the UI; frontend unsubscribe proxy
-(`GET/POST /api/unsubscribe`) for RFC 8058 one-click unsubscribe (port 3001 is firewalled —
-all public links go through the frontend); in-memory rate limiting (100/min API, 10/min CSV
-import, 50/min webhook); CSV-injection sanitization on lead import; admin right-to-deletion
-(`POST /admin/leads/:id/erase`) with analytics-preserving de-identification; audit log
-routes (`GET /admin/audit-log`, `GET /admin/audit-log/export`).
+**Built:** all `/api/v1/*` routes incl. `POST /campaigns/plan` (AI natural-language campaign
+creation via `campaignPlannerAgent`); full Drizzle schema incl. `audit_log`,
+`enrichment_records`, `campaign_geos` (m:n campaign → geoPlaces), `discovery_runs`
+(Tavily query audit per campaign+geo); scrapers (Crawl4AI + Cheerio) + `runScrapeJob` with
+SSRF protection; enrichment chain (registry → Cowork/Playwright → Snov.io) persisting
+`enrichment_records`; drafting (Haiku 4.5 parallel `agent.generate`, one draft per
+lead/campaign, separate scoring pass) + orchestrator with auto-schedule threshold (≥50 sends
++ confidence ≥70); sender (SES via `SendRawEmailCommand`, warm-up cap, hard gates,
+follow-up send, `List-Unsubscribe` + `List-Unsubscribe-Post` headers for Gmail/Yahoo
+compliance); all **8** cron workers (incl. `discovery-runner` — nightly Tavily URL discovery
+for starved geos; `mutation-runner` — auto-generates template variants via Thompson Sampling
+once 300+ sends, inserts as **active: true**; `purge-old-records` — purges risk_flags for
+suppressed leads + writes to audit_log); SNS/SES webhook signature verification; per-draft
+manual send (`POST /drafts/:id/send`); suppression list view per campaign in the UI;
+frontend unsubscribe proxy (`GET/POST /api/unsubscribe`) for RFC 8058 one-click unsubscribe
+(port 3001 is firewalled — all public links go through the frontend); in-memory rate
+limiting (100/min API, 10/min CSV import, 50/min webhook); CSV-injection sanitization on
+lead import; admin right-to-deletion (`POST /admin/leads/:id/erase`) with
+analytics-preserving de-identification; audit log routes (`GET /admin/audit-log`,
+`GET /admin/audit-log/export`).
 
 **Not built:** `campaign-assigner` (leads currently added to campaigns manually via UI/CSV);
 monorepo migration; DB migrations not yet generated/applied; worker process separation
@@ -104,8 +108,11 @@ Full security spec (SSRF, CSV sanitization, retention, encryption, right-to-dele
 - **Enrichment browsing:** `enrichment-browser` agent with `createTool()` browser tools
   (navigate/read_page/click_text/finish), `maxSteps: 12`, and a page-read eviction input
   processor to keep stale page dumps out of context.
-- **Campaign assignment:** Claude Haiku 4.5 assigns each enriched lead to one or more
-  campaigns with an `assignment_reason` (service not yet built).
+- **Campaign assignment:** Claude Haiku 4.5 will assign each enriched lead to one or more
+  campaigns with an `assignment_reason` — service not yet built; leads are currently added
+  manually via UI/CSV.
+- **Template mutations:** mutation-runner inserts new variants as **`active: true`** — they
+  enter the Thompson Sampling pool immediately without manual activation.
 - **Anti-hallucination:** approved campaign templates + lead fields only; no free-form
   product claims; each draft must follow its assigned campaign's objective.
 - **Templates are immutable after creation** — iterate via the Duplicate action, not edits.

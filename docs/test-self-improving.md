@@ -23,7 +23,7 @@ Tests the spam complaint kill-switch (via webhook) and the mutation runner (via 
 - For mutation tests: either set `ANTHROPIC_API_KEY` (real Claude calls) or mock
   `generateMutation` from `src/services/mutator/index.ts` as shown below.
 
-- Run with: `TEST_DATABASE_URL=... SES_DRY_RUN=true SKIP_SNS_VERIFICATION=true bun test test/self-improving.test.ts`
+- Run with: `TEST_DATABASE_URL=... SES_DRY_RUN=true SKIP_SNS_VERIFICATION=true bun test tests/self-improving.test.ts`
 
 ---
 
@@ -337,7 +337,6 @@ async function seedTotalSent(n: number) {
   const [campaign] = await db.insert(campaigns).values({
     name: "Volume Campaign",
     vertical: "saas",
-    geography: "SG",
     companySizeTarget: "medium",
     status: "active",
   }).returning();

@@ -25,13 +25,29 @@ enrichment_source:  registry | cowork_claude | snovio | manual
 ## Tables
 
 ```ts
+// geo_places  — GeoNames static reference table (imported via import-geonames.ts)
+// geoname_id is the GeoNames numeric PK so re-imports are pure upserts.
+// featureCode: PCLI = country, ADM1 = state/region, PPL* = populated place.
+geoname_id (PK int), name, ascii_name, country_code, admin1_code (nullable),
+admin1_name (nullable), feature_code, population (nullable), created_at
+// indexes: country_code_idx, name_trgm_idx (GIN trigram for ILIKE search)
+
 // companies
-id, name, industry (nullable), company_size, location, source (nullable), created_at, updated_at
+id, name, industry (nullable), company_size, location,
+geoname_id (FK geo_places, nullable),  // structured geo; location is the legacy free-text fallback
+source (nullable), created_at, updated_at
 
 // campaigns
-id, name, vertical, geography, company_size_target, status,
+// NOTE: no geography column — geo targeting lives in campaign_geos (see below)
+id, name, vertical, company_size_target, status,
 description (nullable), pain_points (text[], nullable), call_to_action (nullable),
 created_at, updated_at
+
+// campaign_geos  — m:n junction: a campaign targets one or more GeoNames places
+campaign_id (FK), geoname_id (FK geo_places)
+PRIMARY KEY (campaign_id, geoname_id)
+// Replaces the old campaigns.geography pipe-delimited text column.
+// Populated at campaign creation via the campaignPlannerAgent lookup_geo tool.
 
 // leads
 id, company_id (FK), name (nullable),
@@ -100,14 +116,21 @@ resolved_at (nullable)  // set when a rep resolves a flagged reply
 // Row itself is kept so reply counts and sentiment analytics are preserved
 
 // source_registry
-id, name, vertical, geo, url (UNIQUE), scraper_type, legal_flag,
-selectors (JSON), active, generated_by (FK campaigns.id, nullable), created_at, updated_at
+id, name, vertical, geoname_id (FK geo_places, nullable), url (UNIQUE), scraper_type, legal_flag,
+selectors (JSON), active, generated_by (FK campaigns.id, nullable),
+quality_score (real, nullable),  // rolling score from leadsScraped across recent jobs
+created_at, updated_at
 // normalizeVertical() and normalizeGeo() helpers in tables.ts — apply at every write site
 
 // directory_configs  — Tavily auto-discovery configs per (vertical, geo)
-id, vertical, geo, query, domains (text[]), created_at, updated_at
-UNIQUE (vertical, geo)
+id, vertical, geoname_id (FK geo_places, nullable), query, domains (text[]), created_at, updated_at
+UNIQUE (vertical, geoname_id)
 // Replaces the old static DIRECTORY_CONFIGS constant; admins can add/edit coverage without a deploy
+
+// discovery_runs  — audit trail of every Tavily query sent by the discovery-runner
+id, campaign_id (FK), geoname_id (FK geo_places, nullable),
+query, results_count, inserted_count, ran_at
+// The discovery agent reads prior runs before each campaign to avoid repeating exhausted angles.
 
 // scrape_jobs
 id, campaign_id (FK), status, leads_scraped, error_message,
@@ -159,7 +182,12 @@ routing (auto_queue | rep_review), routing_reason, created_at
 ## Key relationships
 
 - `leads` → `companies`: many-to-one
+- `companies` → `geo_places`: many-to-one via `geoname_id` (nullable; `location` text is legacy fallback)
 - `leads` ↔ `campaigns`: **many-to-many** via `campaign_leads` (a lead can be in many campaigns; a campaign has many leads)
+- `campaigns` ↔ `geo_places`: **many-to-many** via `campaign_geos` — a campaign targets one or more GeoNames places
+- `source_registry` → `geo_places`: many-to-one via `geoname_id` (nullable)
+- `directory_configs` → `geo_places`: many-to-one via `geoname_id` (nullable); UNIQUE on (vertical, geoname_id)
+- `discovery_runs` → `campaigns` + `geo_places`: many-to-one each
 - `email_drafts` → `leads`, `campaigns`, `prompt_templates`: many-to-one each; UNIQUE on (lead_id, campaign_id)
 - `prompt_templates` → `prompt_templates`: self-reference via `parent_template_id` for lineage
 - `email_events` → `email_drafts`: one-to-one; also `lead_id` for queries

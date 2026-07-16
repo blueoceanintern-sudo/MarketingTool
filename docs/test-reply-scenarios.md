@@ -24,7 +24,7 @@ Each scenario varies which follow_ups have already been sent before the reply ar
   export { app };
   ```
 
-- Run with: `TEST_DATABASE_URL=... SES_DRY_RUN=true SKIP_SNS_VERIFICATION=true bun test test/reply-scenarios.test.ts`
+- Run with: `TEST_DATABASE_URL=... SES_DRY_RUN=true SKIP_SNS_VERIFICATION=true bun test tests/reply-scenarios.test.ts`
 
 ---
 
@@ -152,13 +152,13 @@ async function seedBase() {
   const [campaign] = await db.insert(campaigns).values({
     name: "SG Schools Campaign",
     vertical: "edtech",
-    geography: "SG",
     companySizeTarget: "small",
     status: "active",
     description: "Reach SG schools",
     painPoints: ["admin overhead"],
     callToAction: "Book a demo",
   }).returning();
+  // Note: campaign geography is managed via campaign_geos (m:n with geo_places), not a column on campaigns.
 
   const [template] = await db.insert(promptTemplates).values({
     name: "Initial Template",
@@ -562,7 +562,6 @@ describe("Multi-campaign suppression scoping", () => {
     const [camp] = await db.insert(campaigns).values({
       name: "Campaign B",
       vertical: "saas",
-      geography: "AU",
       companySizeTarget: "small",
       status: "active",
       description: "AU outreach",

@@ -18,8 +18,7 @@ ANTHROPIC_API_KEY=
 
 SNOVIO_CLIENT_ID=
 SNOVIO_CLIENT_SECRET=
-COWORK_API_KEY=                  # Cowork enrichment provider
-COWORK_DAILY_RUN_CAP=            # cap on Cowork enrichment runs/day
+COWORK_DAILY_RUN_CAP=            # max Playwright/Cowork enrichment runs per day (Cowork uses browser automation, no API key)
 
 TAVILY_API_KEY=                  # dynamic source-registry URL generation
 
