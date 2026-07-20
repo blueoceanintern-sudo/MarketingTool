@@ -6,6 +6,7 @@
   "scripts": {
     "start": "bun run src/migrate.ts && bun run src/index.ts",
     "dev": "bun run --hot src/index.ts",
+    "mastra:dev": "mastra dev",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:seed": "bun run src/db/seed.ts",
@@ -19,7 +20,8 @@
   "devDependencies": {
     "@types/bun": "latest",
     "@types/node-cron": "^3.0.11",
-    "drizzle-kit": "^0.31.10"
+    "drizzle-kit": "^0.31.10",
+    "mastra": "^1.19.0"
   },
   "peerDependencies": {
     "typescript": "^5"

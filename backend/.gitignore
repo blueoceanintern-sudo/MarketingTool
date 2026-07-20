@@ -6,6 +6,9 @@ out
 dist
 *.tgz
 
+# Mastra CLI build cache/output
+.mastra
+
 # code coverage
 coverage
 *.lcov
