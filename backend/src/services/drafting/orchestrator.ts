@@ -36,7 +36,7 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
   const [draftedRows, suppressedRows] = await Promise.all([
     db.select({ leadId: emailDrafts.leadId }).from(emailDrafts).where(and(
       eq(emailDrafts.campaignId, campaignId),
-      inArray(emailDrafts.status, ["pending_review", "approved", "scheduled", "sent"]),
+      inArray(emailDrafts.status, ["pending_review", "scheduled", "sent"]),
     )),
     db.select({ email: suppressionList.email }).from(suppressionList).where(eq(suppressionList.campaignId, campaignId)),
   ]);
@@ -45,6 +45,7 @@ export async function generateDraftsForCampaign(campaignId: string): Promise<Gen
 
   const conditions = [
     eq(campaignLeads.campaignId, campaignId),
+    eq(leads.routing, "auto_queue"),
   ];
   if (alreadyDrafted.length > 0) conditions.push(notInArray(leads.id, alreadyDrafted));
   if (suppressedEmails.length > 0) conditions.push(notInArray(leads.email, suppressedEmails));

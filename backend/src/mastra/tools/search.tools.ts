@@ -18,8 +18,8 @@ export const webSearchTool = createTool({
       body: JSON.stringify({
         api_key: apiKey,
         query,
-        max_results: 8,
-        search_depth: "basic",
+        max_results: 10,
+        search_depth: "advanced",
         include_answer: false,
       }),
     });

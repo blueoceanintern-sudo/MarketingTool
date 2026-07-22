@@ -16,12 +16,23 @@ const BLOCKED_LOCAL_PARTS = new Set([
   // Obvious garbage / test
   "test", "demo", "sample", "spam", "junk", "trash", "null", "nobody", "undefined",
   // Generic role inboxes — team queues, not individual contacts
-  "info", "admin", "support", "contact", "sales", "help", "team",
+  "info", "admin", "support", "contact", "sales", "help", "team", "business",
+  // Additional generic inboxes commonly found on directory pages
+  "hello", "hi", "enquiry", "enquiries", "query", "queries",
+  "marketing", "pr", "media", "press", "communications",
+  "membership", "members", "secretariat", "secretary",
+  "reception", "receptionist", "office", "general", "enquire",
+  "accounts", "accounting", "finance", "billing", "payments", "invoices",
+  "helpdesk", "servicedesk", "services", "service",
+  "hr", "recruitment", "careers", "jobs", "hiring",
+  "procurement", "tenders", "contracts",
+  "privacy", "legal", "compliance", "dpo",
 ]);
 
 // Generic placeholder locals that are never real contacts
 const PLACEHOLDER_LOCALS = new Set([
   "user", "email", "name", "firstname", "lastname", "your", "yourname", "youremail",
+  "johndoe", "janedoe", "john", "jane", "example", "someone", "person", "contact",
 ]);
 
 // Placeholder / disposable domains
@@ -31,6 +42,8 @@ const PLACEHOLDER_DOMAINS = new Set([
   "guerrillamail.com", "sharklasers.com", "throwam.com",
   "yopmail.com", "trashmail.com", "maildrop.cc", "dispostable.com",
   "fakeinbox.com", "spam4.me", "trashmail.io",
+  // Common fake/placeholder domains found on demo/sample directory pages
+  "xyz.com", "abc.com", "foo.com", "bar.com", "company.com", "email.com",
 ]);
 
 // Infrastructure / monitoring / marketing-automation domains.
@@ -77,8 +90,9 @@ const MD5_RE = /^[0-9a-f]{32}$/i;
 const LONG_HEX_RE = /^[0-9a-f]{20,}$/i;
 // JS-bundle URL-encoded prefix artifact (u002f → %2F, u003e → %3E, etc.)
 const URL_ENCODED_PREFIX_RE = /^u00[0-9a-f]{2}/i;
-// Local part starts with 5+ consecutive digits (page-text concatenation artifact)
-const LEADING_DIGITS_RE = /^\d{5,}/;
+// Local part starts with 4+ consecutive digits (page-text concatenation artifact —
+// catches 4-digit postcodes like 3006acmix@ and 5-digit ZIP codes).
+const LEADING_DIGITS_RE = /^\d{4,}/;
 
 function isInfrastructureDomain(domain: string): boolean {
   for (const infra of INFRASTRUCTURE_DOMAINS) {
@@ -136,8 +150,12 @@ export function isValidLeadEmail(raw: string): boolean {
   // Step 10 — JS-bundle URL-encoded prefix artifact (u002f, u003e).
   if (URL_ENCODED_PREFIX_RE.test(localBase)) return false;
 
-  // Step 11 — Hard-blocked system local parts.
+  // Step 11 — Hard-blocked system local parts (exact match or suffix).
+  // Suffix check catches suburb/postcode-prefixed role inboxes: melbourneadmin, 3053info.
   if (BLOCKED_LOCAL_PARTS.has(localBase)) return false;
+  for (const blocked of BLOCKED_LOCAL_PARTS) {
+    if (localBase.length > blocked.length && localBase.endsWith(blocked)) return false;
+  }
 
   // Step 12 — Generic placeholder locals.
   if (PLACEHOLDER_LOCALS.has(localBase)) return false;
@@ -161,6 +179,12 @@ export function isValidLeadEmail(raw: string): boolean {
   //            reserved TLDs (.local, .internal, .corp), and any unrecognised TLD.
   const parsed = parse(domain);
   if (parsed.isIcann !== true || parsed.domain === null) return false;
+
+  // Step 18 — Org-acronym inbox detection.
+  //            e.g. ccfwa@ccfwa.com.au, scal@scal.com.sg — local == registerable SLD.
+  //            These are organisation-level inboxes, not individual contacts.
+  const sld = parsed.domain.split(".")[0] ?? "";
+  if (sld.length >= 3 && /^[a-z]+$/.test(localBase) && localBase === sld) return false;
 
   return true;
 }

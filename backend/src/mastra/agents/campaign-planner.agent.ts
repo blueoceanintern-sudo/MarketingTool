@@ -35,11 +35,16 @@ Populate this field (and leave geonameIds empty or partial) when:
 - The vertical is completely ambiguous (e.g. "businesses")
 
 Each entry in clarificationNeeded must be a specific, answerable question directed at the user.
+IMPORTANT: Only reference information that is explicitly present in the brief. Never invent or assume details — if a field is simply missing, ask for it directly without implying the user mentioned it.
+BAD (hallucinated detail): "You mentioned the US, but please confirm the scope." ← wrong if the user never said "US"
+GOOD (missing field): "Which geographic regions or countries should this campaign target?"
 Examples:
 - "Which country does 'aus' refer to — Australia or Austria?"
 - "What product or service are you selling?"
 - "Which region of Australia should this campaign target, or the whole country?"
 - "Did you mean Singapore or Shanghai when you wrote 'sg'?"
+- "Which geographic regions or countries should this campaign target?"
+- "What company sizes are you prioritising — small, medium, large, or enterprise?"
 
 If clarificationNeeded is non-empty, no campaign will be created — the questions go back to the user.`,
   model: HAIKU,

@@ -1,12 +1,33 @@
 import { lookup } from "node:dns/promises";
-import { and, count, desc, eq, inArray } from "drizzle-orm";
+import { and, count, desc, eq, inArray, or } from "drizzle-orm";
 import { db } from "../../db";
 import { campaigns, campaignGeos, discoveryRuns, geoPlaces, scrapeJobs, sourceRegistry, normalizeVertical } from "../../db/schema";
 import { leadDiscoveryAgent } from "../../mastra/agents/lead-discovery.agent";
 import { discoverySchema, type DiscoveryResult } from "../../mastra/schemas/discovery";
 import { runScrapeJob } from "../scraping/runScrapeJob";
 
-const MIN_SOURCES_PER_GEO = 8;
+const MIN_SOURCES_PER_GEO = 15;
+
+// Retries a single Anthropic call up to 3 times on 529 Overloaded with
+// exponential backoff (15s → 30s → 60s). Throws on any other error.
+async function withOverloadRetry<T>(fn: () => Promise<T>): Promise<T> {
+  const delays = [15_000, 30_000, 60_000];
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= delays.length; attempt++) {
+    try {
+      return await fn();
+    } catch (err: unknown) {
+      const status = (err as Record<string, unknown>)?.statusCode;
+      if (status !== 529) throw err;
+      lastErr = err;
+      const delay = delays[attempt];
+      if (delay === undefined) break;
+      console.warn(`[discovery] 529 overloaded — retrying in ${delay / 1000}s (attempt ${attempt + 1}/${delays.length})`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw lastErr;
+}
 const PRIVATE_IP_RE = /^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.|::1$|0\.0\.0\.0)/;
 const BLOCKED_EXTENSIONS = /\.(pdf|doc|docx|xls|xlsx|ppt|pptx|zip|png|jpg|jpeg|gif|svg|mp4|mp3)$/i;
 
@@ -27,7 +48,16 @@ async function validateUrl(urlStr: string): Promise<boolean> {
   if (!await isSsrfSafe(urlStr)) return false;
   if (BLOCKED_EXTENSIONS.test(new URL(urlStr).pathname)) return false;
   try {
-    const res = await fetch(urlStr, { method: "HEAD", signal: AbortSignal.timeout(5000) });
+    // Try HEAD first — faster. Some servers (especially gov/edu) return 405 for HEAD;
+    // fall back to a byte-range GET to avoid downloading the full page.
+    let res = await fetch(urlStr, { method: "HEAD", signal: AbortSignal.timeout(6000) });
+    if (res.status === 405 || res.status === 501) {
+      res = await fetch(urlStr, {
+        method: "GET",
+        headers: { Range: "bytes=0-2047" },
+        signal: AbortSignal.timeout(8000),
+      });
+    }
     const contentType = res.headers.get("content-type") ?? "";
     return contentType.includes("text/html") && res.status < 500;
   } catch {
@@ -68,24 +98,41 @@ async function discoverForGeo(
   const topSources = existingSources
     .filter((s) => s.qualityScore !== null)
     .sort((a, b) => (b.qualityScore ?? 0) - (a.qualityScore ?? 0))
-    .slice(0, 3);
+    .slice(0, 5);
 
   const contextMessage = `Campaign: ${campaign.name}
 Vertical: ${vertical}
 Geography: ${geoLabel}
 Description: ${campaign.description ?? "Not provided"}
 Pain points: ${(campaign.painPoints ?? []).join("; ") || "Not provided"}
-Current active source count: ${existingSources.length} (need at least ${MIN_SOURCES_PER_GEO})
+Current active source count: ${existingSources.length} / ${MIN_SOURCES_PER_GEO} needed
 
-${topSources.length > 0 ? `High-performing sources for this vertical+geo (find similar directory pages):\n${topSources.map((s) => `- ${s.name}: ${s.url}`).join("\n")}\n` : ""}${pastQueries.length > 0 ? `Queries already run for this campaign in this geography (do NOT repeat these):\n${pastQueries.map((q) => `- ${q}`).join("\n")}\n` : "No previous searches — start fresh.\n"}
-Search for public directories and membership lists where ${vertical} organisations in ${geoLabel} can be found. Prioritise pages likely to list multiple companies with contact details. Run at least 4 diverse queries.`;
+${topSources.length > 0 ? `High-performing sources already found (find similar pages with this structure):\n${topSources.map((s) => `- ${s.name}: ${s.url}`).join("\n")}\n\n` : ""}${pastQueries.length > 0 ? `Queries already run — do NOT repeat these:\n${pastQueries.map((q) => `- ${q}`).join("\n")}\n\n` : "No previous searches — start fresh.\n\n"}VERTICAL: ${vertical}
+GEOGRAPHY: ${geoLabel}
+
+Your task: find public web pages where a static HTML scraper can extract individual ${vertical} contacts with email addresses directly from the HTML source — no JavaScript login wall.
+
+CRITICAL: Only return URLs where the Tavily snippet itself contains an @ symbol or explicit email mention next to a contact name. If the snippet shows a list of companies with NO email signal, skip it — those member lists are behind JS and our scraper cannot read them.
+
+Priority order:
+1. Government licence/contractor registers on .gov.sg or .gov.au (static HTML, emails in table rows) — use site: operator
+2. Statutory board "approved" or "registered" firm lists with contact email per row
+3. Association staff/team directories (not member portals) — these are usually static HTML
+4. Any other source where snippet confirms individual emails are visible on the page
+
+Avoid: MBA, HIA, SCAL, REDAS, ACIF, CCF, Business Chamber member portals — all JS SPAs with no public email access.
+
+Run at least 6 diverse queries, each targeting a different government body or source type.`;
 
   let result: Awaited<ReturnType<typeof leadDiscoveryAgent.generate>>;
   try {
-    result = await leadDiscoveryAgent.generate(contextMessage, {
-      structuredOutput: { schema: discoverySchema, errorStrategy: "strict" },
-      maxSteps: 20,
-    });
+    result = await withOverloadRetry(() =>
+      leadDiscoveryAgent.generate(contextMessage, {
+        structuredOutput: { schema: discoverySchema, errorStrategy: "strict" },
+        maxSteps: 20,
+        maxTokens: 4096,
+      }),
+    );
   } catch (err) {
     console.error(`[discovery] ${key}: agent error:`, err);
     return { inserted: 0, sourceIds: [] };
@@ -137,7 +184,8 @@ Search for public directories and membership lists where ${vertical} organisatio
   const sourceIds: string[] = [];
   for (const res of validated) {
     if (res.status !== "fulfilled" || !res.value.ok) continue;
-    const { url, name, scraperType, legalFlag } = res.value;
+    const { url: rawUrl, name, scraperType, legalFlag } = res.value;
+    const url = rawUrl.trim();
     try {
       const [row] = await db
         .insert(sourceRegistry)
@@ -192,19 +240,30 @@ export async function runAgentDiscovery(
     allSourceIds.push(...sourceIds);
   }
 
-  // If new sources were found, queue and immediately run a scrape job so
-  // leads start flowing without waiting for the next cron window.
+  // If new sources were found, queue a scrape job — but only if one isn't
+  // already running or queued for this campaign (prevents duplicate jobs when
+  // auto-discovery and a manual "Discover Sources" trigger overlap).
   if (allSourceIds.length > 0) {
     try {
-      const [job] = await db
-        .insert(scrapeJobs)
-        .values({ campaignId, status: "queued" })
-        .returning();
+      const [active] = await db
+        .select({ id: scrapeJobs.id })
+        .from(scrapeJobs)
+        .where(and(eq(scrapeJobs.campaignId, campaignId), or(eq(scrapeJobs.status, "queued"), eq(scrapeJobs.status, "running"))))
+        .limit(1);
 
-      if (job) {
-        void runScrapeJob(job.id, campaignId).catch((err) =>
-          console.error(`[discovery] scrape job ${job.id} failed:`, err),
-        );
+      if (!active) {
+        const [job] = await db
+          .insert(scrapeJobs)
+          .values({ campaignId, status: "queued" })
+          .returning();
+
+        if (job) {
+          void runScrapeJob(job.id, campaignId).catch((err) =>
+            console.error(`[discovery] scrape job ${job.id} failed:`, err),
+          );
+        }
+      } else {
+        console.log(`[discovery] campaign ${campaignId}: scrape job already active (${active.id}), skipping duplicate`);
       }
     } catch (err) {
       console.error(`[discovery] failed to create scrape job for campaign ${campaignId}:`, err);

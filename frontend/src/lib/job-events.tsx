@@ -12,7 +12,8 @@ export type JobEvent =
   | { kind: "enrichment_complete"; campaignId: string; count: number }
   | { kind: "drafts"; campaignId: string; generated: number }
   | { kind: "discovery"; vertical: string; geo: string; inserted: number }
-  | { kind: "discovery_scrape_complete"; vertical: string; geo: string; leadsAdded: number };
+  | { kind: "discovery_scrape_complete"; vertical: string; geo: string; leadsAdded: number }
+  | { kind: "campaign_discovery"; campaignId: string; inserted: number; leadsAdded: number };
 
 type Listener = (event: JobEvent) => void;
 
@@ -87,6 +88,9 @@ export function JobEventsProvider({ children }: { children: ReactNode }) {
         case "discovery_scrape_complete":
           queryClient.invalidateQueries({ queryKey: keys.registry });
           queryClient.invalidateQueries({ queryKey: keys.leads });
+          break;
+        case "campaign_discovery":
+          queryClient.invalidateQueries({ queryKey: keys.campaigns });
           break;
       }
 

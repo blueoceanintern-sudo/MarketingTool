@@ -47,8 +47,8 @@ const REQUIRED_FIELDS = [
   "contact.email_status",
 ] as const;
 
-export async function enrichLead(leadId: string): Promise<{ record: EnrichmentRecord; fullyEnriched: boolean }> {
-  const input = await buildInput(leadId);
+export async function enrichLead(leadId: string, campaignId?: string | null): Promise<{ record: EnrichmentRecord; fullyEnriched: boolean }> {
+  const input = await buildInput(leadId, campaignId ?? null);
 
   let primarySource: EnrichmentSource = "manual";
   const institution: Partial<EnrichmentInstitution> = {};
@@ -110,7 +110,7 @@ export async function enrichLead(leadId: string): Promise<{ record: EnrichmentRe
   return { record, fullyEnriched };
 }
 
-async function buildInput(leadId: string): Promise<EnrichmentInput> {
+async function buildInput(leadId: string, campaignId: string | null): Promise<EnrichmentInput> {
   // With lead↔campaign m:n, a lead can belong to many campaigns with
   // different geos. Market is resolved from company.geonameId → geo_places
   // .country_code — company.geonameId is already set by scrape/CSV import
@@ -143,7 +143,7 @@ async function buildInput(leadId: string): Promise<EnrichmentInput> {
 
   return {
     leadId: row.leadId,
-    campaignId: null,
+    campaignId,
     market,
     seed: {
       name: row.name || deriveRoleEmailName(row.email),

@@ -121,14 +121,14 @@ async function crawl4aiScrape(url: string): Promise<Lead[]> {
     throw new Error(mainResult.error_message || "Crawl4AI per-result failure");
   }
 
-  // Step 2: derive company name + discover staff/team sub-pages
+  // Step 2: derive company name + discover staff/team sub-pages (up to 5)
   let company: string | undefined;
   let staffLinks: string[] = [];
 
   if (mainResult.cleaned_html) {
     const $ = cheerio.load(mainResult.cleaned_html);
     company = cleanCompanyName($);
-    staffLinks = findStaffPageLinks($, url);
+    staffLinks = findStaffPageLinks($, url).slice(0, 5);
   } else {
     company = mainResult.metadata?.title?.trim() || undefined;
   }

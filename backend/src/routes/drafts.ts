@@ -200,13 +200,16 @@ draftsRouter.patch("/:id/edit", async (c) => {
     return c.json({ error: "Provide subject or body to edit" }, 400);
   }
 
-  const updates: Partial<{ subject: string; body: string; confidenceScore: number; status: "pending_review" }> = {
+  const updates: Partial<{ subject: string; body: string; confidenceScore: number; scoreBreakdown: null; status: "pending_review" }> = {
     status: "pending_review",
   };
   if (body.subject) updates.subject = body.subject;
   if (body.body) {
     updates.body = body.body;
-    updates.confidenceScore = scoreBody(body.body);
+    // Body has changed — AI score is now stale. Zero out both fields so the
+    // auto-scheduler skips this draft and a rep must review it before it sends.
+    updates.confidenceScore = 0;
+    updates.scoreBreakdown = null;
   }
 
   await db.update(emailDrafts).set(updates).where(eq(emailDrafts.id, draftId));

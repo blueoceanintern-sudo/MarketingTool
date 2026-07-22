@@ -79,7 +79,8 @@ Return only valid JSON. No explanation, no preamble, no markdown fences.
       return_date: parsed?.return_date ?? null,
       risk_flag: parsed?.risk_flag ?? false,
     };
-  } catch {
+  } catch (err) {
+    console.error("[reply-classifier] classification failed:", err);
     return { category: "neutral", return_date: null, risk_flag: false };
   }
 }

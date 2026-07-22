@@ -388,7 +388,7 @@ export async function generateFollowUpBatch(requests: FollowUpRequest[]): Promis
     const lengthCompliance = wordCount <= WORD_LIMIT[type] ? 25 : 0;
     const sub = scoreMap.get(customId) ?? { painPointFit: 0, campaignAlignment: 0, personalisationQuality: 0 };
     results.push({
-      followUpId: customId.slice("followup:".length),
+      followUpId: customId.slice("followup-".length),
       subject,
       body,
       angleTag,

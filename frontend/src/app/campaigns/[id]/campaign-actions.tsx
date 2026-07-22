@@ -46,6 +46,7 @@ export default function CampaignActions({ campaignId, status }: Props) {
       );
     }
     if (event.kind === "campaign_discovery" && event.campaignId === campaignId && running === "discovery") {
+      if (discoveryTimeoutRef.current) clearTimeout(discoveryTimeoutRef.current);
       setRunning(null);
       queryClient.invalidateQueries({ queryKey: keys.campaign(campaignId) });
       if (event.inserted > 0) {
@@ -56,6 +57,8 @@ export default function CampaignActions({ campaignId, status }: Props) {
     }
   });
 
+  const discoveryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const discoverMutation = useMutation({
     mutationFn: () => triggerCampaignDiscover(campaignId),
     onSuccess: ({ ok, error }) => {
@@ -65,6 +68,12 @@ export default function CampaignActions({ campaignId, status }: Props) {
       }
       setMessage("AI discovery agent running — searching for new lead sources…");
       setRunning("discovery");
+      // Fallback: if no SSE event arrives within 5 min, clear the spinner.
+      if (discoveryTimeoutRef.current) clearTimeout(discoveryTimeoutRef.current);
+      discoveryTimeoutRef.current = setTimeout(() => {
+        setRunning((r) => (r === "discovery" ? null : r));
+        setMessage("Discovery timed out — check back shortly or try again.");
+      }, 5 * 60 * 1000);
     },
   });
 

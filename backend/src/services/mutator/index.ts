@@ -349,7 +349,7 @@ export async function generateMutation(
 
     const parsed = response.object;
     if (!parsed || !parsed.name || !parsed.system_prompt) return null;
-    const metadata = parsed.mutation_metadata;
+    const metadata = parsed.mutation_metadata ?? {};
 
     return {
       name: parsed.name,

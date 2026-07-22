@@ -43,7 +43,7 @@ async function getAccessToken(): Promise<string> {
 
 async function findByDomain(domain: string, token: string): Promise<SnovioEmailResult[]> {
   const res = await fetch(
-    `https://api.snov.io/v2/domain-emails-with-info?domain=${encodeURIComponent(domain)}&type=all&limit=10`,
+    `https://api.snov.io/v2/domain-emails-with-info?domain=${encodeURIComponent(domain)}&type=all&limit=100`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
   if (!res.ok) return [];

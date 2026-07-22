@@ -181,6 +181,7 @@ export async function runScrapeJob(jobId: string, campaignId: string): Promise<v
   let leadsScraped = 0;
   const errors: string[] = [];
   const newLeadIds: string[] = [];
+  const failedSourceIds: string[] = [];
 
   for (const { source, place } of sources) {
     try {
@@ -218,10 +219,26 @@ export async function runScrapeJob(jobId: string, campaignId: string): Promise<v
         await emitJobEvent({ kind: "scrape", campaignId, status: "blocked", leadsScraped });
         return;
       }
+      // Track sources that fail to fetch so we can deactivate persistent failures.
+      if (msg.includes("Failed to fetch") || msg.includes("ECONNREFUSED") || msg.includes("ETIMEDOUT")) {
+        failedSourceIds.push(source.id);
+      }
     }
   }
 
-  const status = leadsScraped > 0 || errors.length === 0 ? "complete" : "failed";
+  // Deactivate sources that failed to fetch — they waste time on future scrape
+  // jobs and the discovery agent will find replacements on the next run.
+  if (failedSourceIds.length > 0) {
+    await db
+      .update(sourceRegistry)
+      .set({ active: false, updatedAt: new Date() })
+      .where(inArray(sourceRegistry.id, failedSourceIds));
+    console.log(`[scrape] deactivated ${failedSourceIds.length} unreachable source(s)`);
+  }
+
+  // A job that scraped sources but found no new leads (e.g. all already inserted
+  // by a concurrent job) is still complete, not failed.
+  const status = errors.length > 0 && leadsScraped === 0 && failedSourceIds.length === errors.length ? "failed" : "complete";
   await db
     .update(scrapeJobs)
     .set({
@@ -239,7 +256,7 @@ export async function runScrapeJob(jobId: string, campaignId: string): Promise<v
     await Promise.all(
       newLeadIds.map(async (leadId) => {
         try {
-          await enrichLead(leadId);
+          await enrichLead(leadId, campaignId);
           enriched++;
         } catch (err) {
           console.error(`[scrape] enrichment failed for lead ${leadId}:`, err);

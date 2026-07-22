@@ -19,7 +19,14 @@ export const campaignsOptions = () =>
   queryOptions({ queryKey: keys.campaigns, queryFn: () => api.getCampaigns() });
 
 export const campaignOptions = (id: string) =>
-  queryOptions({ queryKey: keys.campaign(id), queryFn: () => api.getCampaign(id) });
+  queryOptions({
+    queryKey: keys.campaign(id),
+    queryFn: async () => {
+      const data = await api.getCampaign(id);
+      if (data === null) throw new Error("Campaign not found");
+      return data;
+    },
+  });
 
 export const campaignLeadsOptions = (id: string, page: number, limit = 50, status?: string) =>
   queryOptions({

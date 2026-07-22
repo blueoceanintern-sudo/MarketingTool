@@ -49,5 +49,5 @@ export async function runBrowserAgent<T>(opts: {
   if (steps >= MAX_STEPS) {
     return { result: null, steps, reason: "max_steps" };
   }
-  return { result: null, steps, reason: "finished" };
+  return { result: null, steps, reason: "error" };
 }

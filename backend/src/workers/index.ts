@@ -513,7 +513,7 @@ cron.schedule("*/30 * * * *", async () => {
 // Fires only after 300+ total sends across the pool. Picks the top-performing
 // eligible template (active, generation_depth < 2, send_count >= 50) by
 // positive intent rate, generates one mutation via Claude, inserts it as
-// inactive (requires manual activation), and notifies via webhook if configured.
+// active (enters Thompson Sampling pool immediately), and notifies via webhook if configured.
 // ---------------------------------------------------------------------------
 export async function runMutationRunner() {
   console.log("[mutation-runner] running");
