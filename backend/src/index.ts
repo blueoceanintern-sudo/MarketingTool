@@ -1,3 +1,4 @@
+import { runMigrations } from "./migrate";
 import { scrapeWebsite } from "./services/scrapers/cheerioScraper";
 import { campaignsRouter } from "./routes/campaigns";
 import { leadsRouter, allLeadsRouter } from "./routes/leads";
@@ -10,6 +11,14 @@ import { eventsRouter } from "./routes/events";
 import { geoRouter } from "./routes/geo";
 import { startJobEventListener } from "./services/events";
 import "./workers";
+
+// Migrations must complete before the server accepts any requests.
+try {
+  await runMigrations();
+} catch (err) {
+  console.error("Startup migration failed — aborting:", err);
+  process.exit(1);
+}
 
 import { Hono } from "hono";
 import { cors } from "hono/cors";

@@ -127,30 +127,74 @@ analyticsRouter.get("/templates", async (c) => {
 });
 
 analyticsRouter.get("/export", async (c) => {
-  const rows = await db
-    .select({
-      id: emailDrafts.id,
-      leadId: emailDrafts.leadId,
-      campaignId: emailDrafts.campaignId,
-      templateId: emailDrafts.templateId,
-      status: emailDrafts.status,
-      confidenceScore: emailDrafts.confidenceScore,
-      createdAt: emailDrafts.createdAt,
-    })
-    .from(emailDrafts)
-    .orderBy(emailDrafts.createdAt);
+  const since = new Date();
+  since.setDate(since.getDate() - 29);
+  since.setHours(0, 0, 0, 0);
+
+  const [
+    leadsContactedRow,
+    sentRow,
+    openedRow,
+    repliedRow,
+    demosRow,
+    pendingRow,
+    suppressedRow,
+    dailyRows,
+  ] = await Promise.all([
+    db.select({ total: sql<number>`count(DISTINCT ${emailEvents.leadId})` }).from(emailEvents).where(isNotNull(emailEvents.sentAt)),
+    db.select({ total: count() }).from(emailEvents).where(isNotNull(emailEvents.sentAt)),
+    db.select({ total: count() }).from(emailEvents).where(isNotNull(emailEvents.openedAt)),
+    db.select({ total: count() }).from(emailEvents).where(isNotNull(emailEvents.repliedAt)),
+    db.select({ total: count() }).from(demos),
+    db.select({ total: count() }).from(emailDrafts).where(eq(emailDrafts.status, "pending_review")),
+    db.select({ total: count() }).from(suppressionList),
+    db
+      .select({
+        date: sql<string>`to_char(date_trunc('day', ${emailEvents.sentAt}), 'YYYY-MM-DD')`,
+        total: count(),
+      })
+      .from(emailEvents)
+      .where(and(isNotNull(emailEvents.sentAt), gte(emailEvents.sentAt, since)))
+      .groupBy(sql`date_trunc('day', ${emailEvents.sentAt})`)
+      .orderBy(sql`date_trunc('day', ${emailEvents.sentAt})`),
+  ]);
+
+  const totalSent = Number(sentRow[0]?.total ?? 0);
+  const totalOpened = Number(openedRow[0]?.total ?? 0);
+  const totalReplied = Number(repliedRow[0]?.total ?? 0);
+  const openRate = totalSent > 0 ? Math.round((totalOpened / totalSent) * 1000) / 10 : 0;
+  const replyRate = totalSent > 0 ? Math.round((totalReplied / totalSent) * 1000) / 10 : 0;
+
+  const countByDate = new Map(dailyRows.map((r) => [r.date, Number(r.total)]));
+  const dailySection = Array.from({ length: 30 }, (_, i) => {
+    const d = new Date(since);
+    d.setDate(since.getDate() + i);
+    const dateStr = d.toISOString().slice(0, 10);
+    return `${dateStr},${countByDate.get(dateStr) ?? 0}`;
+  });
 
   const csv = [
-    "id,lead_id,campaign_id,template_id,status,confidence_score,created_at",
-    ...rows.map((r) =>
-      [r.id, r.leadId, r.campaignId, r.templateId, r.status, r.confidenceScore, r.createdAt.toISOString()].join(",")
-    ),
+    "Overview",
+    "metric,value",
+    `Total Leads Contacted,${Number(leadsContactedRow[0]?.total ?? 0)}`,
+    `Total Emails Sent,${totalSent}`,
+    `Total Opened,${totalOpened}`,
+    `Total Replied,${totalReplied}`,
+    `Total Demos Booked,${Number(demosRow[0]?.total ?? 0)}`,
+    `Open Rate (%),${openRate}`,
+    `Reply Rate (%),${replyRate}`,
+    `Pending Review,${Number(pendingRow[0]?.total ?? 0)}`,
+    `Total Suppressions,${Number(suppressedRow[0]?.total ?? 0)}`,
+    "",
+    "Daily Sends (Last 30 Days)",
+    "date,emails_sent",
+    ...dailySection,
   ].join("\n");
 
   return new Response(csv, {
     headers: {
       "Content-Type": "text/csv",
-      "Content-Disposition": "attachment; filename=drafts-export.csv",
+      "Content-Disposition": "attachment; filename=analytics-export.csv",
     },
   });
 });
